@@ -1,20 +1,21 @@
 import * as THREE from 'three';
 import { raycastWorld, rayEntity } from '../game/collision.js';
 import { audio } from '../audio/audio.js';
+import { weaponById } from './weapons.js';
 
 const _tmpDir = new THREE.Vector3();
 
-// Handle a shooter's fire intent this frame.
+// Handle a shooter's fire intent this frame. Returns true if a shot fired.
 export function updateShooter(game, e, wantFire, now) {
   const w = e.weapon();
-  if (!e.alive) return;
-  if (now < e.reloadUntil) return;
+  if (!e.alive) return false;
+  if (now < e.reloadUntil) return false;
   const ammo = e.ammo[w.id] ?? (w.mag || 0);
   if (wantFire) {
-    if (now < e.nextFire) return;
+    if (now < e.nextFire) return false;
     if (w.mag > 0 && ammo <= 0) {
       startReload(e, now);
-      return;
+      return false;
     }
     e.nextFire = now + 1 / w.fireRate;
     if (w.mag > 0 && !game.settings.infiniteAmmo) e.ammo[w.id] = ammo - 1;
@@ -23,12 +24,15 @@ export function updateShooter(game, e, wantFire, now) {
     if (e.isPlayer) {
       game.addRecoil(w.recoil * 0.006, (Math.random() - 0.5) * w.recoil * 0.004);
     }
+    return true;
   }
+  return false;
 }
 
 export function startReload(e, now) {
   const w = e.weapon();
   if (w.mag <= 0) return;
+  if (e._reloadWeapon && now < e.reloadUntil) return; // already reloading
   const reserve = e.reserve[w.id] ?? 0;
   if (e.ammo[w.id] >= w.mag) return;
   if (reserve <= 0) return;
@@ -39,12 +43,15 @@ export function startReload(e, now) {
 
 export function finishReloadIfDue(e, now) {
   if (e._reloadWeapon && now >= e.reloadUntil) {
-    const w = e.weapon();
-    if (w.id === e._reloadWeapon && w.mag > 0) {
-      const need = w.mag - (e.ammo[w.id] ?? 0);
-      const take = Math.min(need, e.reserve[w.id] ?? 0);
-      e.ammo[w.id] = (e.ammo[w.id] ?? 0) + take;
-      e.reserve[w.id] = (e.reserve[w.id] ?? 0) - take;
+    // Look up the weapon that was actually being reloaded (player may have
+    // switched slots mid-reload) so its magazine is correctly refilled.
+    const id = e._reloadWeapon;
+    const w = weaponById(id);
+    if (w.mag > 0) {
+      const need = w.mag - (e.ammo[id] ?? 0);
+      const take = Math.min(need, e.reserve[id] ?? 0);
+      e.ammo[id] = (e.ammo[id] ?? 0) + take;
+      e.reserve[id] = (e.reserve[id] ?? 0) - take;
     }
     e._reloadWeapon = null;
   }

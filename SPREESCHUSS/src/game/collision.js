@@ -15,6 +15,7 @@ function overlaps(min, max, box) {
 export function moveAndCollide(colliders, pos, vel, dt, r = 0.35, height = 1.7) {
   const result = { pos: pos.clone(), vel: vel.clone(), onGround: false };
   const p = result.pos;
+  const prevFeet = pos.y; // feet height before this move (for land/ceiling classification)
 
   // Horizontal X
   p.x += result.vel.x * dt;
@@ -33,21 +34,22 @@ export function moveAndCollide(colliders, pos, vel, dt, r = 0.35, height = 1.7) 
   // Land on top of boxes / hit ceilings
   const min = new THREE.Vector3(p.x - r, p.y, p.z - r);
   const max = new THREE.Vector3(p.x + r, p.y + height, p.z + r);
+  const STEP = 0.35;
   for (const b of colliders) {
     if (!overlaps(min, max, b)) continue;
-    // Determine if we are landing (feet near top) or bonking head.
     const topOfBox = b.max.y;
     const bottomOfBox = b.min.y;
-    if (result.vel.y <= 0 && min.y < topOfBox && max.y > topOfBox - 0.5) {
+    if (result.vel.y <= 0 && prevFeet >= topOfBox - STEP) {
+      // descending onto the top of a box we were above -> land
       p.y = topOfBox;
       result.vel.y = 0;
       result.onGround = true;
-      min.y = p.y; max.y = p.y + height;
-    } else if (result.vel.y > 0 && max.y > bottomOfBox) {
+    } else if (result.vel.y > 0 && prevFeet + height <= bottomOfBox + 0.05) {
+      // ascending and our head was below the box bottom -> bonk ceiling
       p.y = bottomOfBox - height;
       result.vel.y = 0;
-      min.y = p.y; max.y = p.y + height;
     }
+    min.y = p.y; max.y = p.y + height;
   }
   return result;
 }

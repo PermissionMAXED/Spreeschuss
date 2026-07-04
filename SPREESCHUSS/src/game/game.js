@@ -51,6 +51,8 @@ export class Game {
   // ---------------------------------------------------------------- match
   loadMatch(cfg) {
     this.r.clearScene();
+    this._clearEffects();
+    this._matchToken = (this._matchToken || 0) + 1;
     this.entities = [];
     this.colliders = [];
     this.settings = { ...defaultSettings(), ...cfg.settings };
@@ -138,8 +140,10 @@ export class Game {
     this.phase = this.mode.buy ? 'buy' : 'live';
     this.phaseEnd = this.now + (this.mode.buy ? BUY_TIME : LIVE_TIME);
     this.roundWinner = null;
+    if (this.spike && this.spike.mesh) this._removeMesh(this.spike.mesh);
     this.spike = null;
     this.buyOpen = false;
+    this._clearEffects();
 
     // side handling / spawns
     const teams = { att: [], def: [], ffa: [] };
@@ -147,7 +151,10 @@ export class Game {
 
     // give economy at round start
     for (const e of this.entities) {
-      const keep = this.mode.kind === 'plant' ? true : true;
+      // In plant modes players who died last round lose their loadout; other
+      // modes always keep a fresh full loadout.
+      const keep = this.mode.kind === 'plant' ? e.alive : true;
+      e._deadCounted = false;
       e.resetForRound(keep);
       if (this.mode.freeAbilities) this._refillAbilities(e);
       if (this.mode.kind === 'gungame') {
@@ -229,7 +236,7 @@ export class Game {
     if (this.phase === 'buy' && this.now >= this.phaseEnd) {
       this.phase = 'live';
       this.phaseEnd = this.now + LIVE_TIME;
-      this.buyOpen = false;
+      if (this.buyOpen) { this.buyOpen = false; bus.emit('buy:toggle', false); this.input.requestLock(); }
       bus.emit('phase:live');
     }
 
@@ -368,6 +375,19 @@ export class Game {
     return false;
   }
 
+  // Remove all transient effects (meshes, wall colliders) and empty the pools.
+  _clearEffects() {
+    for (const arr of [this.zones, this.smokes, this.walls, this.turrets, this.traps]) {
+      for (const it of arr) {
+        if (it.mesh) this._removeMesh(it.mesh);
+        if (it.collider) { const i = this.colliders.indexOf(it.collider); if (i >= 0) this.colliders.splice(i, 1); }
+      }
+    }
+    for (const t of this.tracers) this._removeMesh(t.mesh);
+    this.tracers = []; this.flashes = []; this.smokes = []; this.zones = [];
+    this.walls = []; this.turrets = []; this.traps = []; this.reveals = [];
+  }
+
   _removeMesh(mesh) {
     if (!mesh) return;
     this.r.scene.remove(mesh);
@@ -380,14 +400,15 @@ export class Game {
   spawnTracer(a, b) {
     const dist = a.distanceTo(b);
     if (dist < 0.1) return;
-    const geo = new THREE.CylinderGeometry(0.02, 0.02, dist, 5, 1, true);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xfff2a0, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+    // Thick, hot yellow-white additive beam so shots read clearly.
+    const geo = new THREE.CylinderGeometry(0.05, 0.05, dist, 6, 1, true);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xfff6c8, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
     const beam = new THREE.Mesh(geo, mat);
     const mid = a.clone().add(b).multiplyScalar(0.5);
     beam.position.copy(mid);
     beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
     this.r.scene.add(beam);
-    this.tracers.push({ mesh: beam, life: 0.12, max: 0.12 });
+    this.tracers.push({ mesh: beam, life: 0.14, max: 0.14 });
   }
 
   muzzleFlash() { bus.emit('muzzle'); }
@@ -496,19 +517,22 @@ export class Game {
     if (!ab) return false;
     const st = e.abilityState[key];
     const free = this.settings.noCooldown || this.mode.freeAbilities;
+    // Recast delay is ALWAYS enforced (even in free mode) so held keys can't
+    // spawn an ability every frame.
+    if (this.now < (st.cdUntil || 0)) return false;
     if (!free) {
       if (ab.ult) {
         if (e.ultPoints < (ab.points || 7)) return false;
       } else {
         if ((st.charges ?? 0) <= 0) return false;
-        if (this.now < (st.cdUntil || 0)) return false;
       }
     }
     const aim = { dir: e.aimDir(), point: e.eyePosition().add(e.aimDir().multiplyScalar(20)) };
     try { ab.cast(this, e, aim); } catch (err) { console.error('ability error', err); return false; }
+    st.cdUntil = this.now + (ab.cooldown || (free ? 0.6 : 0.4));
     if (!free) {
       if (ab.ult) e.ultPoints = 0;
-      else { st.charges -= 1; if (ab.cooldown) st.cdUntil = this.now + ab.cooldown; }
+      else st.charges -= 1;
     }
     if (e.isPlayer) this._emitHud();
     return true;
@@ -516,6 +540,7 @@ export class Game {
 
   // buy ability charges during buy phase
   buyAbility(e, key) {
+    if (this.phase !== 'buy' && !this.settings.infiniteMoney) return false;
     const ab = e.agent.abilities[key];
     if (!ab || ab.ult || !ab.cost) return false;
     if (e.credits < ab.cost) return false;
@@ -532,7 +557,7 @@ export class Game {
   onDamage(attacker, victim, applied, part, point) {
     if (part === 'head') audio.headshot(); else audio.hit();
     if (attacker.isPlayer) bus.emit('hitmarker', { head: part === 'head', kill: !victim.alive });
-    if (!victim.alive) this._registerKill(attacker, victim, victim.weaponJustKnife ? 'knife' : 'gun');
+    if (!victim.alive) this._registerKill(attacker, victim, attacker.weapon().cat === 'melee' ? 'knife' : 'gun');
   }
 
   _registerKill(attacker, victim, method) {
@@ -573,8 +598,9 @@ export class Game {
   _maybeRespawn(victim) {
     if (this.mode.kind === 'ffa' || this.mode.kind === 'tdm' || this.mode.kind === 'gungame') {
       const delay = 2.0;
+      const token = this._matchToken;
       setTimeout(() => {
-        if (this.state !== 'playing') return;
+        if (this.state !== 'playing' || this._matchToken !== token) return;
         victim._deadCounted = false;
         victim.resetForRound(true);
         if (this.mode.freeAbilities) this._refillAbilities(victim);
@@ -612,7 +638,7 @@ export class Game {
     if (p.alive && p.team === 'def' && sp.planted && !sp.defused) {
       const d = Math.hypot(p.pos.x - sp.plantPos.x, p.pos.z - sp.plantPos.z);
       if (d < 2 && holdingF) {
-        sp.defuseProgress += dt / DEFUSE_TIME;
+        this._advanceDefuse(sp, dt);
         bus.emit('interact', { type: 'defuse', progress: sp.defuseProgress });
         if (sp.defuseProgress >= 1) this._defuseSpike(p);
       } else if (sp.defuseProgress > 0 && sp.defuseProgress < 1 && d >= 2) {
@@ -641,10 +667,18 @@ export class Game {
     if (e.team === 'def' && sp.planted && !sp.defused) {
       const d = Math.hypot(e.pos.x - sp.plantPos.x, e.pos.z - sp.plantPos.z);
       if (d < 2 && !this._enemyNear(e, 8)) {
-        sp.defuseProgress += dt / DEFUSE_TIME;
+        this._advanceDefuse(sp, dt);
         if (sp.defuseProgress >= 1) this._defuseSpike(e);
       }
     }
+  }
+
+  // Advance defuse at most once per simulation tick so multiple defenders
+  // near the spike don't multiply the rate.
+  _advanceDefuse(sp, dt) {
+    if (sp._defuseTick === this.now) return;
+    sp._defuseTick = this.now;
+    sp.defuseProgress += dt / DEFUSE_TIME;
   }
 
   _enemyNear(e, range) {
@@ -717,16 +751,15 @@ export class Game {
     const sp = this.spike;
     const attAlive = this.entities.filter((e) => e.team === 'att' && e.alive).length;
     const defAlive = this.entities.filter((e) => e.team === 'def' && e.alive).length;
-    if (sp && sp.planted) {
-      if (defAlive === 0 && !sp.defused) return; // attackers still need detonation/defenders dead already handled below
-    }
-    if (!sp?.planted) {
+    if (!sp || !sp.planted) {
+      // pre-plant: team wipes / time expiry
       if (attAlive === 0) return this._endRound('def');
       if (defAlive === 0) return this._endRound('att');
       if (this.now >= this.phaseEnd) return this._endRound('def');
     } else if (!sp.defused && !sp.exploded) {
-      if (defAlive === 0) { /* wait for detonation */ }
-      if (attAlive === 0 && !sp.planted) return this._endRound('def');
+      // post-plant: no defenders left to defuse -> attackers win immediately.
+      // (attacker deaths do NOT end the round; the spike still detonates.)
+      if (defAlive === 0) return this._endRound('att');
     }
   }
 
@@ -751,8 +784,9 @@ export class Game {
     }
     // schedule next round
     this.state = 'roundend';
+    const token = this._matchToken;
     setTimeout(() => {
-      if (this.matchOver) return;
+      if (this.matchOver || this._matchToken !== token) return;
       // halftime side swap
       const total = this.attackerScore + this.defenderScore;
       if (this.mode.halftime && total === this.mode.halftime) this._swapSides();
@@ -856,6 +890,7 @@ export class Game {
     // plant mode
     const sites = this.mapMeta.sites;
     const keys = Object.keys(sites);
+    if (keys.length === 0) return e.spawnPos.clone();
     if (e.team === 'att') {
       if (sp && sp.planted) return sp.plantPos.clone();
       if (sp && sp.carrier === e) {
@@ -876,7 +911,21 @@ export class Game {
   _emitHud() {
     const p = this.player;
     const w = p.weapon();
+    // Compute a meaningful top-bar score/goal per mode.
+    let attScore = this.attackerScore;
+    let defScore = this.defenderScore;
+    let goalText = '';
+    const sumK = (t) => this.entities.filter((e) => e.team === t).reduce((s, e) => s + e.kills, 0);
+    if (this.mode.kind === 'tdm') {
+      attScore = sumK('att'); defScore = sumK('def'); goalText = `Ziel ${this.mode.killTarget} Kills`;
+    } else if (this.mode.kind === 'ffa') {
+      attScore = p.kills; defScore = Math.max(0, ...this.entities.map((e) => e.kills)); goalText = `Ziel ${this.mode.killTarget} Kills`;
+    } else if (this.mode.kind === 'gungame') {
+      attScore = (p._ggLevel ?? 0); defScore = Math.max(0, ...this.entities.map((e) => e._ggLevel ?? 0)); goalText = `Level ${(p._ggLevel ?? 0) + 1}/${GUNGAME_LADDER.length}`;
+    }
     bus.emit('hud', {
+      goalText,
+      killTarget: this.mode.killTarget,
       hp: Math.ceil(p.hp),
       armor: Math.ceil(p.armor),
       credits: p.credits,
@@ -892,8 +941,8 @@ export class Game {
       phase: this.phase,
       timeLeft: Math.max(0, Math.ceil(this.phaseEnd - this.now)),
       round: this.roundNum,
-      attScore: this.attackerScore,
-      defScore: this.defenderScore,
+      attScore,
+      defScore,
       side: this.playerSide,
       mode: this.mode,
       spike: this.spike ? { planted: this.spike.planted, defused: this.spike.defused, site: this.spike.site, carrier: this.spike.carrier === p } : null,

@@ -12,8 +12,9 @@ export class Viewmodel {
     this.recoil = 0;
     this.muzzle = null;
     this._mount();
-    // clearScene() (called on every loadMatch) wipes the HUD overlay scene,
-    // so re-mount the viewmodel + its lights whenever a match starts.
+    // clearScene() (called on every loadMatch) wipes the scene, so force a
+    // full rebuild whenever a match starts. Mounting itself is re-checked
+    // defensively every frame in update() and does not rely on this event.
     bus.on('match:start', () => { this._mount(); this.currentCat = null; });
     bus.on('muzzle', () => { this.recoil = 1; if (this.muzzle) this.muzzleTimer = 0.04; });
   }
@@ -21,9 +22,13 @@ export class Viewmodel {
   _mount() {
     // Parent the viewmodel to the main camera and make sure the camera is part
     // of the scene graph so its children are rendered. clearScene() (run on
-    // every loadMatch) wipes the scene, so this must run again on match:start.
+    // every loadMatch) wipes the scene; this is re-checked every frame in
+    // update(). Returns true when the camera had to be re-added — that means
+    // the scene was just wiped and the gun's GPU resources were disposed, so
+    // the caller must force a rebuild.
     const cam = this.r.camera;
-    if (cam.parent !== this.r.scene) this.r.scene.add(cam);
+    const remounted = cam.parent !== this.r.scene;
+    if (remounted) this.r.scene.add(cam);
     if (this.group.parent !== cam) cam.add(this.group);
     // dedicated light so the gun is well lit regardless of the map palette
     if (!this._light) {
@@ -31,14 +36,23 @@ export class Viewmodel {
       this._light.position.set(0.3, 0.1, -0.4);
     }
     if (this._light.parent !== cam) cam.add(this._light);
+    return remounted;
   }
 
   _clear() {
     while (this.group.children.length) {
       const c = this.group.children[0];
       this.group.remove(c);
-      c.traverse?.((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+      c.traverse?.((o) => {
+        // Sprites share one global geometry in three.js — disposing it would
+        // break every other sprite in the scene (e.g. plant-site labels).
+        if (o.geometry && !o.isSprite) o.geometry.dispose();
+        if (o.material) o.material.dispose();
+      });
     }
+    this.gun = null;
+    this.muzzle = null;
+    this.currentCat = null;
   }
 
   build(cat) {
@@ -105,8 +119,13 @@ export class Viewmodel {
   update(dt) {
     const p = this.game.player;
     if (!p) return;
+    // Defensive re-mount every frame: clearScene() (loadMatch) removes the
+    // camera from the scene and disposes the gun's geometry/materials. Do not
+    // rely on 'match:start' event ordering — if the camera had to be
+    // re-added, the old gun resources are stale, so force a rebuild too.
+    if (this._mount()) this.currentCat = null;
     const cat = p.alive ? p.weapon().cat : null;
-    if (cat && cat !== this.currentCat) this.build(cat);
+    if (cat && (cat !== this.currentCat || !this.gun)) this.build(cat);
     this.group.visible = !!(p.alive && this.game.state === 'playing' && !this.game.buyOpen && !this.game.scopeActive);
     if (!this.gun) return;
 

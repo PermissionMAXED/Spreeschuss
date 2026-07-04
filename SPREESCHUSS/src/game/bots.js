@@ -28,7 +28,7 @@ function los(game, from, to) {
   const dist = dir.length();
   dir.normalize();
   const wall = raycastWorld(game.colliders, from, dir, dist);
-  return wall >= dist - 0.5;
+  return wall >= dist - 0.1;
 }
 
 function nearestEnemy(game, e) {

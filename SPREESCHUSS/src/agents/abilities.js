@@ -40,7 +40,7 @@ export const AbilityBehaviors = {
     cast(game, caster, aim) {
       const p = forwardPoint(caster, aim, opts.dist ?? 16);
       p.y = 0.05;
-      game.spawnZone(p, opts.radius ?? 4, opts.duration ?? 5, { dps: opts.dps ?? 45, team: caster.team, color: 0xff6a2a });
+      game.spawnZone(p, opts.radius ?? 4, opts.duration ?? 5, { dps: opts.dps ?? 45, team: caster.team, owner: caster, color: 0xff6a2a });
     },
   }),
 
@@ -49,7 +49,7 @@ export const AbilityBehaviors = {
     cast(game, caster, aim) {
       const p = forwardPoint(caster, aim, opts.dist ?? 16);
       p.y = 0.05;
-      game.spawnZone(p, opts.radius ?? 5, opts.duration ?? 6, { slow: opts.slow ?? 0.5, team: caster.team, color: 0x7fe0ff });
+      game.spawnZone(p, opts.radius ?? 5, opts.duration ?? 6, { slow: opts.slow ?? 0.5, team: caster.team, owner: caster, color: 0x7fe0ff });
     },
   }),
 
@@ -90,7 +90,7 @@ export const AbilityBehaviors = {
     cast(game, caster, aim) {
       const p = forwardPoint(caster, aim, opts.dist ?? 4);
       p.y = 0.05;
-      game.spawnTurret(p, caster.team, { dps: opts.dps ?? 18, range: opts.range ?? 30, duration: opts.duration ?? 40 });
+      game.spawnTurret(p, caster.team, { dps: opts.dps ?? 18, range: opts.range ?? 30, duration: opts.duration ?? 40, owner: caster });
     },
   }),
 

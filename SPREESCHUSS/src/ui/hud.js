@@ -77,7 +77,7 @@ export class HUD {
     bus.on('halftime', () => this.banner('SEITENWECHSEL', 'neutral'));
     bus.on('buy:toggle', (open) => this.renderBuyMenu(open));
     bus.on('match:end', (d) => this.showMatchEnd(d));
-    bus.on('match:start', () => { this.el.matchend.classList.remove('show'); this.el.deathOverlay.classList.remove('show'); });
+    bus.on('match:start', () => { this.el.matchend.classList.remove('show'); this.el.deathOverlay.classList.remove('show'); this.scoreboardHeld = false; this.el.scoreboard.classList.remove('show'); });
   }
 
   update(d) {
@@ -92,11 +92,17 @@ export class HUD {
     this.el.scoreAtt.textContent = d.attScore;
     this.el.scoreDef.textContent = d.defScore;
 
-    const m = Math.floor(d.timeLeft / 60);
-    const s = (d.timeLeft % 60).toString().padStart(2, '0');
-    this.el.roundTimer.textContent = `${m}:${s}`;
-    const phaseText = { buy: 'KAUFPHASE (B)', live: '' }[d.phase] || '';
-    this.el.phaseLabel.textContent = phaseText;
+    const plant = d.mode && d.mode.kind === 'plant';
+    if (plant) {
+      const m = Math.floor(d.timeLeft / 60);
+      const s = (d.timeLeft % 60).toString().padStart(2, '0');
+      this.el.roundTimer.textContent = `${m}:${s}`;
+      this.el.phaseLabel.textContent = { buy: 'KAUFPHASE (B)', live: '' }[d.phase] || '';
+    } else {
+      // deathmatch / tdm / gungame: show goal instead of a countdown
+      this.el.roundTimer.textContent = d.mode && d.mode.kind === 'gungame' ? '⚔' : 'DM';
+      this.el.phaseLabel.textContent = d.goalText || '';
+    }
 
     // spike status
     if (d.spike && d.spike.planted && !d.spike.defused) {
@@ -112,6 +118,13 @@ export class HUD {
 
     this._renderAbilities(d.abilities, d.ultPoints, d.ultMax);
     this._renderScoreboard(d.scoreboard, d);
+    // Re-assert scoreboard visibility each HUD tick (~30/s). Hold-to-show is
+    // driven by the one-shot 'scoreboard' events AND the live key state, so a
+    // missed/blocked keydown self-heals while Tab is physically held, and a
+    // lone keyup (or flaky events) can never leave the panel stuck open.
+    const tabDown = !!this.game.input?.isDown('Tab');
+    if (tabDown !== this.scoreboardHeld) this.scoreboardHeld = tabDown;
+    this.el.scoreboard.classList.toggle('show', this.scoreboardHeld);
     this._drawMinimap(d.minimap, d.side);
 
     // death overlay

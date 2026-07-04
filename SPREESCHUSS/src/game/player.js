@@ -57,7 +57,7 @@ export class PlayerController {
 
     // --- Move ---
     const forward = new THREE.Vector3(Math.sin(e.yaw), 0, Math.cos(e.yaw)).multiplyScalar(-1);
-    const right = new THREE.Vector3(forward.z, 0, -forward.x);
+    const right = new THREE.Vector3(-forward.z, 0, forward.x);
     const wish = new THREE.Vector3();
     if (this.input.isDown('KeyW')) wish.add(forward);
     if (this.input.isDown('KeyS')) wish.sub(forward);
@@ -99,10 +99,10 @@ export class PlayerController {
     finishReloadIfDue(e, now);
     const canAct = this.input.locked && this.game.state === 'playing' && !this.game.buyOpen;
     const w = e.weapon();
-    const wantFire = canAct && this.input.mouse.left && (w.auto || !this._firedThisClick);
     if (canAct && this.input.mouse.left) {
-      if (!w.auto) this._firedThisClick = true;
-      updateShooter(this.game, e, wantFire, now);
+      const wantFire = w.auto || !this._firedThisClick;
+      const fired = updateShooter(this.game, e, wantFire, now);
+      if (fired && !w.auto) this._firedThisClick = true;
     }
     if (!this.input.mouse.left) this._firedThisClick = false;
 
@@ -118,7 +118,8 @@ export class PlayerController {
     const eye = (h / HEIGHT) * EYE;
     const bobY = Math.sin(this.bob) * 0.03;
     this.camera.position.set(e.pos.x, e.pos.y + eye + bobY, e.pos.z);
-    const euler = new THREE.Euler(pitch + this.recoil.x, e.yaw + this.recoil.y, 0, 'YXZ');
+    // `pitch` already includes recoil.x; only add yaw recoil here.
+    const euler = new THREE.Euler(pitch, e.yaw + this.recoil.y, 0, 'YXZ');
     this.camera.quaternion.setFromEuler(euler);
   }
 }
