@@ -1,0 +1,22 @@
+{
+  "name": "spreeschuss",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Spreeschuss - a competitive 5v5 tactical FPS built with three.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server/index.js",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "three": "^0.169.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.8",
+    "eslint": "^9.12.0"
+  }
+}
