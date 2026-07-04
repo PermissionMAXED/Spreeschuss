@@ -159,7 +159,7 @@ export class HUD {
       body = `<div class="sb-team att"><h3>Angriff · ${d.attScore}</h3><table>${head}${rows('att')}</table></div>
               <div class="sb-team def"><h3>Verteidigung · ${d.defScore}</h3><table>${head}${rows('def')}</table></div>`;
     }
-    this.el.scoreboard.innerHTML = `<div class="sb-inner"><h2>${d.mode?.name || ''} — ${d.map?.name || ''}</h2>${body}</div>`;
+    this.el.scoreboard.innerHTML = `<div class="sb-inner"><h2>${d.mode?.name || ''} — ${this.game.map?.name || ''}</h2>${body}</div>`;
   }
 
   _drawMinimap(mm, side) {

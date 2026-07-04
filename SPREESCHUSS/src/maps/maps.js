@@ -32,6 +32,14 @@ const NAMES = [
 
 const FFA_NAMES = ['Arena Spree', 'Betonpit', 'Neon Dome', 'Bunker 61', 'Dachlabyrinth'];
 
+// Remove boxes whose XZ footprint (plus margin) contains any spawn point, so
+// players can never spawn inside a collider on unlucky seeds.
+function clearSpawnBoxes(boxes, spawnPoints, margin = 0.6) {
+  return boxes.filter((b) => !spawnPoints.some(([x, z]) =>
+    Math.abs(x - b.pos[0]) <= b.size[0] / 2 + margin &&
+    Math.abs(z - b.pos[2]) <= b.size[2] / 2 + margin));
+}
+
 // Build a symmetric plant map from a seed.
 function genPlantMap(index) {
   const rand = mulberry32(1000 + index * 97);
@@ -88,13 +96,16 @@ function genPlantMap(index) {
     ],
   };
 
+  const spawnPoints = [...spawns.attackers, ...spawns.defenders].map(([x, z]) => [x, z]);
+  const clearedBoxes = clearSpawnBoxes(boxes, spawnPoints);
+
   return {
     id: `plant_${index}`,
     name: NAMES[index % NAMES.length],
     mode: 'plant',
     palette: pal,
     size: [w, d],
-    boxes,
+    boxes: clearedBoxes,
     sites,
     spawns,
   };
@@ -122,8 +133,10 @@ function genFFAMap(index) {
   for (let i = 0; i < spawnCount; i++) {
     const a = (i / spawnCount) * Math.PI * 2;
     const r = Math.min(w, d) / 2 - 5;
-    ffa.push([Math.cos(a) * r, Math.sin(a) * r, -a + Math.PI]);
+    ffa.push([Math.cos(a) * r, Math.sin(a) * r, Math.PI / 2 - a]);
   }
+
+  const clearedBoxes = clearSpawnBoxes(boxes, ffa.map(([x, z]) => [x, z]));
 
   return {
     id: `ffa_${index}`,
@@ -131,7 +144,7 @@ function genFFAMap(index) {
     mode: 'ffa',
     palette: pal,
     size: [w, d],
-    boxes,
+    boxes: clearedBoxes,
     sites: {},
     spawns: { ffa },
   };

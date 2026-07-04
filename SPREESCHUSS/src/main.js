@@ -65,7 +65,7 @@ function toMenu() {
   menu.render();
 }
 bus.on('ui:mainmenu', toMenu);
-bus.on('match:end', () => { hideLock(); });
+bus.on('match:end', () => { hideLock(); input.exitLock(); });
 
 // scope (right mouse) for snipers
 bus.on('key:down', () => {});
@@ -73,7 +73,7 @@ window.addEventListener('mousedown', (e) => {
   if (e.button === 2 && input.locked && game.player) {
     const w = game.player.weapon();
     if (w.scoped) { game.scopeActive = true; renderer.setFov(45); }
-    else { renderer.setFov(70); game.scopeActive = false; }
+    else { renderer.setFov(90); game.scopeActive = false; }
   }
 });
 window.addEventListener('mouseup', (e) => {

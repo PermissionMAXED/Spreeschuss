@@ -57,7 +57,7 @@ export const AbilityBehaviors = {
     type: 'wall',
     cast(game, caster, aim) {
       const p = forwardPoint(caster, aim, opts.dist ?? 8);
-      const yaw = caster.yaw + Math.PI / 2;
+      const yaw = caster.yaw;
       game.spawnWall(p, yaw, opts.length ?? 12, opts.height ?? 3.5, opts.duration ?? 20);
     },
   }),

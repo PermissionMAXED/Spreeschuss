@@ -30,6 +30,7 @@ export function buildMap(scene, map) {
   sun.shadow.bias = -0.0005;
   const sc = sun.shadow.camera;
   sc.left = -80; sc.right = 80; sc.top = 80; sc.bottom = -80;
+  sc.updateProjectionMatrix();
   group.add(sun);
   // secondary fill light from the opposite side
   const fill = new THREE.DirectionalLight(new THREE.Color(pal.accent), 0.5);
