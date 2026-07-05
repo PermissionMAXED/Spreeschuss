@@ -33,8 +33,7 @@ export class Game {
     this.buyOpen = false;
     this.scopeActive = false;
 
-    // effect pools
-    this.tracers = [];
+    // effect pools (tracers/decals live in EffectsSystem)
     this.flashes = [];
     this.smokes = [];
     this.zones = [];
@@ -42,7 +41,6 @@ export class Game {
     this.turrets = [];
     this.traps = [];
     this.reveals = [];
-    this.decals = [];
     this.fx = new EffectsSystem(this);
 
     this._bindKeys();
@@ -264,14 +262,8 @@ export class Game {
     if (this._hudAcc >= 1 / 30) { this._hudAcc = 0; this._emitHud(); }
   }
 
-  // per-frame render extras (fade tracers, sparks, decals, smoke, spike fx)
+  // per-frame render extras (tracers, sparks, decals, smoke, spike fx)
   renderExtras(dt) {
-    for (let i = this.tracers.length - 1; i >= 0; i--) {
-      const t = this.tracers[i];
-      t.life -= dt;
-      if (t.mesh.material) t.mesh.material.opacity = Math.max(0, t.life / t.max);
-      if (t.life <= 0) { this.r.scene.remove(t.mesh); t.mesh.geometry.dispose(); t.mesh.material.dispose(); this.tracers.splice(i, 1); }
-    }
     this.fx.update(dt);
   }
 
@@ -386,8 +378,7 @@ export class Game {
         if (it.collider) { const i = this.colliders.indexOf(it.collider); if (i >= 0) this.colliders.splice(i, 1); }
       }
     }
-    for (const t of this.tracers) this._removeMesh(t.mesh);
-    this.tracers = []; this.flashes = []; this.smokes = []; this.zones = [];
+    this.flashes = []; this.smokes = []; this.zones = [];
     this.walls = []; this.turrets = []; this.traps = []; this.reveals = [];
     this.fx.clear();
   }

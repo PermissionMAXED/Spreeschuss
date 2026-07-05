@@ -96,7 +96,8 @@ export class Renderer {
   clearScene() {
     // Dispose and remove all children of the main scene.
     const disposeObj = (obj) => {
-      if (obj.geometry) obj.geometry.dispose();
+      // Sprites share one global geometry in three.js — never dispose it.
+      if (obj.geometry && !obj.isSprite) obj.geometry.dispose();
       if (obj.material) {
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
         for (const m of mats) {
