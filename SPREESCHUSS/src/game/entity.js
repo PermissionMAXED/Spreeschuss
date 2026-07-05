@@ -39,6 +39,14 @@ export class Entity {
     this.kills = 0;
     this.deaths = 0;
     this.assists = 0;
+    // assist ledger: [{ id, name, isPlayer, amount, until }] of recent
+    // damagers, maintained by game.onDamage and read by game._registerKill
+    this._recentDamagers = [];
+    // per-round MVP tracking (reset each round via resetForRound)
+    this._roundKills = 0;
+    this._roundDamage = 0;
+    this._roundPlant = false;
+    this._roundDefuse = false;
 
     this.ultPoints = 0;
     this.abilityState = {};
@@ -96,6 +104,11 @@ export class Entity {
     this.alive = true;
     this.vel.set(0, 0, 0);
     this.reloadUntil = 0;
+    this._recentDamagers = [];
+    this._roundKills = 0;
+    this._roundDamage = 0;
+    this._roundPlant = false;
+    this._roundDefuse = false;
     this.effects.flashUntil = 0;
     this.effects.slowUntil = 0;
     this.effects.healUntil = 0;
@@ -151,6 +164,11 @@ export class Entity {
 //   - animation is fully self-driven via an onBeforeRender hook on the torso
 //     mesh (game.js never calls per-frame avatar updates); walk speed is
 //     inferred from position deltas and feet never clip the floor mid-swing.
+//   - the root group exposes event hooks on userData: die() starts a <=1.1 s
+//     self-driven death collapse (userData.dyingUntil reports when it ends),
+//     revive() restores the bind pose/materials for respawn or round start,
+//     hitReact(part) plays a short flinch. game.js calls these on events
+//     only — never per frame.
 
 function _box(parent, mat, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -224,7 +242,10 @@ function _gunProp(parent, gunMat, darkMat) {
 // Small shared material sets. Agent colors never change after construction
 // (_swapSides only reassigns e.color, never recolors built meshes), so sets
 // are cached per color hex and shared by every mesh of that agent's avatar.
-// Idle animations only mutate transforms, never cached materials.
+// Idle animations only mutate transforms, never cached materials. The two
+// emissive materials (glow/glowSoft) are CLONED per avatar in buildAvatar so
+// the death collapse can fade one avatar's emissives without touching any
+// other avatar that shares the same color.
 const _MAT_CACHE = new Map();
 let _NEUTRAL = null;
 
@@ -757,14 +778,129 @@ const AGENT_STYLES = {
 // (game.js moves the group every tick) inside an onBeforeRender hook on the
 // torso mesh, which is always rendered while the avatar is visible. The
 // per-agent idle callback runs after the shared cycle each frame; nothing in
-// here allocates.
-function _attachAnim(rig, idleFn, gait = {}) {
+// here allocates. On top of the shared walk cycle this layer also drives:
+//   - richer standing idles: chest breathing, slow weight shifts and one
+//     periodic role-flavored fidget (Wächter scan, Duellant shoulder roll,
+//     Stratege finger drumming, Initiator gear check);
+//   - userData.hitReact(part): a ~0.18 s flinch layered over walk/idle;
+//   - userData.die(): a <= 1.1 s self-driven death collapse (knees buckle,
+//     torso pitches, body tips in a per-agent-seeded direction, limbs settle,
+//     this avatar's own emissive materials fade out) + userData.revive()
+//     restoring the exact bind pose and material state.
+// game.js only calls die()/revive()/hitReact() on events — never per frame.
+// Everything is keyed off performance.now(), so an avatar culled off-screen
+// costs nothing and snaps to the correct pose when rendered again.
+
+const DIE_DUR = 1.05;  // collapse length in seconds (contract: <= 1.1 s)
+const HIT_DUR = 0.18;  // hit-flinch length in seconds
+
+// deterministic tiny string hash -> [0,1): seeds the per-agent collapse
+// direction so each agent always crumples its own characteristic way
+function _seed01(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 4096) / 4096;
+}
+
+function _smooth(x) { return x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x); }
+
+function _attachAnim(rig, idleFn, gait = {}, M = null, agent = null) {
   const bob = gait.bob ?? 1;
   const swingAmp = gait.swing ?? 0.55;
-  const { g, upper, hold, legL, legR, torso } = rig;
-  const anim = { lastX: 0, lastZ: 0, lastT: -1, phase: Math.random() * Math.PI * 2, idle: Math.random() * Math.PI * 2, speed: 0 };
+  const { g, upper, head, hold, legL, legR, torso } = rig;
+  const role = agent?.role || null;
+  const seed = _seed01(agent?.id || 'generic');
+  // 'YXZ' keeps game.js's per-frame yaw (rotation.y) as the outermost
+  // rotation, so the death tip (rotation.x/z) happens in body-local space:
+  // the corpse keels relative to its own facing, never spinning the yaw.
+  g.rotation.order = 'YXZ';
+  const glowBase = M ? M.glow.emissiveIntensity : 0;
+  const glowSoftBase = M ? M.glowSoft.emissiveIntensity : 0;
+  const anim = {
+    lastX: 0, lastZ: 0, lastT: -1,
+    phase: Math.random() * Math.PI * 2, idle: Math.random() * Math.PI * 2, speed: 0,
+    dying: false, dieT0: 0,
+    hitUntil: 0, hitPart: 'body', hitSign: 1,
+  };
+  // per-agent-seeded collapse: tip direction (unit x/z in body space) and an
+  // asymmetric knee fold so no two agents die identically
+  const dieAng = seed * Math.PI * 2;
+  const tipX = Math.cos(dieAng);
+  const tipZ = Math.sin(dieAng);
+  const buckleL = 0.85 + seed * 0.6;
+  const buckleR = 0.4 + (1 - seed) * 0.55;
+
+  g.userData.die = () => {
+    if (anim.dying) return;
+    anim.dying = true;
+    anim.hitUntil = 0;
+    anim.dieT0 = performance.now() / 1000;
+    // game.js keeps the mesh visible (and un-moved) until this timestamp
+    g.userData.dyingUntil = anim.dieT0 + DIE_DUR;
+  };
+
+  g.userData.revive = () => {
+    anim.dying = false;
+    anim.hitUntil = 0;
+    anim.lastT = -1; // re-baseline speed inference across the spawn teleport
+    g.userData.dyingUntil = 0;
+    g.rotation.x = 0; g.rotation.z = 0;
+    upper.position.set(0, 0, 0);
+    upper.rotation.set(0, 0, 0);
+    head.rotation.set(0, 0, 0);
+    hold.rotation.set(0, 0, 0);
+    legL.rotation.set(0, 0, 0);
+    legR.rotation.set(0, 0, 0);
+    torso.scale.set(1, 1, 1);
+    if (M) {
+      M.glow.emissiveIntensity = glowBase;
+      M.glowSoft.emissiveIntensity = glowSoftBase;
+    }
+  };
+
+  g.userData.hitReact = (part) => {
+    if (anim.dying) return;
+    anim.hitUntil = performance.now() / 1000 + HIT_DUR;
+    anim.hitPart = part === 'head' ? 'head' : 'body';
+    anim.hitSign = Math.random() < 0.5 ? -1 : 1;
+  };
+
   torso.onBeforeRender = () => {
     const now = performance.now() / 1000;
+
+    // ------------------------------------------------------ death collapse
+    // Pure function of time since die(): buckle -> pitch/tip -> settle. Runs
+    // instead of the walk/idle cycle so nothing fights the corpse pose.
+    if (anim.dying) {
+      const k = Math.min(1, (now - anim.dieT0) / DIE_DUR);
+      const buckle = _smooth(Math.min(1, k / 0.38));       // knees give out
+      const tip = _smooth(Math.max(0, (k - 0.22) / 0.72)); // body keels over
+      const settle = Math.sin(k * Math.PI * 2.5) * (1 - k) * 0.06; // limp wobble
+      legL.rotation.x = -buckleL * buckle;
+      legR.rotation.x = -buckleR * buckle;
+      upper.position.x = 0;
+      upper.position.y = -0.34 * buckle;
+      upper.rotation.x = 0.42 * buckle * (tipX >= 0 ? 1 : -0.4); // slump with the fall
+      upper.rotation.y = 0.18 * tip * (tipZ >= 0 ? 1 : -1);
+      upper.rotation.z = settle;
+      g.rotation.x = tipX * 1.3 * tip;
+      g.rotation.z = tipZ * 1.3 * tip + settle * 0.5;
+      head.rotation.x = 0.45 * tip;            // chin drops
+      head.rotation.y = 0.2 * tip * (tipZ >= 0 ? -1 : 1);
+      head.rotation.z = 0.3 * tip * (tipZ >= 0 ? 1 : -1); // loll to the side
+      hold.rotation.x = 0.6 * buckle + settle; // arms/prop sag toward the floor
+      hold.rotation.y = 0;
+      hold.rotation.z = 0.25 * tip * (tipZ >= 0 ? 1 : -1);
+      torso.scale.set(1, 1, 1);
+      if (M) {
+        // fade this avatar's own emissives (materials are per-avatar clones)
+        const f = 1 - 0.95 * _smooth(k);
+        M.glow.emissiveIntensity = glowBase * f;
+        M.glowSoft.emissiveIntensity = glowSoftBase * f;
+      }
+      return;
+    }
+
     if (anim.lastT < 0) { anim.lastT = now; anim.lastX = g.position.x; anim.lastZ = g.position.z; return; }
     let dt = now - anim.lastT;
     if (dt < 0.001) return; // ignore extra render passes in the same frame
@@ -787,11 +923,73 @@ function _attachAnim(rig, idleFn, gait = {}) {
     upper.rotation.x = 0; // reset so idle flavors can lean via `+=`
     upper.rotation.y = Math.sin(anim.phase) * 0.06 * walk;
     upper.rotation.z = Math.sin(anim.phase) * 0.03 * walk;
+    // head re-based every frame: idle flavors assign, later layers use `+=`
+    head.rotation.x = 0; head.rotation.y = 0; head.rotation.z = 0;
     // prop sway: gentle idle scan + walk pump
     hold.rotation.x = Math.sin(now * 1.4 + anim.idle) * 0.03 + Math.sin(anim.phase * 2) * 0.04 * walk;
     hold.rotation.y = Math.sin(now * 0.9 + anim.idle) * 0.04;
     hold.rotation.z = 0;
     if (idleFn) idleFn(now, walk);
+
+    // ------------------------------------------------------ richer idles
+    // Layered on top of the per-agent flavor when standing (speed ~ 0);
+    // scales out quickly once moving so the walk cycle stays untouched.
+    const idleAmt = Math.max(0, 1 - walk * 3);
+    if (idleAmt > 0.01) {
+      // chest breathing (scale pulse + the existing micro-bob above)
+      const br = Math.sin(now * 1.75 + anim.idle) * idleAmt;
+      torso.scale.set(1 + br * 0.012, 1 + br * 0.02, 1 + br * 0.035);
+      // slow weight shift from foot to foot
+      const ws = Math.sin(now * 0.42 + anim.idle * 2.3) * idleAmt;
+      upper.rotation.z += ws * 0.028;
+      upper.position.x = ws * 0.014;
+      legL.rotation.x += ws * 0.05;
+      legR.rotation.x -= ws * 0.05;
+      // ONE role-flavored fidget on a slow desynced cycle
+      const fseq = (now + seed * 100 + anim.idle * 3) % 6.5;
+      const env = fseq < 1.3 ? Math.sin((fseq / 1.3) * Math.PI) * idleAmt : 0;
+      if (env > 0.01) {
+        const fp = (fseq / 1.3) * Math.PI * 2;
+        if (role === 'Wächter') {
+          // deliberate sector scan across the held angle
+          head.rotation.y += Math.sin(fp * 0.5) * 0.5 * env;
+          upper.rotation.y += Math.sin(fp * 0.5) * 0.09 * env;
+        } else if (role === 'Duellant') {
+          // loose shoulder roll to stay warm
+          upper.rotation.z += Math.sin(fp * 2) * 0.055 * env;
+          hold.rotation.z += Math.sin(fp * 2 + 0.7) * 0.12 * env;
+          head.rotation.z += Math.sin(fp) * 0.05 * env;
+        } else if (role === 'Stratege') {
+          // drums fingers on the grip, glancing down at the hand
+          hold.rotation.x += Math.sin(now * 21) * 0.022 * env;
+          head.rotation.x += 0.14 * env;
+        } else if (role === 'Initiator') {
+          // quick gear check over the shoulder, prop raised slightly
+          head.rotation.y += -0.42 * env;
+          head.rotation.z += 0.1 * env;
+          hold.rotation.x += 0.09 * env;
+        }
+      }
+    } else {
+      torso.scale.set(1, 1, 1);
+      upper.position.x = 0;
+    }
+
+    // ------------------------------------------------------ hit flinch
+    // Sharp snap decaying over HIT_DUR, layered last so it reads over both
+    // the walk cycle and any idle flavor without breaking either.
+    if (now < anim.hitUntil) {
+      const hk = (anim.hitUntil - now) / HIT_DUR; // 1 -> 0
+      if (anim.hitPart === 'head') {
+        head.rotation.x += -0.45 * hk;           // head snaps back
+        head.rotation.z += 0.18 * hk * anim.hitSign;
+      } else {
+        upper.rotation.z += 0.11 * hk * anim.hitSign; // shoulder twitch
+        upper.rotation.y += 0.07 * hk * anim.hitSign;
+        upper.position.y -= 0.02 * hk;
+        hold.rotation.x += 0.12 * hk;
+      }
+    }
   };
 }
 
@@ -802,13 +1000,16 @@ function _attachAnim(rig, idleFn, gait = {}) {
 // recognized). See the contract notes at the top of this section.
 export function buildAvatar(color, agent) {
   const base = new THREE.Color(color);
-  const M = _agentMats(base);
+  const shared = _agentMats(base);
+  // per-avatar emissive clones: the death collapse fades THIS avatar's glow
+  // materials, so they must not be shared with same-colored avatars
+  const M = { ...shared, glow: shared.glow.clone(), glowSoft: shared.glowSoft.clone() };
   const N = _neutralMats();
   const style = agent ? AGENT_STYLES[agent.id] : null;
   const rig = _coreRig(M, N, style?.rig);
   if (agent?.role) _roleArmor(rig, M, N, agent.role);
   const idleFn = style ? style.build(rig, M, N) : _genericDecor(rig, M, N);
-  _attachAnim(rig, idleFn, style?.gait);
+  _attachAnim(rig, idleFn, style?.gait, M, agent);
   rig.g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return rig.g;
 }

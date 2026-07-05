@@ -156,6 +156,7 @@ export class Game {
       const keep = this.mode.kind === 'plant' ? e.alive : true;
       e._deadCounted = false;
       e.resetForRound(keep);
+      e.mesh?.userData?.revive?.(); // stand corpses back up (pose + materials)
       if (this.mode.freeAbilities) this._refillAbilities(e);
       if (this.mode.kind === 'gungame') {
         e._ggLevel = e._ggLevel ?? 0;
@@ -247,9 +248,16 @@ export class Game {
     for (const e of this.entities) {
       if (e.isBot && e.alive) updateBot(this, e, dt, this.now);
       if (e.mesh) {
-        e.mesh.visible = e.alive;
-        e.mesh.position.set(e.pos.x, e.pos.y, e.pos.z);
-        e.mesh.rotation.y = e.yaw + Math.PI;
+        if (e.alive) {
+          e.mesh.visible = true;
+          e.mesh.position.set(e.pos.x, e.pos.y, e.pos.z);
+          e.mesh.rotation.y = e.yaw + Math.PI;
+        } else {
+          // dead: freeze in place while the avatar's self-driven collapse
+          // plays (userData.die set dyingUntil in performance-clock seconds),
+          // then hide until revive() at respawn / round start
+          e.mesh.visible = (e.mesh.userData.dyingUntil || 0) > performance.now() / 1000;
+        }
       }
     }
 
@@ -520,6 +528,18 @@ export class Game {
       if (ab.ult) e.ultPoints = 0;
       else st.charges -= 1;
     }
+    bus.emit('ability:cast', {
+      caster: e.name,
+      isPlayer: !!e.isPlayer,
+      team: e.team,
+      agentId: e.agent.id,
+      key,
+      type: ab.type,
+      ult: !!ab.ult,
+      pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
+    });
+    // optional hook — the effects team implements castSignature in parallel
+    this.fx.castSignature?.(e, { agentId: e.agent.id, key, type: ab.type, ult: !!ab.ult });
     if (e.isPlayer) this._emitHud();
     return true;
   }
@@ -544,17 +564,49 @@ export class Game {
     if (point) this.fx.bodyHit(point, part, !victim.alive);
     if (part === 'head') audio.headshot(); else audio.hit();
     if (attacker.isPlayer) bus.emit('hitmarker', { head: part === 'head', kill: !victim.alive });
-    if (!victim.alive) this._registerKill(attacker, victim, attacker.weapon().cat === 'melee' ? 'knife' : 'gun');
+
+    // assist ledger on the victim: accumulate per-attacker damage, refresh
+    // the 5 s window, prune expired entries (read by _registerKill)
+    const list = victim._recentDamagers || (victim._recentDamagers = []);
+    for (let i = list.length - 1; i >= 0; i--) if (this.now >= list[i].until) list.splice(i, 1);
+    let entry = null;
+    for (const d of list) if (d.id === attacker.id) { entry = d; break; }
+    if (!entry) { entry = { id: attacker.id, name: attacker.name, isPlayer: !!attacker.isPlayer, amount: 0, until: 0 }; list.push(entry); }
+    entry.amount += applied;
+    entry.until = this.now + 5;
+
+    // per-round MVP tracking
+    attacker._roundDamage = (attacker._roundDamage || 0) + applied;
+
+    // flinch on non-lethal hits (avatars self-animate; event call only)
+    if (victim.alive) victim.mesh?.userData?.hitReact?.(part);
+
+    // 'damage' fires for weapon hits only (zones/turrets bypass onDamage)
+    const pt = point || victim.eyePosition();
+    bus.emit('damage', {
+      attacker: attacker.name,
+      attackerIsPlayer: !!attacker.isPlayer,
+      victim: victim.name,
+      victimIsPlayer: !!victim.isPlayer,
+      amount: Math.round(applied),
+      part,
+      kill: !victim.alive,
+      point: { x: pt.x, y: pt.y, z: pt.z },
+      attackerPos: { x: attacker.pos.x, y: attacker.pos.y, z: attacker.pos.z },
+    });
+
+    if (!victim.alive) this._registerKill(attacker, victim, attacker.weapon().cat === 'melee' ? 'knife' : 'gun', part);
   }
 
-  _registerKill(attacker, victim, method) {
+  _registerKill(attacker, victim, method, part) {
     if (victim._deadCounted) return;
     victim._deadCounted = true;
     victim.deaths++;
-    if (victim.mesh) victim.mesh.visible = false;
+    victim.mesh?.userData?.die?.(); // self-driven collapse; update() hides it when done
     audio.death();
     if (attacker && attacker !== victim) {
       attacker.kills++;
+      attacker._roundKills = (attacker._roundKills || 0) + 1;
       const reward = this.mode.kind === 'plant' ? 200 : 0;
       attacker.credits = Math.min(9000, attacker.credits + reward);
       attacker.ultPoints = Math.min(20, attacker.ultPoints + 1);
@@ -565,13 +617,29 @@ export class Game {
         if (nextW === 'knife') attacker.currentSlot = 'knife'; else attacker.giveWeapon(nextW);
       }
     }
+    // assist: largest non-killer contributor with >= 25 damage in the window
+    let assist = null;
+    let best = null;
+    for (const d of victim._recentDamagers || []) {
+      if (attacker && d.id === attacker.id) continue;
+      if (d.amount < 25 || this.now >= d.until) continue;
+      if (!best || d.amount > best.amount) best = d;
+    }
+    if (best) {
+      assist = best.name;
+      const helper = this.entities.find((x) => x.id === best.id);
+      if (helper) helper.assists++;
+    }
+
     bus.emit('kill', {
       attacker: attacker ? attacker.name : 'Welt',
       attackerTeam: attacker ? attacker.team : null,
       victim: victim.name,
       victimTeam: victim.team,
       method,
-      head: false,
+      // true only for headshot gun kills (zone/turret/knife pass no part)
+      head: method === 'gun' && part === 'head',
+      assist,
       player: (attacker && attacker.isPlayer) || victim.isPlayer,
     });
 
@@ -590,6 +658,7 @@ export class Game {
         if (this.state !== 'playing' || this._matchToken !== token) return;
         victim._deadCounted = false;
         victim.resetForRound(true);
+        victim.mesh?.userData?.revive?.(); // restore pose/materials before re-show
         if (this.mode.freeAbilities) this._refillAbilities(victim);
         // respawn location
         const sp = this.mapMeta.spawns;
@@ -690,6 +759,7 @@ export class Game {
     sp.plantedAt = this.now;
     sp.site = site;
     sp.plantPos = planter.pos.clone();
+    planter._roundPlant = true; // MVP bonus
     const mesh = this.fx.makeSpikeMesh();
     mesh.position.copy(sp.plantPos).setY(0.25);
     this.r.scene.add(mesh);
@@ -702,6 +772,7 @@ export class Game {
 
   _defuseSpike(defuser) {
     this.spike.defused = true;
+    defuser._roundDefuse = true; // MVP bonus
     if (this.spike.mesh) this.spike.mesh.material.color.set(0x40ff60);
     audio.win();
     this._endRound('def');
@@ -763,7 +834,7 @@ export class Game {
       e.credits = Math.min(9000, e.credits + reward);
     }
     if (this.playerSide === winnerTeam) audio.win(); else audio.lose();
-    bus.emit('round:end', { winner: winnerTeam, att: this.attackerScore, def: this.defenderScore });
+    bus.emit('round:end', { winner: winnerTeam, att: this.attackerScore, def: this.defenderScore, mvp: this._roundMvp(winnerTeam) });
 
     const rtw = this.mode.roundsToWin;
     if (this.attackerScore >= rtw || this.defenderScore >= rtw) {
@@ -780,6 +851,28 @@ export class Game {
       this.state = 'playing';
       this._startRound(false);
     }, ROUND_END_TIME * 1000);
+  }
+
+  // Winning team's best performer this round, damage-weighted:
+  // 100*kills + damage + 150 if they planted or defused. Null if the winning
+  // team has no entities (defensive; should not happen).
+  _roundMvp(winnerTeam) {
+    let best = null;
+    let bestScore = -1;
+    for (const e of this.entities) {
+      if (e.team !== winnerTeam) continue;
+      const score = 100 * (e._roundKills || 0) + (e._roundDamage || 0)
+        + ((e._roundPlant || e._roundDefuse) ? 150 : 0);
+      if (score > bestScore) { bestScore = score; best = e; }
+    }
+    if (!best) return null;
+    return {
+      name: best.name,
+      agent: best.agent?.name,
+      team: best.team,
+      kills: best._roundKills || 0,
+      damage: Math.round(best._roundDamage || 0),
+    };
   }
 
   _swapSides() {
@@ -917,6 +1010,7 @@ export class Game {
       armor: Math.ceil(p.armor),
       credits: p.credits,
       alive: p.alive,
+      assists: p.assists,
       weapon: w.name,
       weaponCat: w.cat,
       ammo: p.ammo[w.id] ?? 0,
@@ -958,7 +1052,7 @@ export class Game {
   _scoreboard() {
     return this.entities.map((e) => ({
       name: e.name, team: e.team, agent: e.agent?.name, kills: e.kills, deaths: e.deaths,
-      credits: e.credits, alive: e.alive, isPlayer: e.isPlayer,
+      assists: e.assists, credits: e.credits, alive: e.alive, isPlayer: e.isPlayer,
     })).sort((a, b) => b.kills - a.kills);
   }
 
