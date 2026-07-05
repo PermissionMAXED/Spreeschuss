@@ -360,7 +360,7 @@ export class HUD {
     if (d.mode && (d.mode.kind === 'ffa' || d.mode.kind === 'gungame')) {
       body = `<table>${head}${rows('all')}</table>`;
     } else {
-      const rtw = d.mode?.roundsToWin;
+      const rtw = d.roundsToWinEff ?? d.mode?.roundsToWin;
       body = `<div class="sb-team att"><h3>Angriff <b>${d.attScore}</b>${pipStrip(d.attScore, rtw, 'att')}</h3><table>${head}${rows('att')}</table></div>
               <div class="sb-team def"><h3>Verteidigung <b>${d.defScore}</b>${pipStrip(d.defScore, rtw, 'def')}</h3><table>${head}${rows('def')}</table></div>`;
     }
@@ -832,7 +832,7 @@ export class HUD {
       sub = `<span class="me-att">${d.att}</span><span class="me-colon">:</span><span class="me-def">${d.def}</span>`;
       // per-team breakdown from the last HUD snapshot
       const sb = this.last?.scoreboard || [];
-      const rtw = this.game.mode?.roundsToWin;
+      const rtw = this.last?.roundsToWinEff ?? this.game.mode?.roundsToWin;
       if (rtw && rtw <= 15) {
         const pips = (score, tcls) => {
           let s = '';
