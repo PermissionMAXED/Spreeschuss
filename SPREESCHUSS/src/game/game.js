@@ -10,6 +10,7 @@ import { updateBot, initBot } from './bots.js';
 import { audio } from '../audio/audio.js';
 import { weaponById, ARMOR } from '../weapons/weapons.js';
 import { startReload } from '../weapons/weaponsystem.js';
+import { EffectsSystem } from './effects.js';
 
 const BUY_TIME = 20;
 const LIVE_TIME = 100;
@@ -42,6 +43,7 @@ export class Game {
     this.traps = [];
     this.reveals = [];
     this.decals = [];
+    this.fx = new EffectsSystem(this);
 
     this._bindKeys();
   }
@@ -262,7 +264,7 @@ export class Game {
     if (this._hudAcc >= 1 / 30) { this._hudAcc = 0; this._emitHud(); }
   }
 
-  // per-frame render extras (fade tracers, muzzle)
+  // per-frame render extras (fade tracers, sparks, decals, smoke, spike fx)
   renderExtras(dt) {
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i];
@@ -270,6 +272,7 @@ export class Game {
       if (t.mesh.material) t.mesh.material.opacity = Math.max(0, t.life / t.max);
       if (t.life <= 0) { this.r.scene.remove(t.mesh); t.mesh.geometry.dispose(); t.mesh.material.dispose(); this.tracers.splice(i, 1); }
     }
+    this.fx.update(dt);
   }
 
   // ---------------------------------------------------------------- effects
@@ -386,6 +389,7 @@ export class Game {
     for (const t of this.tracers) this._removeMesh(t.mesh);
     this.tracers = []; this.flashes = []; this.smokes = []; this.zones = [];
     this.walls = []; this.turrets = []; this.traps = []; this.reveals = [];
+    this.fx.clear();
   }
 
   _removeMesh(mesh) {
@@ -398,17 +402,8 @@ export class Game {
 
   // ---------------------------------------------------------------- ability helper API
   spawnTracer(a, b) {
-    const dist = a.distanceTo(b);
-    if (dist < 0.1) return;
-    // Thick, hot yellow-white additive beam so shots read clearly.
-    const geo = new THREE.CylinderGeometry(0.05, 0.05, dist, 6, 1, true);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xfff6c8, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
-    const beam = new THREE.Mesh(geo, mat);
-    const mid = a.clone().add(b).multiplyScalar(0.5);
-    beam.position.copy(mid);
-    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-    this.r.scene.add(beam);
-    this.tracers.push({ mesh: beam, life: 0.14, max: 0.14 });
+    // Tapered hot-core beam, pooled + faded per frame by the effects system.
+    this.fx.spawnTracer(a, b);
   }
 
   muzzleFlash() { bus.emit('muzzle'); }
@@ -440,9 +435,9 @@ export class Game {
 
   spawnSmoke(pos, radius, duration) {
     audio.ability();
-    const geo = new THREE.SphereGeometry(radius, 16, 12);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xcccccc, transparent: true, opacity: 0.85 });
-    const mesh = new THREE.Mesh(geo, mat);
+    // Nicer layered volume; the {pos, radius, until} entry below is what
+    // gameplay (visionBlocked) reads and is unchanged.
+    const mesh = this.fx.makeSmokeMesh(radius);
     mesh.position.copy(pos.clone().setY(radius * 0.7));
     this.r.scene.add(mesh);
     this.smokes.push({ pos: mesh.position.clone(), radius, until: this.now + duration, mesh });
@@ -555,6 +550,7 @@ export class Game {
 
   // ---------------------------------------------------------------- combat callbacks
   onDamage(attacker, victim, applied, part, point) {
+    if (point) this.fx.bodyHit(point, part, !victim.alive);
     if (part === 'head') audio.headshot(); else audio.hit();
     if (attacker.isPlayer) bus.emit('hitmarker', { head: part === 'head', kill: !victim.alive });
     if (!victim.alive) this._registerKill(attacker, victim, attacker.weapon().cat === 'melee' ? 'knife' : 'gun');
@@ -703,7 +699,7 @@ export class Game {
     sp.plantedAt = this.now;
     sp.site = site;
     sp.plantPos = planter.pos.clone();
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.4), new THREE.MeshStandardMaterial({ color: 0xff3040, emissive: 0x661010 }));
+    const mesh = this.fx.makeSpikeMesh();
     mesh.position.copy(sp.plantPos).setY(0.25);
     this.r.scene.add(mesh);
     sp.mesh = mesh;
@@ -722,8 +718,8 @@ export class Game {
 
   _explodeSpike() {
     audio.death();
-    // boom effect
-    this.spawnZone(this.spike.plantPos.clone(), 8, 0.6, { dps: 0, color: 0xff4020 });
+    // boom effect (visual only — round outcome decided below)
+    this.fx.spikeDetonation(this.spike.plantPos.clone());
     this._endRound('att');
   }
 

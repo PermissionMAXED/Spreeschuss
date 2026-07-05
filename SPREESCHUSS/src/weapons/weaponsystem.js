@@ -94,6 +94,11 @@ function discharge(game, e, w) {
     const end = origin.clone().add(dir.clone().multiplyScalar(best));
     game.spawnTracer(origin, end);
 
+    // shot ended on world geometry -> impact sparks + bullet-hole decal (visual only)
+    if (!hitEntity && wallDist < w.range && w.cat !== 'melee' && game.fx) {
+      game.fx.wallImpact(origin, dir, wallDist);
+    }
+
     if (hitEntity) {
       let dmg = w.damage;
       // falloff

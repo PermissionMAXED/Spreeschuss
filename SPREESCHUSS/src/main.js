@@ -89,8 +89,11 @@ const loop = new Loop(
   (dt) => {
     game.renderExtras(dt);
     viewmodel.update(dt);
-    if (muzzleT > 0) { muzzleT -= dt; renderer.renderer.toneMappingExposure = 1.45; }
-    else { renderer.renderer.toneMappingExposure = 1.2; }
+    // Exposure kick still works with postprocessing: OutputPass reads
+    // toneMappingExposure every frame. Pair it with a brief bloom bump so the
+    // flash also glows.
+    if (muzzleT > 0) { muzzleT -= dt; renderer.renderer.toneMappingExposure = 1.45; renderer.setBloomBoost(0.25); }
+    else { renderer.renderer.toneMappingExposure = 1.2; renderer.setBloomBoost(0); }
     renderer.render();
   },
   1 / 120,
