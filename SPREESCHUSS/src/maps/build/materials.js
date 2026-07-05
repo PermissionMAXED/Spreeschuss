@@ -2,6 +2,20 @@ import * as THREE from 'three';
 import { surfaceTexture } from '../../engine/textures.js';
 import { paletteKey } from './util.js';
 
+// Guard three.js bump mapping against NaN: perturbNormalArb() ends with
+// normalize( abs( fDet ) * surf_norm - vGrad ), which is normalize(0) -> NaN
+// when the screen-space derivatives of a grazing-angle face degenerate
+// (fDet == 0, e.g. low slab tops viewed edge-on). One NaN pixel is enough for
+// the bloom pass to smear black across the entire frame (ffa_1 rendered
+// fully black from spawn). Fall back to the interpolated normal instead.
+// String-replace is a safe no-op if the chunk changes in future three builds.
+THREE.ShaderChunk.bumpmap_pars_fragment = THREE.ShaderChunk.bumpmap_pars_fragment.replace(
+  'return normalize( abs( fDet ) * surf_norm - vGrad );',
+  `vec3 pn = abs( fDet ) * surf_norm - vGrad;
+		float pnLen = length( pn );
+		return pnLen > 1e-8 ? pn / pnLen : surf_norm;`,
+);
+
 // =====================================================================
 // FROZEN INTERFACE — map surface materials.
 //
