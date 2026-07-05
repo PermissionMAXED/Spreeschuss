@@ -3,6 +3,7 @@ import { bus } from '../engine/eventbus.js';
 import { SHOP_ORDER, WEAPONS, ARMOR } from '../weapons/weapons.js';
 import { AGENTS } from '../agents/agents.js';
 import { agentPortraitURL, ABILITY_ICONS } from './logo.js';
+import { loadProgress, saveProgress, computeMatchXP, levelFor, recordRoundMvp, getMvpCount, resetMatchTracking } from './progression.js';
 
 // Small inline-SVG icons (no external assets).
 const svg = (body, vb = '0 0 22 10', w = 22, h = 10) => `<svg viewBox="${vb}" width="${w}" height="${h}" aria-hidden="true">${body}</svg>`;
@@ -44,6 +45,9 @@ export class HUD {
     this._dmgLive = []; // active damage numbers, oldest first
     this._mvpShowT = 0;
     this._mvpHideT = 0;
+    this._xpAwarded = false; // one XP award per 'match:end' (reset on 'match:start')
+    this._xpAward = null;    // cached award for defensive re-renders
+    this._xpAnim = null;     // running XP-panel animation (raf + timers)
   }
 
   _build() {
@@ -124,6 +128,8 @@ export class HUD {
     });
     bus.on('round:end', (d) => {
       this.banner(d.winner === this.game.playerSide ? 'RUNDE GEWONNEN' : 'RUNDE VERLOREN', d.winner === this.game.playerSide ? 'win' : 'lose');
+      // progression: count rounds where the player is MVP (name 'Du')
+      if (d.mvp && d.mvp.name === (this.game.player?.name || 'Du')) recordRoundMvp();
       this._queueMvp(d.mvp);
     });
     bus.on('round:start', () => this._hideMvp());
@@ -143,6 +149,10 @@ export class HUD {
       this._mmLayerId = null;
       this._hideMvp();
       this._resetDamageNumbers();
+      this._xpAwarded = false;
+      this._xpAward = null;
+      this._cancelXpAnim();
+      resetMatchTracking();
       for (const a of this._dirArcs) { clearTimeout(a.timer); a.until = 0; a.node.classList.remove('on'); }
     });
     bus.on('muzzle', () => { this._spread = 1; }); // player shot fired → crosshair bloom
@@ -849,13 +859,152 @@ export class HUD {
       };
       detail = `<div class="me-teams">${teamPanel('att', 'Angriff', d.att)}${teamPanel('def', 'Verteidigung', d.def)}</div>`;
     }
+    // progression: award XP once per match, persisted immediately (before the
+    // user can navigate away). Fully guarded — a progression failure must
+    // never break the matchend screen.
+    let xpAward = null;
+    try {
+      xpAward = this._awardMatchXp(d);
+    } catch (err) {
+      console.error('[HUD] XP award failed:', err);
+    }
     el.innerHTML = `<div class="me-inner ${cls}">
       <div class="me-kicker">MATCHENDE</div>
       <h1>${title}</h1>
       <div class="me-score">${sub}</div>
       ${detail}
+      ${xpAward ? this._xpPanelHTML(xpAward) : ''}
       <button id="meMenu" class="btn primary">Zurück zum Menü</button></div>`;
     el.querySelector('#meMenu').onclick = () => bus.emit('ui:mainmenu');
+    if (xpAward) this._animateXpPanel(el, xpAward);
+  }
+
+  // ---------------------------------------------------------------- progression / XP
+  // One award per 'match:end': the flag resets on 'match:start'. Player stats
+  // come from the freshest scoreboard available — the FFA payload carries its
+  // own snapshot; team modes use the last HUD snapshot (isPlayer row).
+  _awardMatchXp(d) {
+    if (this._xpAwarded) return this._xpAward; // re-render: reuse, never double-award
+    this._xpAwarded = true;
+    const sb = (d.ffa && Array.isArray(d.scoreboard)) ? d.scoreboard : (this.last?.scoreboard || []);
+    const row = sb.find((r) => r.isPlayer) || {};
+    const stats = {
+      won: !!d.playerWon,
+      kills: row.kills || 0,
+      deaths: row.deaths || 0,
+      assists: row.assists || 0,
+      mvpCount: getMvpCount(),
+    };
+    const gain = computeMatchXP(stats);
+    const before = loadProgress();
+    const after = {
+      totalXp: before.totalXp + gain.total,
+      matches: before.matches + 1,
+      wins: before.wins + (stats.won ? 1 : 0),
+    };
+    saveProgress(after); // persist right now, before any animation/navigation
+    this._xpAward = { stats, gain, oldXp: before.totalXp, newXp: after.totalXp };
+    return this._xpAward;
+  }
+
+  _xpPanelHTML({ stats, gain, oldXp, newXp }) {
+    const oldInfo = levelFor(oldXp);
+    const newInfo = levelFor(newXp);
+    const rows = [
+      ['Teilnahme', gain.participation, true],
+      ['Sieg', gain.win, gain.win > 0],
+      [`Kills ×${stats.kills}`, gain.kills, gain.kills > 0],
+      [`Assists ×${stats.assists}`, gain.assists, gain.assists > 0],
+      ['Runden-MVP', gain.mvp, gain.mvp > 0],
+    ].filter(([, , show]) => show)
+      .map(([label, xp]) => `<div class="me-xp-row"><span>${label}</span><b data-xp="${xp}">+0 XP</b></div>`)
+      .join('');
+    const totalRow = `<div class="me-xp-row total"><span>Gesamt</span><b data-xp="${gain.total}">+0 XP</b></div>`;
+    const levelUp = newInfo.level > oldInfo.level
+      ? `<div class="me-xp-levelup" id="xpLevelUp"><b>LEVEL ${newInfo.level}</b><em> — ${newInfo.rank.toUpperCase()}</em></div>`
+      : '';
+    return `<div class="me-xp" id="meXp">
+      <div class="me-xp-head">
+        <span class="me-xp-title">FORTSCHRITT</span>
+        <span class="me-xp-rank" id="xpRank">Level ${oldInfo.level} · ${oldInfo.rank}</span>
+      </div>
+      <div class="me-xp-rows">${rows}${totalRow}</div>
+      <div class="me-xp-bar" id="xpBar"><div class="me-xp-fill" id="xpFill" style="width:${(oldInfo.frac * 100).toFixed(2)}%"></div></div>
+      <div class="me-xp-nums">
+        <span id="xpLvNow">LV ${oldInfo.level}</span>
+        <span id="xpInto">${oldInfo.into} / ${oldInfo.need} XP</span>
+        <span id="xpLvNext">LV ${oldInfo.level + 1}</span>
+      </div>
+      ${levelUp}
+    </div>`;
+  }
+
+  _cancelXpAnim() {
+    if (!this._xpAnim) return;
+    cancelAnimationFrame(this._xpAnim.raf);
+    for (const t of this._xpAnim.timers) clearTimeout(t);
+    this._xpAnim = null;
+  }
+
+  // Timeline: itemized rows fade in and count up (staggered), then the XP bar
+  // sweeps old→new fill. Level crossings pulse the bar and pop the
+  // "LEVEL n — RANG" flourish; multiple level-ups in one sweep all fire.
+  _animateXpPanel(root, { oldXp, newXp }) {
+    this._cancelXpAnim();
+    const q = (id) => root.querySelector('#' + id);
+    const els = { fill: q('xpFill'), bar: q('xpBar'), into: q('xpInto'), lvNow: q('xpLvNow'), lvNext: q('xpLvNext'), rank: q('xpRank'), levelUp: q('xpLevelUp') };
+    const rowEls = [...root.querySelectorAll('.me-xp-row')];
+    if (!els.fill) return;
+    const ROW_DELAY = 350; const ROW_STAGGER = 170; const ROW_DUR = 450;
+    const rows = rowEls.map((el, i) => ({ el, b: el.querySelector('b[data-xp]'), start: ROW_DELAY + i * ROW_STAGGER, done: false }));
+    const barStart = ROW_DELAY + rows.length * ROW_STAGGER + 200;
+    const barDur = Math.max(700, Math.min(1900, 700 + (newXp - oldXp) * 1.1));
+    const easeOut = (f) => 1 - Math.pow(1 - f, 3);
+    let shownLevel = levelFor(oldXp).level;
+    const anim = { raf: 0, timers: [], t0: performance.now() };
+    this._xpAnim = anim;
+    const step = (now) => {
+      const t = now - anim.t0;
+      let busy = false;
+      for (const r of rows) {
+        if (r.done || !r.b) continue;
+        const f = (t - r.start) / ROW_DUR;
+        if (f < 0) { busy = true; continue; }
+        r.el.classList.add('on');
+        const ff = Math.min(1, f);
+        r.b.textContent = '+' + Math.round((+r.b.dataset.xp || 0) * easeOut(ff)) + ' XP';
+        if (ff >= 1) r.done = true; else busy = true;
+      }
+      const bf = (t - barStart) / barDur;
+      if (bf < 1) busy = true;
+      const cur = oldXp + (newXp - oldXp) * easeOut(Math.max(0, Math.min(1, bf)));
+      const info = levelFor(cur);
+      els.fill.style.width = (info.frac * 100).toFixed(2) + '%';
+      els.into.textContent = `${Math.floor(info.into)} / ${info.need} XP`;
+      els.lvNow.textContent = 'LV ' + info.level;
+      els.lvNext.textContent = 'LV ' + (info.level + 1);
+      els.rank.textContent = `Level ${info.level} · ${info.rank}`;
+      if (info.level > shownLevel) {
+        shownLevel = info.level;
+        this._xpLevelUpFlourish(els, info);
+      }
+      if (busy && this._xpAnim === anim) anim.raf = requestAnimationFrame(step);
+    };
+    anim.raf = requestAnimationFrame(step);
+  }
+
+  _xpLevelUpFlourish(els, info) {
+    if (els.bar) {
+      els.bar.classList.remove('pulse');
+      void els.bar.offsetWidth;
+      els.bar.classList.add('pulse');
+    }
+    if (els.levelUp) {
+      els.levelUp.innerHTML = `<b>LEVEL ${info.level}</b><em> — ${info.rank.toUpperCase()}</em>`;
+      els.levelUp.classList.remove('on');
+      void els.levelUp.offsetWidth;
+      els.levelUp.classList.add('on');
+    }
   }
 
   hide() { this.root.style.display = 'none'; }

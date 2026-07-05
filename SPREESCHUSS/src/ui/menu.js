@@ -37,6 +37,12 @@ const ABILITY_TYPE_NAMES = {
 const STORAGE_KEY = 'spreeschuss.menu.v1';
 const DIFFICULTIES = ['easy', 'normal', 'hard'];
 const TOGGLE_KEYS = ['infiniteMoney', 'noCooldown', 'infiniteAmmo', 'oneShot', 'godMode'];
+// custom match rules: allowed values (0 = mode standard); anything else in
+// stored state falls back to the defaults on load
+const TEAM_SIZES = [2, 3, 4, 5];
+const ROUNDS_OVERRIDES = [0, 5, 9, 13];
+const SPIKE_TIMES = [30, 45, 60];
+const KILL_TARGET_OVERRIDES = [0, 15, 30, 40, 60];
 
 function sanitizeState(raw, base) {
   const out = { ...base, settings: { ...base.settings } };
@@ -47,6 +53,10 @@ function sanitizeState(raw, base) {
   if (DIFFICULTIES.includes(raw.botDifficulty)) out.botDifficulty = raw.botDifficulty;
   const n = Number(raw.botCount);
   if (Number.isFinite(n)) out.botCount = Math.min(11, Math.max(1, Math.round(n)));
+  if (TEAM_SIZES.includes(Number(raw.teamSize))) out.teamSize = Number(raw.teamSize);
+  if (ROUNDS_OVERRIDES.includes(Number(raw.roundsOverride))) out.roundsOverride = Number(raw.roundsOverride);
+  if (SPIKE_TIMES.includes(Number(raw.spikeTime))) out.spikeTime = Number(raw.spikeTime);
+  if (KILL_TARGET_OVERRIDES.includes(Number(raw.killTargetOverride))) out.killTargetOverride = Number(raw.killTargetOverride);
   if (raw.settings && typeof raw.settings === 'object') {
     for (const k of TOGGLE_KEYS) out.settings[k] = raw.settings[k] === true;
   }
@@ -173,6 +183,10 @@ export class Menu {
       agentId: AGENTS[0].id,
       botDifficulty: 'normal',
       botCount: 9,
+      teamSize: 5,
+      roundsOverride: 0,
+      spikeTime: 45,
+      killTargetOverride: 0,
       settings: { infiniteMoney: false, noCooldown: false, infiniteAmmo: false, oneShot: false, godMode: false },
     };
     this.state = loadStoredState(defaults);
@@ -283,8 +297,15 @@ export class Menu {
   renderSetup() {
     const maps = this.mapsForMode(this.state.modeId);
     if (!maps.find((m) => m.id === this.state.mapId)) this.state.mapId = maps[0].id;
-    const kind = MODES[this.state.modeId].kind;
+    const curMode = MODES[this.state.modeId];
+    const kind = curMode.kind;
     const showBotCount = kind === 'ffa' || kind === 'gungame';
+    // custom rules are only shown where they apply: team size for team modes,
+    // rounds + spike timer for plant modes, kill target for DM/TDM
+    const showTeamSize = kind === 'plant' || kind === 'tdm';
+    const showRounds = kind === 'plant';
+    const showSpike = kind === 'plant';
+    const showKillTarget = kind === 'ffa' || kind === 'tdm';
     this.root.innerHTML = `
       ${this._bgHTML()}
       <div class="setup">
@@ -311,6 +332,42 @@ export class Menu {
             </div>
             <h3><span class="col-num">03</span> Custom-Regeln</h3>
             <div class="toggles" id="toggles"></div>
+            <div class="row" id="teamSizeRow" ${showTeamSize ? '' : 'style="display:none"'}>
+              <label>Teamgröße</label>
+              <select id="teamSize">
+                <option value="2">2 gegen 2</option>
+                <option value="3">3 gegen 3</option>
+                <option value="4">4 gegen 4</option>
+                <option value="5">5 gegen 5 (Standard)</option>
+              </select>
+            </div>
+            <div class="row" id="roundsRow" ${showRounds ? '' : 'style="display:none"'}>
+              <label>Runden zum Sieg</label>
+              <select id="roundsOverride">
+                <option value="0">Standard (${curMode.roundsToWin ?? '–'})</option>
+                <option value="5">5 Runden</option>
+                <option value="9">9 Runden</option>
+                <option value="13">13 Runden</option>
+              </select>
+            </div>
+            <div class="row" id="spikeRow" ${showSpike ? '' : 'style="display:none"'}>
+              <label>Spike-Timer</label>
+              <select id="spikeTime">
+                <option value="30">30 Sekunden</option>
+                <option value="45">45 Sekunden (Standard)</option>
+                <option value="60">60 Sekunden</option>
+              </select>
+            </div>
+            <div class="row" id="killTargetRow" ${showKillTarget ? '' : 'style="display:none"'}>
+              <label>Kill-Ziel</label>
+              <select id="killTargetOverride">
+                <option value="0">Standard (${curMode.killTarget ?? '–'} Kills)</option>
+                <option value="15">15 Kills</option>
+                <option value="30">30 Kills</option>
+                <option value="40">40 Kills</option>
+                <option value="60">60 Kills</option>
+              </select>
+            </div>
           </div>
           <div class="setup-col">
             <h3><span class="col-num">04</span> Karte <small class="col-count">${maps.length} verfügbar</small></h3>
@@ -400,6 +457,12 @@ export class Menu {
     this.root.querySelector('#diff').onchange = (e) => { this.state.botDifficulty = e.target.value; this._persist(); };
     const bc = this.root.querySelector('#botCount');
     bc.oninput = (e) => { this.state.botCount = +e.target.value; this.root.querySelector('#botCountVal').textContent = e.target.value; this._persist(); };
+    // custom-rule selects (numeric state keys, persisted like everything else)
+    for (const key of ['teamSize', 'roundsOverride', 'spikeTime', 'killTargetOverride']) {
+      const el = this.root.querySelector('#' + key);
+      el.value = String(this.state[key]);
+      el.onchange = (e) => { this.state[key] = +e.target.value; this._persist(); };
+    }
   }
 
   renderAgentDetail() {
@@ -440,7 +503,15 @@ export class Menu {
       modeId: this.state.modeId,
       mapId: this.state.mapId,
       playerAgentId: this.state.agentId,
-      settings: { ...this.state.settings, botDifficulty: this.state.botDifficulty, botCount: this.state.botCount },
+      settings: {
+        ...this.state.settings,
+        botDifficulty: this.state.botDifficulty,
+        botCount: this.state.botCount,
+        teamSize: this.state.teamSize,
+        roundsOverride: this.state.roundsOverride,
+        spikeTime: this.state.spikeTime,
+        killTargetOverride: this.state.killTargetOverride,
+      },
     });
     bus.emit('game:started');
   }

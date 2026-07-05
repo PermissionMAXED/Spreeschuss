@@ -4,7 +4,7 @@ import { buildMap } from '../maps/mapbuilder.js';
 import { getMapById } from '../maps/maps.js';
 import { modeById, GUNGAME_LADDER } from './modes.js';
 import { AGENTS, agentById } from '../agents/agents.js';
-import { Entity, buildAvatar } from './entity.js';
+import { Entity, buildAvatar, EYE } from './entity.js';
 import { PlayerController } from './player.js';
 import { updateBot, initBot } from './bots.js';
 import { audio } from '../audio/audio.js';
@@ -48,6 +48,43 @@ export class Game {
 
   defaultSettingsPublic() { return defaultSettings(); }
 
+  // ------------------------------------------------- effective custom rules
+  // MODES is frozen data — custom-game overrides from this.settings are
+  // resolved through these helpers only; mode objects are never mutated.
+  // Values are re-validated here so a hand-crafted cfg can't break a match.
+  _teamSizeEff() {
+    const n = Math.round(Number(this.settings.teamSize));
+    return Number.isFinite(n) ? Math.min(5, Math.max(2, n)) : 5;
+  }
+
+  _roundsToWinEff() {
+    const rtw = this.mode.roundsToWin;
+    if (!rtw || this.mode.kind !== 'plant') return rtw;
+    const o = Math.round(Number(this.settings.roundsOverride) || 0);
+    return o > 0 ? Math.min(30, o) : rtw;
+  }
+
+  // Halftime pairs with roundsToWin the same way the mode data does
+  // (e.g. competitive 13/12, unrated 5/5): keep the mode's own offset and
+  // shift it with the effective rounds-to-win. Override 0 => untouched.
+  _halftimeEff() {
+    if (!this.mode.halftime) return 0;
+    const delta = this.mode.roundsToWin - this.mode.halftime;
+    return Math.max(1, this._roundsToWinEff() - delta);
+  }
+
+  _spikeTimeEff() {
+    const t = Math.round(Number(this.settings.spikeTime));
+    return t === 30 || t === 45 || t === 60 ? t : SPIKE_TIME;
+  }
+
+  _killTargetEff() {
+    const kt = this.mode.killTarget;
+    if (!kt) return kt; // gungame: ladder decides, no kill target
+    const o = Math.round(Number(this.settings.killTargetOverride) || 0);
+    return o > 0 ? Math.min(200, o) : kt;
+  }
+
   // ---------------------------------------------------------------- match
   loadMatch(cfg) {
     this.r.clearScene();
@@ -79,7 +116,9 @@ export class Game {
 
   _createEntities(cfg) {
     const playerAgent = agentById(cfg.playerAgentId);
-    const teamSize = this.mode.kind === 'plant' || this.mode.kind === 'tdm' ? 5 : 1;
+    // custom team size (2-5) for team modes; spawn assignment below indexes
+    // spawn lists modulo their length, so any size <= 5 is always placeable
+    const teamSize = this.mode.kind === 'plant' || this.mode.kind === 'tdm' ? this._teamSizeEff() : 1;
     const usedAgents = new Set([playerAgent.id]);
 
     if (this.mode.kind === 'ffa' || this.mode.kind === 'gungame') {
@@ -244,12 +283,24 @@ export class Game {
     // player
     this.pc.update(dt, this.now);
 
+    // spectate: once the camera has (almost) reached the watched teammate's
+    // eyes, hide their avatar so we don't render its interior. During the
+    // fly-over (camera still far away) the avatar stays visible.
+    let specHidden = null;
+    const spec = this.pc.spec;
+    if (spec && spec.active && spec.target && spec.target.alive && !this.player.alive) {
+      const cp = this.r.camera.position;
+      const st = spec.target;
+      const dx = cp.x - st.pos.x; const dy = cp.y - (st.pos.y + EYE); const dz = cp.z - st.pos.z;
+      if (dx * dx + dy * dy + dz * dz < 2.25) specHidden = st;
+    }
+
     // bots
     for (const e of this.entities) {
       if (e.isBot && e.alive) updateBot(this, e, dt, this.now);
       if (e.mesh) {
         if (e.alive) {
-          e.mesh.visible = true;
+          e.mesh.visible = e !== specHidden;
           e.mesh.position.set(e.pos.x, e.pos.y, e.pos.z);
           e.mesh.rotation.y = e.yaw + Math.PI;
         } else {
@@ -703,8 +754,8 @@ export class Game {
       }
     }
 
-    // spike detonation
-    if (sp.planted && !sp.defused && now >= sp.plantedAt + SPIKE_TIME) {
+    // spike detonation (custom fuse: settings.spikeTime, default SPIKE_TIME)
+    if (sp.planted && !sp.defused && now >= sp.plantedAt + this._spikeTimeEff()) {
       sp.exploded = true;
       this._explodeSpike();
     }
@@ -767,7 +818,7 @@ export class Game {
     if (planter.isPlayer) planter.ultPoints = Math.min(20, planter.ultPoints + 1);
     audio.plant();
     bus.emit('spike:planted', { site });
-    this.phaseEnd = this.now + SPIKE_TIME;
+    this.phaseEnd = this.now + this._spikeTimeEff();
   }
 
   _defuseSpike(defuser) {
@@ -789,18 +840,20 @@ export class Game {
   _checkRoundEnd() {
     if (this.state !== 'playing') return;
     if (this.mode.kind === 'ffa' || this.mode.kind === 'gungame') {
-      // win by kill target or gungame ladder
+      // win by (custom) kill target or gungame ladder
+      const kt = this._killTargetEff();
       for (const e of this.entities) {
         if (this.mode.kind === 'gungame' && (e._ggLevel ?? 0) >= GUNGAME_LADDER.length) return this._endMatchFFA(e);
-        if (this.mode.killTarget && e.kills >= this.mode.killTarget) return this._endMatchFFA(e);
+        if (kt && e.kills >= kt) return this._endMatchFFA(e);
       }
       return;
     }
     if (this.mode.kind === 'tdm') {
+      const kt = this._killTargetEff();
       const attK = this.entities.filter((e) => e.team === 'att').reduce((s, e) => s + e.kills, 0);
       const defK = this.entities.filter((e) => e.team === 'def').reduce((s, e) => s + e.kills, 0);
-      if (attK >= this.mode.killTarget) return this._endMatchTeam('att');
-      if (defK >= this.mode.killTarget) return this._endMatchTeam('def');
+      if (attK >= kt) return this._endMatchTeam('att');
+      if (defK >= kt) return this._endMatchTeam('def');
       return;
     }
     // plant mode
@@ -836,7 +889,7 @@ export class Game {
     if (this.playerSide === winnerTeam) audio.win(); else audio.lose();
     bus.emit('round:end', { winner: winnerTeam, att: this.attackerScore, def: this.defenderScore, mvp: this._roundMvp(winnerTeam) });
 
-    const rtw = this.mode.roundsToWin;
+    const rtw = this._roundsToWinEff();
     if (this.attackerScore >= rtw || this.defenderScore >= rtw) {
       return this._endMatchTeam(this.attackerScore > this.defenderScore ? 'att' : 'def');
     }
@@ -845,9 +898,9 @@ export class Game {
     const token = this._matchToken;
     setTimeout(() => {
       if (this.matchOver || this._matchToken !== token) return;
-      // halftime side swap
+      // halftime side swap (paired with the effective rounds-to-win)
       const total = this.attackerScore + this.defenderScore;
-      if (this.mode.halftime && total === this.mode.halftime) this._swapSides();
+      if (this.mode.halftime && total === this._halftimeEff()) this._swapSides();
       this.state = 'playing';
       this._startRound(false);
     }, ROUND_END_TIME * 1000);
@@ -997,15 +1050,18 @@ export class Game {
     let goalText = '';
     const sumK = (t) => this.entities.filter((e) => e.team === t).reduce((s, e) => s + e.kills, 0);
     if (this.mode.kind === 'tdm') {
-      attScore = sumK('att'); defScore = sumK('def'); goalText = `Ziel ${this.mode.killTarget} Kills`;
+      attScore = sumK('att'); defScore = sumK('def'); goalText = `Ziel ${this._killTargetEff()} Kills`;
     } else if (this.mode.kind === 'ffa') {
-      attScore = p.kills; defScore = Math.max(0, ...this.entities.map((e) => e.kills)); goalText = `Ziel ${this.mode.killTarget} Kills`;
+      attScore = p.kills; defScore = Math.max(0, ...this.entities.map((e) => e.kills)); goalText = `Ziel ${this._killTargetEff()} Kills`;
     } else if (this.mode.kind === 'gungame') {
       attScore = (p._ggLevel ?? 0); defScore = Math.max(0, ...this.entities.map((e) => e._ggLevel ?? 0)); goalText = `Level ${(p._ggLevel ?? 0) + 1}/${GUNGAME_LADDER.length}`;
     }
     bus.emit('hud', {
       goalText,
       killTarget: this.mode.killTarget,
+      // additive: rounds-to-win after custom overrides (existing fields on
+      // this payload — incl. mode.roundsToWin — stay untouched for hud.js)
+      roundsToWinEff: this._roundsToWinEff(),
       hp: Math.ceil(p.hp),
       armor: Math.ceil(p.armor),
       credits: p.credits,
@@ -1116,6 +1172,11 @@ function defaultSettings() {
     godMode: false,
     botCount: 9,
     botDifficulty: 'normal',
+    // custom match rules (0 = mode standard; validated by the *_Eff helpers)
+    teamSize: 5,
+    roundsOverride: 0,
+    spikeTime: 45,
+    killTargetOverride: 0,
   };
 }
 
