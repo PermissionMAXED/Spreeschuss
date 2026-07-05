@@ -7,10 +7,18 @@ import { WEAPONS } from '../weapons/weapons.js';
 // (with a per-category fallback for unknown ids) and layers sway, bob,
 // breathing, landing dips, sprint lowering, recoil kick, a three-phase reload
 // choreography (mag out / mag in / charging-handle rack) and switch raise.
+// On top of that: agent-themed melee models, a real melee swing (anticipation
+// / diagonal slash / follow-through), per-category draw flourishes, sniper
+// scope-in choreography, muzzle smoke wisps and a dry-fire "click" jiggle.
 
 const RELOAD_DURATION = 2.0; // must match startReload() in weaponsystem.js
 const RAISE_TIME = 0.3;      // weapon-switch raise animation length (s)
 const FLASH_TIME = 0.04;     // muzzle flash duration (~40 ms)
+const SWING_TIME = 0.44;     // melee swing incl. follow-through — inside the 0.5 s of fireRate 2/s
+const SWING_WINDUP = 0.09;   // anticipation fraction of SWING_TIME (~40 ms)
+const SCOPE_TIME = 0.12;     // sniper scope-in rise before the overlay fully covers
+const CLICK_TIME = 0.09;     // dry-fire "click" jiggle length
+const SMOKE_MAX = 2;         // muzzle smoke wisps alive at once (hard cap)
 
 // Reload phase boundaries as fractions of RELOAD_DURATION (0.6 s / 1.4 s / 2.0 s)
 const PH_MAG_OUT = 0.3;      // 0.0 - 0.6 s : magazine drops out
@@ -529,6 +537,205 @@ function buildKnife(p) {
   return { g, muzzle: null, flash: 0, parts: null };
 }
 
+// --- agent melee variants -----------------------------------------------------
+// When the knife is drawn, the model is themed per the LOCAL player's agent:
+// each ROLE gets a distinct base (Duellant: curved karambit, Wächter: heavy
+// cleaver-tomahawk, Initiator: twin-edged dagger, Stratege: slim tanto), a
+// small per-agent signature detail is layered on top, and the blade is tinted
+// from agent.color with a subtle emissive edge (kept below the 0.9 intensity
+// of the gun accents — a bloom pass runs on top of everything).
+// Same contract as the gun builders: forward is -Z, grip near the origin.
+
+// Duellant: curved karambit — claw blade, retention finger ring, stubby grip.
+function buildKarambit(p) {
+  const g = new THREE.Group();
+  const s = new THREE.Shape();
+  s.moveTo(0, 0.012);
+  s.quadraticCurveTo(0.12, 0.006, 0.19, -0.05);      // spine arcs down
+  s.quadraticCurveTo(0.225, -0.085, 0.205, -0.128);  // hooked tip
+  s.quadraticCurveTo(0.15, -0.072, 0.09, -0.046);    // inner cutting curve
+  s.quadraticCurveTo(0.03, -0.03, 0, -0.026);
+  s.closePath();
+  const blade = new THREE.Mesh(new THREE.ExtrudeGeometry(s, {
+    depth: 0.007, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 1,
+  }), p.blade);
+  blade.rotation.y = Math.PI / 2;                    // shape +X -> -Z (tip forward)
+  blade.position.set(-0.0035, 0.05, -0.02);
+  g.add(blade);
+  box(g, p.edge, 0.011, 0.004, 0.07, 0, -0.013, -0.12, -0.4);   // edge glow (inner curve)
+  box(g, p.edge, 0.011, 0.004, 0.06, 0, -0.05, -0.175, -0.85);  // edge glow toward the tip
+  box(g, p.dark, 0.05, 0.046, 0.02, 0, 0, -0.006);              // guard collar
+  tube(g, p.grip, 0.017, 0.02, 0.1, 0, -0.008, 0.055, 8);       // stubby grip
+  box(g, p.accent, 0.04, 0.007, 0.012, 0, -0.008, 0.03);        // wrap accent
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.021, 0.006, 6, 12), p.steel);
+  ring.rotation.y = Math.PI / 2;
+  ring.position.set(0, -0.008, 0.125);                          // retention finger ring
+  g.add(ring);
+  return { g, muzzle: null, flash: 0, parts: null };
+}
+
+// Wächter: heavy cleaver-tomahawk — long haft, dropped chopping head, poll spike.
+function buildCleaver(p) {
+  const g = new THREE.Group();
+  tube(g, p.grip, 0.015, 0.019, 0.3, 0, -0.01, 0.03, 8);        // long haft
+  box(g, p.dark, 0.032, 0.038, 0.03, 0, -0.01, 0.19);           // butt cap
+  box(g, p.accent, 0.036, 0.008, 0.02, 0, -0.01, 0.12);         // grip band
+  box(g, p.dark, 0.034, 0.05, 0.07, 0, -0.012, -0.13);          // head mount collar
+  box(g, p.blade, 0.011, 0.13, 0.16, 0, -0.06, -0.17);          // heavy cleaver plate
+  box(g, p.blade, 0.011, 0.09, 0.06, 0, -0.085, -0.252, 0.55);  // swept front bevel
+  box(g, p.edge, 0.013, 0.005, 0.15, 0, -0.122, -0.165);        // glowing bottom edge
+  box(g, p.edge, 0.013, 0.005, 0.05, 0, -0.117, -0.253, 0.55);  // edge wraps the bevel
+  box(g, p.steel, 0.02, 0.032, 0.06, 0, -0.02, -0.075);         // rear poll block
+  box(g, p.steel, 0.016, 0.02, 0.045, 0, -0.022, -0.035, -0.3); // poll spike taper
+  return { g, muzzle: null, flash: 0, parts: null };
+}
+
+// Initiator: twin-edged dagger — symmetric spear point, both edges lit.
+function buildTwinDagger(p) {
+  const g = new THREE.Group();
+  const s = new THREE.Shape();
+  s.moveTo(0, -0.027);
+  s.lineTo(0.17, -0.019);
+  s.lineTo(0.245, 0);                                            // spear tip
+  s.lineTo(0.17, 0.019);
+  s.lineTo(0, 0.027);
+  s.closePath();
+  const blade = new THREE.Mesh(new THREE.ExtrudeGeometry(s, {
+    depth: 0.006, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 1,
+  }), p.blade);
+  blade.rotation.y = Math.PI / 2;
+  blade.position.set(-0.003, -0.004, -0.02);
+  g.add(blade);
+  box(g, p.steel, 0.009, 0.007, 0.16, 0, -0.004, -0.1);          // central ridge
+  box(g, p.edge, 0.008, 0.004, 0.17, 0, 0.019, -0.1, -0.045);    // upper edge glow
+  box(g, p.edge, 0.008, 0.004, 0.17, 0, -0.028, -0.1, 0.045);    // lower edge glow
+  box(g, p.dark, 0.088, 0.016, 0.02, 0, -0.004, -0.004);         // wide crossguard
+  box(g, p.accent, 0.02, 0.012, 0.022, 0, -0.004, -0.004);       // guard jewel
+  tube(g, p.grip, 0.014, 0.017, 0.1, 0, -0.004, 0.05, 8);        // slim grip
+  box(g, p.dark, 0.026, 0.026, 0.024, 0, -0.004, 0.112);         // pommel
+  return { g, muzzle: null, flash: 0, parts: null };
+}
+
+// Stratege: slim tanto — straight spine, hard angled tip, silk-wrapped grip.
+function buildTanto(p) {
+  const g = new THREE.Group();
+  box(g, p.blade, 0.009, 0.032, 0.22, 0, 0, -0.12);              // slim straight blade
+  box(g, p.blade, 0.009, 0.03, 0.05, 0, 0.0035, -0.244, -0.32);  // hard angled tip
+  box(g, p.edge, 0.01, 0.004, 0.2, 0, -0.015, -0.115);           // edge glow line
+  box(g, p.edge, 0.01, 0.004, 0.042, 0, -0.011, -0.243, -0.32);  // edge follows the tip
+  box(g, p.steel, 0.006, 0.01, 0.16, 0.004, 0.008, -0.11);       // side fuller line
+  tube(g, p.dark, 0.03, 0.03, 0.01, 0, 0, 0.002, 12);            // round tsuba
+  tube(g, p.grip, 0.013, 0.015, 0.11, 0, 0, 0.065, 8);           // wrapped grip
+  box(g, p.accent, 0.033, 0.006, 0.01, 0, 0, 0.035, 0, 0, 0.6);  // silk wrap crosses
+  box(g, p.accent, 0.033, 0.006, 0.01, 0, 0, 0.065, 0, 0, -0.6);
+  box(g, p.accent, 0.033, 0.006, 0.01, 0, 0, 0.095, 0, 0, 0.6);
+  box(g, p.dark, 0.026, 0.028, 0.018, 0, 0, 0.128);              // kashira pommel
+  return { g, muzzle: null, flash: 0, parts: null };
+}
+
+const ROLE_MELEE = {
+  Duellant: buildKarambit,
+  'Wächter': buildCleaver,
+  Initiator: buildTwinDagger,
+  Stratege: buildTanto,
+};
+
+// One small signature detail per agent id, layered onto the role base.
+const MELEE_DETAILS = {
+  // Duellanten (karambit)
+  spree: (g, p) => {                                             // speed vents on the flat
+    box(g, p.accent, 0.012, 0.006, 0.03, 0, 0.025, -0.075, -0.3);
+    box(g, p.accent, 0.012, 0.006, 0.03, 0, 0.01, -0.11, -0.4);
+  },
+  schatten: (g, p) => {                                          // shroud fin + ring stud
+    box(g, p.dark, 0.008, 0.03, 0.09, 0, 0.062, -0.08, -0.15);
+    box(g, p.accent, 0.012, 0.012, 0.012, 0, -0.008, 0.148);
+  },
+  titan: (g, p) => {                                             // armored knuckle bar
+    box(g, p.steel, 0.014, 0.016, 0.1, 0, -0.045, 0.055);
+    box(g, p.accent, 0.016, 0.006, 0.02, 0, -0.052, 0.055);
+  },
+  klinge: (g, p) => {                                            // second micro-hook at the pommel
+    box(g, p.blade, 0.007, 0.05, 0.016, 0, -0.04, 0.15, 0.5);
+    box(g, p.edge, 0.008, 0.004, 0.03, 0, -0.062, 0.143, 0.5);
+  },
+  // Wächter (cleaver-tomahawk)
+  bollwerk: (g, p) => {                                          // riveted reinforcement plate
+    box(g, p.brass, 0.014, 0.05, 0.09, 0, -0.05, -0.16);
+    tubeX(g, p.brass, 0.008, 0.008, 0.018, 0, -0.05, -0.13, 6);
+    tubeX(g, p.brass, 0.008, 0.008, 0.018, 0, -0.05, -0.19, 6);
+  },
+  anker: (g, p) => {                                             // chain links off the butt
+    const l1 = new THREE.Mesh(new THREE.TorusGeometry(0.014, 0.004, 6, 10), p.steel);
+    l1.position.set(0, -0.045, 0.19);
+    g.add(l1);
+    const l2 = new THREE.Mesh(new THREE.TorusGeometry(0.014, 0.004, 6, 10), p.accent);
+    l2.rotation.y = Math.PI / 2;
+    l2.position.set(0, -0.07, 0.19);
+    g.add(l2);
+  },
+  frost: (g, p) => {                                             // ice-pick spike on the poll
+    box(g, p.steel, 0.018, 0.018, 0.04, 0, -0.025, -0.05, -0.5);
+    box(g, p.edge, 0.012, 0.012, 0.07, 0, -0.02, -0.02, -0.5);
+  },
+  mauer: (g, p) => {                                             // counterweight on the spine
+    box(g, p.dark, 0.026, 0.045, 0.1, 0, -0.028, -0.16);
+    box(g, p.accent, 0.028, 0.008, 0.08, 0, -0.028, -0.16);
+  },
+  // Initiatoren (twin dagger)
+  funke: (g, p) => {                                             // spark sensor node on the guard
+    tubeX(g, p.steel, 0.005, 0.005, 0.03, 0.028, 0.012, -0.004, 6);
+    box(g, p.accent, 0.012, 0.012, 0.012, 0.045, 0.02, -0.004);
+  },
+  brandt: (g, p) => {                                            // flared burner fins at the guard
+    box(g, p.accent, 0.008, 0.026, 0.03, 0.02, -0.004, -0.03, 0, 0, 0.5);
+    box(g, p.accent, 0.008, 0.026, 0.03, -0.02, -0.004, -0.03, 0, 0, -0.5);
+  },
+  radar: (g, p) => {                                             // sensor ring around the ricasso
+    const r = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.005, 6, 12), p.accent);
+    r.position.set(0, -0.004, -0.035);
+    g.add(r);
+  },
+  volt: (g, p) => {                                              // zig-zag bolt down the blade
+    box(g, p.accent, 0.011, 0.005, 0.045, 0, 0.006, -0.055, 0.55);
+    box(g, p.accent, 0.011, 0.005, 0.045, 0, -0.014, -0.09, -0.55);
+    box(g, p.accent, 0.011, 0.005, 0.045, 0, 0.006, -0.125, 0.55);
+  },
+  // Strategen (tanto)
+  nebel: (g, p) => {                                             // mist perforations on the spine
+    box(g, p.dark, 0.011, 0.008, 0.008, 0, 0.01, -0.06);
+    box(g, p.dark, 0.011, 0.008, 0.008, 0, 0.01, -0.11);
+    box(g, p.dark, 0.011, 0.008, 0.008, 0, 0.01, -0.16);
+  },
+  sani: (g, p) => {                                              // medic cross inlay on the grip
+    box(g, p.accent, 0.036, 0.028, 0.009, 0, 0, 0.05);
+    box(g, p.accent, 0.036, 0.009, 0.028, 0, 0, 0.05);
+  },
+  wispel: (g, p) => {                                            // ghost window near the tip
+    box(g, p.dark, 0.011, 0.012, 0.028, 0, 0.002, -0.19);
+    box(g, p.accent, 0.012, 0.003, 0.03, 0, 0.011, -0.19);
+  },
+  echo: (g, p) => {                                              // sonar ripple rings on the tsuba
+    tube(g, p.accent, 0.034, 0.034, 0.004, 0, 0, -0.002, 12);
+    tube(g, p.accent, 0.038, 0.038, 0.003, 0, 0, -0.008, 12);
+  },
+};
+
+// Melee palette: the standard weapon palette keyed to agent.color, plus an
+// agent-tinted blade steel and a subtle emissive edge material.
+function buildAgentMelee(agent) {
+  const builder = ROLE_MELEE[agent.role];
+  if (!builder) return null; // unknown role -> stock knife fallback
+  const col = new THREE.Color(agent.color || '#9fd8ff');
+  const hex = col.getHex();
+  const p = palette(hex);
+  p.blade = metal(new THREE.Color(0x7b838e).lerp(col, 0.12).getHex(), 0.26, 0.95, hex, 0.06);
+  p.edge = metal(hex, 0.3, 0.6, hex, 0.7);
+  const out = builder(p);
+  MELEE_DETAILS[agent.id]?.(out.g, p);
+  return out;
+}
+
 // Builders keyed by weapon id; category fallbacks keep unknown ids safe.
 const BUILDERS = {
   knife: buildKnife,
@@ -563,7 +770,22 @@ export class Viewmodel {
     this._flashScale = 1;
     this._kick = 1;         // recoil-stat-driven kick multiplier
     this._kickSide = 0;     // per-shot lateral kick sign
-    this._swingAlt = false; // melee: alternate stab / slash
+    this._swingAlt = false; // melee: alternate left / right slash
+    this._swingSide = 1;    // slash side latched at swing start (+1 / -1)
+    this._swingT = 0;       // melee swing timer (counts down from SWING_TIME)
+    this._scopeT = 0;       // sniper scope-in blend: 0 = hip, 1 = fully scoped
+    this._clickT = 0;       // dry-fire "click" jiggle timer
+    this._nextClickAt = 0;  // dry-fire repeat gate
+    this._flourish = null;  // draw flourish kind ('twirl' | 'rack' | 'tap')
+    this._flourishT = 0;
+    this._flourishDur = 0;
+    this._flourishAmp = 0;
+    this._slideCheckRound = -1; // round the pistol slide-check already played in
+    this._meleeAgentId = null;  // agent id the current melee model was built for
+    this._burstShots = 0;   // shots since the last firing pause (smoke wisps)
+    this._lastShotAt = 0;
+    this._smoke = null;     // muzzle smoke wisp pool (fixed, ≤ SMOKE_MAX alive)
+    this._muzzlePos = null;
     this._cycleDur = 0;     // per-shot bolt/slide cycle length (0 = none)
     this._cycleT = 0;
     this._airT = 0;         // movement layering state
@@ -577,13 +799,25 @@ export class Viewmodel {
     // clearScene() (called on every loadMatch) wipes the scene, so force a
     // full rebuild whenever a match starts. Mounting itself is re-checked
     // defensively every frame in update() and does not rely on this event.
-    bus.on('match:start', () => { this._mount(); this.currentId = null; this.currentCat = null; });
+    bus.on('match:start', () => { this._mount(); this.currentId = null; this.currentCat = null; this._slideCheckRound = -1; });
     bus.on('muzzle', () => {
+      // Branch on the live weapon category ('muzzle' is only emitted for the
+      // local player): melee plays the swing instead of the muzzle flash;
+      // guns keep the exact flash/recoil path from before.
+      const w = this.game.player?.weapon?.();
+      if (w && w.cat === 'melee') {
+        this._swingAlt = !this._swingAlt;           // alternate left/right slash
+        this._swingSide = this._swingAlt ? 1 : -1;
+        this._swingT = SWING_TIME;
+        return;                                     // no flash, no gun recoil
+      }
       this.recoil = 1;
-      this._swingAlt = !this._swingAlt;             // melee stab/slash alternation
       this._kickSide = Math.random() - 0.5;         // per-shot lateral recoil
       if (this._cycleDur > 0) this._cycleT = this._cycleDur; // slide/bolt cycle
       if (this.muzzle) this.muzzleTimer = FLASH_TIME;
+      this._flourish = null;                        // recoil takes over the hands
+      this._burstShots++;                           // muzzle smoke after the burst
+      this._lastShotAt = this.game.now;
     });
   }
 
@@ -622,15 +856,28 @@ export class Viewmodel {
     this.muzzle = null;
     this.muzzleLight = null;
     this._parts = null;
+    this._smoke = null;
+    this._muzzlePos = null;
+    this._meleeAgentId = null;
     this.currentId = null;
     this.currentCat = null;
   }
 
   build(id, cat) {
     this._clear();
-    const p = palette(ACCENTS[id] ?? ACCENTS[cat] ?? 0x43b7c7);
-    const builder = BUILDERS[id] || CAT_BUILDERS[cat] || buildVandal;
-    const { g, muzzle, flash = 1, parts = null } = builder(p);
+    // Agent-specific melee: theme the knife per the local player's agent
+    // (role base + signature detail + agent-color blade). _meleeAgentId is
+    // the cache key — update() rebuilds only when the weapon or the agent id
+    // actually changes, and the old model is disposed exactly like a gun swap.
+    const agent = cat === 'melee' ? (this.game.player?.agent ?? null) : null;
+    this._meleeAgentId = agent ? agent.id : null;
+    let built = agent ? buildAgentMelee(agent) : null;
+    if (!built) {
+      const p = palette(ACCENTS[id] ?? ACCENTS[cat] ?? 0x43b7c7);
+      const builder = BUILDERS[id] || CAT_BUILDERS[cat] || buildVandal;
+      built = builder(p);
+    }
+    const { g, muzzle, flash = 1, parts = null } = built;
 
     this._flashScale = flash || 1;
     if (muzzle) {
@@ -647,6 +894,22 @@ export class Viewmodel {
       this.muzzleLight = new THREE.PointLight(0xffc36b, 0, 2 + this._flashScale, 2);
       this.muzzleLight.position.set(muzzle[0], muzzle[1], muzzle[2] + 0.05);
       g.add(this.muzzleLight);
+    }
+
+    // muzzle smoke wisp pool: fixed SMOKE_MAX sprites living in the gun group
+    // so they are disposed with it (shared sprite geometry is never disposed
+    // — see _clear()). Spawned when a burst ends, driven in update().
+    this._muzzlePos = muzzle || null;
+    this._burstShots = 0;
+    if (muzzle) {
+      this._smoke = [];
+      for (let i = 0; i < SMOKE_MAX; i++) {
+        const spr = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xb9c2c9, transparent: true, opacity: 0, depthWrite: false }));
+        spr.position.set(muzzle[0], muzzle[1], muzzle[2]);
+        spr.scale.setScalar(0.01);
+        g.add(spr);
+        this._smoke.push({ spr, t: 0, dur: 1, drift: 0, size: 0.08, peak: 0.3 });
+      }
     }
 
     // snapshot rest transforms of animatable parts (plain numbers — the
@@ -689,6 +952,27 @@ export class Viewmodel {
     this.basePos = pose.pos;
     this.baseRot = pose.rot;
     this.raiseT = RAISE_TIME; // play the raise animation on every build/switch
+
+    // Per-category draw flourish layered onto the raise. Purely visual — fire
+    // timing lives in weaponsystem.js and is never gated by any of this.
+    this._flourish = null;
+    this._flourishT = -0.12; // small delay: the flourish reads as the raise settles
+    this._flourishAmp = 0;
+    if (cat === 'melee') {
+      this._flourish = 'twirl'; this._flourishDur = 0.25; this._flourishT = -0.05;
+    } else if (cat === 'sidearm') {
+      // pistol slide-check only on the first sidearm draw of each round
+      if (this._slideCheckRound !== this.game.roundNum) {
+        this._slideCheckRound = this.game.roundNum;
+        this._flourish = 'rack'; this._flourishDur = 0.45; this._flourishAmp = 0.7;
+      }
+    } else if (cat === 'sniper') {
+      this._flourish = 'rack'; this._flourishDur = 0.5; this._flourishAmp = 0.5;   // bolt lift-check
+    } else if (cat === 'shotgun') {
+      this._flourish = 'rack'; this._flourishDur = 0.42; this._flourishAmp = 0.85; // pump check
+    } else {
+      this._flourish = 'tap'; this._flourishDur = 0.36; this._flourishAmp = 0.3;   // rifle/smg/heavy chamber-tap
+    }
   }
 
   update(dt) {
@@ -700,8 +984,17 @@ export class Viewmodel {
     // re-added, the old gun resources are stale, so force a rebuild too.
     if (this._mount()) this.currentId = null;
     const w = p.alive ? p.weapon() : null;
-    if (w && (w.id !== this.currentId || !this.gun)) this.build(w.id, w.cat);
-    this.group.visible = !!(p.alive && this.game.state === 'playing' && !this.game.buyOpen && !this.game.scopeActive);
+    const agentId = this.game.player?.agent?.id ?? null;
+    if (w && (w.id !== this.currentId || !this.gun
+      || (w.cat === 'melee' && agentId !== this._meleeAgentId))) this.build(w.id, w.cat);
+    // Sniper scope-in: ease toward/away from the centered pose over
+    // ~SCOPE_TIME (read game.scopeActive live each frame). The gun stays
+    // visible while it rises into the scope and only disappears once fully
+    // scoped; unscoping reverses the same path.
+    const scopeTarget = this.game.scopeActive && w && w.scoped ? 1 : 0;
+    if (this._scopeT < scopeTarget) this._scopeT = Math.min(1, this._scopeT + dt / SCOPE_TIME);
+    else if (this._scopeT > scopeTarget) this._scopeT = Math.max(0, this._scopeT - dt / SCOPE_TIME);
+    this.group.visible = !!(p.alive && this.game.state === 'playing' && !this.game.buyOpen && this._scopeT < 1);
     // replay the raise animation on respawn even if the weapon is unchanged
     if (!p.alive) this._wasDead = true;
     else if (this._wasDead) { this._wasDead = false; this.raiseT = RAISE_TIME; }
@@ -713,7 +1006,9 @@ export class Viewmodel {
     const isMelee = cat === 'melee';
 
     // timers
-    this.recoil = Math.max(0, this.recoil - dt * (isMelee ? 5 : 8));
+    this.recoil = Math.max(0, this.recoil - dt * 8);
+    this._swingT = Math.max(0, this._swingT - dt);
+    this._clickT = Math.max(0, this._clickT - dt);
     this.raiseT = Math.max(0, this.raiseT - dt);
     this._cycleT = Math.max(0, this._cycleT - dt);
     const raise = this.raiseT / RAISE_TIME;      // 1 -> 0
@@ -789,10 +1084,45 @@ export class Viewmodel {
       rackPose = bell(prog, 0.85, 0.18);
     }
 
+    // dry-fire: holding the trigger on an empty mag with no reload running
+    // (i.e. out of reserve) plays a tiny "click" jiggle instead of a shot
+    const inp = this.game.pc?.input;
+    if (w && !isMelee && w.mag > 0 && (p.ammo[w.id] ?? 0) <= 0 && remain <= 0
+      && inp && inp.locked && inp.mouse.left
+      && this.game.state === 'playing' && !this.game.buyOpen
+      && this.game.now >= this._nextClickAt) {
+      this._clickT = CLICK_TIME;
+      this._nextClickAt = this.game.now + 0.28;
+    }
+
     // per-shot mechanical cycle (pistol slide blowback, bolt/pump work)
     if (this._cycleT > 0) {
       const cyc = Math.sin((1 - this._cycleT / this._cycleDur) * Math.PI);
       if (cyc > rackF) rackF = cyc;
+    }
+
+    // draw flourish: a partial rack / chamber tap on the bolt part, or the
+    // knife twirl (flSpin is applied in the compose step below)
+    let flSpin = 0;
+    let flPose = 0;
+    if (this._flourish) {
+      this._flourishT += dt;
+      const f = this._flourishT / this._flourishDur;
+      if (f >= 1) this._flourish = null;
+      else if (f > 0) {
+        if (this._flourish === 'twirl') {
+          flSpin = -Math.PI * 2 * smooth01(f); // one full roll, lands back at rest
+          flPose = Math.sin(f * Math.PI) * 0.4;
+        } else {
+          // pull (or tap), brief hold, release — smaller than a reload rack
+          const pull = f < 0.42 ? smooth01(f / 0.42) : 1 - smooth01((f - 0.5) / 0.5);
+          const rF = pull * this._flourishAmp;
+          if (rF > rackF) rackF = rF;
+          flPose = pull;
+        }
+      }
+      // a reload takes over the hands — drop the gun flourish
+      if (remain > 0 && remain <= RELOAD_DURATION && this._flourish !== 'twirl') this._flourish = null;
     }
 
     // drive the animatable parts (rest snapshot + offset x factor; .set only)
@@ -835,28 +1165,35 @@ export class Viewmodel {
     let ry = bry + swayYaw * 0.35 - rackPose * 0.28 + this._runB * 0.08;
     let rz = brz + dip * 0.35 + land * 0.04 + this._runB * 0.06;
 
+    // draw-flourish body language: roll the gun toward the working hand
+    if (flPose > 0) {
+      px -= flPose * 0.012;
+      py -= flPose * 0.008;
+      rx += flPose * 0.05;
+      ry -= flPose * 0.16;
+      rz += flPose * 0.1;
+    }
+    rz += flSpin; // knife twirl (full 2π roll — ends exactly back at rest)
+
     if (isMelee) {
-      // two-stage swing alternation driven by the recoil impulse:
-      // stab (forward thrust) then slash (diagonal sweep across the screen)
-      const k = this.recoil;                 // 1 -> 0 over ~0.2 s
-      const env = Math.sin(k * Math.PI);     // wind-up -> extend -> recover
-      if (this._swingAlt) {
-        // stab: lunge straight out with a slight twist
-        pz -= env * 0.3;
-        py += env * 0.045;
-        rx -= env * 0.35;
-        ry += env * 0.3;
-        rz += env * 0.25;
-      } else {
-        // slash: blade sweeps right-to-left through the view (biased so the
-        // arc reads as a diagonal cut, not a symmetric wobble)
-        const c = k * 2 - 1;                 // +1 -> -1 across the swing
-        px += c * env * 0.12;
-        py += env * 0.05;
-        pz -= env * 0.2;
-        rx -= env * 0.3;
-        ry += (c * 0.9 - 0.3) * env;
-        rz -= (c * 1.1 - 0.25) * env;
+      // Melee swing (replaces the muzzle flash): ~40 ms anticipation wind-up,
+      // a fast diagonal slash across the view, then follow-through with a
+      // slight overshoot — alternating left/right per attack, and finished
+      // well inside the 0.5 s window of the knife's 2/s fireRate.
+      if (this._swingT > 0) {
+        const u = 1 - this._swingT / SWING_TIME;
+        const side = this._swingSide;
+        const windQ = smooth01(u / SWING_WINDUP);             // cock toward the start corner
+        const strikeQ = smooth01((u - SWING_WINDUP) / 0.3);   // the cut itself
+        const recover = smooth01((u - 0.52) / 0.48);          // follow-through eases home
+        const q = (-windQ + strikeQ * 2.12) * (1 - recover);  // -1 wound → +1.12 overshoot → 0
+        const ext = bell(u, 0.3, 0.34);                       // forward lunge envelope
+        px -= side * q * 0.17;                                // sweep across the screen
+        py += -q * 0.085 + ext * 0.03;                        // high at wind-up, low at exit
+        pz -= ext * 0.24;                                     // lunge toward the target
+        rx += -q * 0.26 - ext * 0.28;
+        ry += side * (q * 0.55 + ext * 0.15);
+        rz -= side * q * 0.95;                                // blade rolls through the cut
       }
     } else {
       // gun recoil: kick back toward the camera and pitch the muzzle up,
@@ -867,6 +1204,25 @@ export class Viewmodel {
       rx += kk * 0.14;
       ry += kk * this._kickSide * 0.06;
       rz += kk * this._kickSide * 0.12;
+      // tiny dry-fire "click": the hand flinches but nothing cycles
+      if (this._clickT > 0) {
+        const ce = Math.sin((1 - this._clickT / CLICK_TIME) * Math.PI);
+        rx += ce * 0.02;
+        rz += ce * 0.035;
+        py -= ce * 0.004;
+      }
+    }
+
+    // scope-in choreography: blend toward a centered, slightly canted pose
+    // while the HUD overlay closes in (~120 ms); reversed on unscope
+    if (this._scopeT > 0) {
+      const se = smooth01(this._scopeT);
+      px += (0.02 - px) * se;
+      py += (-0.1 - py) * se;
+      pz += (bz + 0.05 - pz) * se;
+      rx += (0.05 - rx) * se;
+      ry -= ry * se;
+      rz += (-0.16 - rz) * se;
     }
 
     gun.position.set(px, py, pz);
@@ -882,5 +1238,41 @@ export class Viewmodel {
       this.muzzle.scale.set(fs, fs, fs);
     }
     if (this.muzzleLight) this.muzzleLight.intensity = flash * 14 * this._flashScale;
+
+    // muzzle smoke: once a burst ends (no shot for one fire interval), a wisp
+    // curls up from the barrel — scaled per category, at most SMOKE_MAX alive
+    if (this._burstShots > 0 && w && !isMelee) {
+      const gap = 1 / (w.fireRate || 5) + 0.09;
+      if (this.game.now - this._lastShotAt > gap) {
+        const minShots = w.cat === 'sniper' || w.cat === 'shotgun' ? 1 : 3;
+        if (this._smoke && this._burstShots >= minShots) this._spawnWisp(Math.min(1, this._burstShots / 8));
+        this._burstShots = 0;
+      }
+    }
+    if (this._smoke && this._muzzlePos) {
+      const m = this._muzzlePos;
+      for (const sm of this._smoke) {
+        if (sm.t <= 0) { sm.spr.material.opacity = 0; continue; }
+        sm.t -= dt;
+        const k = 1 - Math.max(0, sm.t) / sm.dur; // 0 → 1 over the wisp's life
+        sm.spr.position.set(m[0] + sm.drift * k, m[1] + k * 0.1, m[2] - k * 0.03);
+        const sc = sm.size * (0.5 + k * 1.6);
+        sm.spr.scale.set(sc, sc, sc);
+        sm.spr.material.opacity = (k < 0.18 ? k / 0.18 : 1 - (k - 0.18) / 0.82) * sm.peak;
+      }
+    }
+  }
+
+  _spawnWisp(strength) {
+    // reuse the most-faded wisp from the fixed pool — never allocates
+    let sm = this._smoke[0];
+    for (const s of this._smoke) if (s.t < sm.t) sm = s;
+    const cat = this.currentCat;
+    const big = cat === 'sniper' || cat === 'heavy' || cat === 'shotgun' ? 1.4 : 1;
+    sm.dur = 0.7 + strength * 0.5 + (big - 1) * 0.3;
+    sm.t = sm.dur;
+    sm.drift = (Math.random() - 0.5) * 0.06;
+    sm.size = (0.06 + strength * 0.06) * big * (0.6 + this._flashScale * 0.4); // suppressed = faint
+    sm.peak = 0.22 + strength * 0.2;
   }
 }

@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { bus } from '../engine/eventbus.js';
 import { SHOP_ORDER, WEAPONS, ARMOR } from '../weapons/weapons.js';
 import { AGENTS } from '../agents/agents.js';
@@ -39,6 +40,10 @@ export class HUD {
     this._abReady = {};
     this._spikeSig = 'none';
     this._mmLayerId = null; // cached minimap wall layer (per map id)
+    this._dmgPool = []; // free floating-damage-number nodes (DOM stays attached)
+    this._dmgLive = []; // active damage numbers, oldest first
+    this._mvpShowT = 0;
+    this._mvpHideT = 0;
   }
 
   _build() {
@@ -47,6 +52,8 @@ export class HUD {
       <div class="hitmarker" id="hitmarker"></div>
       <div class="flash-overlay" id="flash"></div>
       <div class="dmg-vignette" id="dmgv"></div>
+      <div class="dmg-numbers" id="dmgNums"></div>
+      <div class="dmg-dir" id="dmgDir"><i class="dd-arc"></i><i class="dd-arc"></i><i class="dd-arc"></i></div>
       <div class="scope-overlay" id="scope"><div class="scope-cross-v"></div><div class="scope-cross-h"></div></div>
 
       <div class="topbar">
@@ -64,6 +71,7 @@ export class HUD {
 
       <div class="killfeed" id="killfeed"></div>
       <div class="center-banner" id="banner"></div>
+      <div class="mvp-strip" id="mvpStrip"></div>
       <div class="toast" id="toast"></div>
 
       <div class="bottom-left">
@@ -95,10 +103,11 @@ export class HUD {
       <div class="matchend" id="matchend"></div>
     `;
     this.el = {};
-    for (const id of ['crosshair', 'hitmarker', 'flash', 'dmgv', 'scope', 'scoreAtt', 'scoreDef', 'roundLabel', 'roundTimer', 'phaseLabel', 'spikeStatus', 'minimap', 'killfeed', 'banner', 'toast', 'hp', 'hpFill', 'armor', 'armorFill', 'armorRow', 'abilities', 'credits', 'ammoMag', 'ammoReserve', 'reloadHint', 'weaponName', 'weaponCat', 'interactBar', 'interactFill', 'interactLabel', 'buyMenu', 'scoreboard', 'deathOverlay', 'matchend']) {
+    for (const id of ['crosshair', 'hitmarker', 'flash', 'dmgv', 'dmgNums', 'dmgDir', 'scope', 'scoreAtt', 'scoreDef', 'roundLabel', 'roundTimer', 'phaseLabel', 'spikeStatus', 'minimap', 'killfeed', 'banner', 'mvpStrip', 'toast', 'hp', 'hpFill', 'armor', 'armorFill', 'armorRow', 'abilities', 'credits', 'ammoMag', 'ammoReserve', 'reloadHint', 'weaponName', 'weaponCat', 'interactBar', 'interactFill', 'interactLabel', 'buyMenu', 'scoreboard', 'deathOverlay', 'matchend']) {
       this.el[id] = this.root.querySelector('#' + id);
     }
     this.mmCtx = this.el.minimap.getContext('2d');
+    this._dirArcs = [...this.el.dmgDir.querySelectorAll('.dd-arc')].map((node) => ({ node, until: 0, timer: 0 }));
   }
 
   _bind() {
@@ -113,7 +122,12 @@ export class HUD {
       if (v && this.last) this._renderScoreboard(this.last.scoreboard, this.last);
       this.el.scoreboard.classList.toggle('show', v);
     });
-    bus.on('round:end', (d) => this.banner(d.winner === this.game.playerSide ? 'RUNDE GEWONNEN' : 'RUNDE VERLOREN', d.winner === this.game.playerSide ? 'win' : 'lose'));
+    bus.on('round:end', (d) => {
+      this.banner(d.winner === this.game.playerSide ? 'RUNDE GEWONNEN' : 'RUNDE VERLOREN', d.winner === this.game.playerSide ? 'win' : 'lose');
+      this._queueMvp(d.mvp);
+    });
+    bus.on('round:start', () => this._hideMvp());
+    bus.on('damage', (d) => this.onDamage(d));
     bus.on('spike:planted', (d) => this.toast(`Spike auf ${d.site} gepflanzt!`));
     bus.on('halftime', () => this.banner('SEITENWECHSEL', 'neutral'));
     bus.on('buy:toggle', (open) => this.renderBuyMenu(open));
@@ -127,6 +141,9 @@ export class HUD {
       this._abReady = {};
       this._spikeSig = 'none';
       this._mmLayerId = null;
+      this._hideMvp();
+      this._resetDamageNumbers();
+      for (const a of this._dirArcs) { clearTimeout(a.timer); a.until = 0; a.node.classList.remove('on'); }
     });
     bus.on('muzzle', () => { this._spread = 1; }); // player shot fired → crosshair bloom
   }
@@ -322,12 +339,13 @@ export class HUD {
           <td class="c-name">${r.name}${r.alive ? '' : ' <small class="sb-dead-tag">✕</small>'}</td>
           <td class="c-num${top ? ' c-top' : ''}">${r.kills}${top ? '<em class="sb-star">★</em>' : ''}</td>
           <td class="c-num">${r.deaths}</td>
+          <td class="c-num c-ass">${r.assists ?? 0}</td>
           <td class="c-num c-kd ${r.kills >= r.deaths ? 'pos' : 'neg'}">${kd}</td>
           <td class="c-num c-cred">¤${r.credits}</td>
         </tr>`;
       }).join('');
     };
-    const head = `<tr><th>Agent</th><th>Name</th><th>K</th><th>T</th><th>K/T</th><th>¤</th></tr>`;
+    const head = `<tr><th>Agent</th><th>Name</th><th>K</th><th>T</th><th>A</th><th>K/T</th><th>¤</th></tr>`;
     let body;
     if (d.mode && (d.mode.kind === 'ffa' || d.mode.kind === 'gungame')) {
       body = `<table>${head}${rows('all')}</table>`;
@@ -464,6 +482,136 @@ export class HUD {
     });
   }
 
+  // ---------------------------------------------------------------- damage feedback
+  onDamage(d) {
+    if (d.attackerIsPlayer) this._spawnDamageNumber(d);
+    if (d.victimIsPlayer && !d.attackerIsPlayer) this._flashDamageDir(d);
+  }
+
+  // World point -> screen px, or null when behind the camera / far off-screen.
+  _projectPoint(p) {
+    const cam = this.game.r?.camera;
+    if (!cam) return null;
+    cam.updateMatrixWorld();
+    const v = this._projV || (this._projV = new THREE.Vector3());
+    v.set(p.x, p.y, p.z).applyMatrix4(cam.matrixWorldInverse);
+    if (v.z > -0.05) return null; // camera space looks down -z
+    v.applyMatrix4(cam.projectionMatrix);
+    if (v.x < -1.15 || v.x > 1.15 || v.y < -1.15 || v.y > 1.15) return null;
+    return { x: (v.x * 0.5 + 0.5) * window.innerWidth, y: (-v.y * 0.5 + 0.5) * window.innerHeight };
+  }
+
+  // Floating damage numbers: pooled DOM nodes, rapid hits (<300 ms) accumulate
+  // into the newest number so sprays stay readable. Max 8 alive at once.
+  _dmgAcquire() {
+    let node = this._dmgPool.pop();
+    if (!node) {
+      node = document.createElement('div');
+      node.className = 'dmg-num';
+      this.el.dmgNums.appendChild(node);
+    }
+    return node;
+  }
+
+  _dmgRelease(entry) {
+    clearTimeout(entry.timer);
+    entry.node.className = 'dmg-num';
+    const i = this._dmgLive.indexOf(entry);
+    if (i >= 0) this._dmgLive.splice(i, 1);
+    this._dmgPool.push(entry.node);
+  }
+
+  _resetDamageNumbers() {
+    while (this._dmgLive.length) this._dmgRelease(this._dmgLive[this._dmgLive.length - 1]);
+  }
+
+  _spawnDamageNumber(d) {
+    const pos = this._projectPoint(d.point);
+    if (!pos) return;
+    const now = performance.now();
+    const last = this._dmgLive[this._dmgLive.length - 1];
+    let entry;
+    if (last && last.victim === d.victim && now - last.lastHit < 300) {
+      entry = last;
+      entry.amount += d.amount;
+    } else {
+      if (this._dmgLive.length >= 8) this._dmgRelease(this._dmgLive[0]);
+      entry = { node: this._dmgAcquire(), victim: d.victim, amount: d.amount, head: false, kill: false, timer: 0, lastHit: 0 };
+      this._dmgLive.push(entry);
+    }
+    entry.lastHit = now;
+    entry.head = entry.head || d.part === 'head';
+    entry.kill = entry.kill || !!d.kill;
+    const n = entry.node;
+    n.textContent = entry.amount;
+    n.style.left = pos.x.toFixed(1) + 'px';
+    n.style.top = pos.y.toFixed(1) + 'px';
+    // rebuild the class list and restart the rise/fade even when accumulating
+    n.className = 'dmg-num' + (entry.head ? ' head' : '') + (entry.kill ? ' kill' : '');
+    void n.offsetWidth;
+    n.classList.add('on');
+    clearTimeout(entry.timer);
+    entry.timer = setTimeout(() => this._dmgRelease(entry), 720);
+  }
+
+  // Directional damage indicator: rotate one of 3 fixed arc segments around
+  // the screen center toward the attacker (relative to the player's facing).
+  _flashDamageDir(d) {
+    const p = this.game.player;
+    if (!p) return;
+    const dx = d.attackerPos.x - p.pos.x;
+    const dz = d.attackerPos.z - p.pos.z;
+    if (dx * dx + dz * dz < 1e-6) return;
+    // player forward is (-sin yaw, -cos yaw), right is (cos yaw, -sin yaw)
+    const fwd = -Math.sin(p.yaw) * dx - Math.cos(p.yaw) * dz;
+    const right = Math.cos(p.yaw) * dx - Math.sin(p.yaw) * dz;
+    const angle = Math.atan2(right, fwd) * 180 / Math.PI; // 0 = ahead, ±180 = behind
+    const now = performance.now();
+    let slot = this._dirArcs.find((a) => now >= a.until);
+    if (!slot) slot = this._dirArcs.reduce((m, a) => (a.until < m.until ? a : m));
+    slot.until = now + 500;
+    const n = slot.node;
+    n.style.transform = `rotate(${angle.toFixed(1)}deg)`;
+    n.classList.remove('on');
+    void n.offsetWidth;
+    n.classList.add('on');
+    clearTimeout(slot.timer);
+    slot.timer = setTimeout(() => { n.classList.remove('on'); }, 520);
+  }
+
+  // ---------------------------------------------------------------- round MVP
+  _queueMvp(mvp) {
+    this._hideMvp();
+    if (!mvp) return;
+    // let the win/lose banner land first; round-end pause is 5 s, we occupy
+    // roughly 1.2 s -> 3.8 s of it
+    this._mvpShowT = setTimeout(() => this._showMvp(mvp), 1200);
+  }
+
+  _showMvp(mvp) {
+    const el = this.el.mvpStrip;
+    const agent = AGENT_BY_NAME[mvp.agent];
+    const color = agent?.color || '#8298aa';
+    const portrait = agent
+      ? `<img class="mvp-portrait" src="${agentPortraitURL(agent, 44)}" alt="">`
+      : `<i class="agent-dot" style="background:${color}"></i>`;
+    const side = mvp.team === 'att' ? 'att' : (mvp.team === 'def' ? 'def' : '');
+    el.style.setProperty('--mvp-accent', color);
+    el.innerHTML = `${portrait}
+      <div class="mvp-text">
+        <b class="mvp-name ${side}">${mvp.name}</b>
+        <span class="mvp-stats"><em class="mvp-badge">MVP</em> · ${mvp.kills} Kills · ${mvp.damage} Schaden</span>
+      </div>`;
+    el.classList.add('show');
+    this._mvpHideT = setTimeout(() => this._hideMvp(), 2600);
+  }
+
+  _hideMvp() {
+    clearTimeout(this._mvpShowT);
+    clearTimeout(this._mvpHideT);
+    this.el.mvpStrip.classList.remove('show');
+  }
+
   // ---------------------------------------------------------------- killfeed
   addKill(d) {
     const agentColor = (name) => {
@@ -479,7 +627,10 @@ export class HUD {
     div.style.setProperty('--kf-accent', aCol);
     const icon = KILL_ICONS[d.method] || KILL_ICONS.gun;
     const headIcon = d.head ? `<span class="k-head">${KILL_ICONS.head}</span>` : '';
-    div.innerHTML = `<i class="k-agent" style="background:${aCol}"></i><span class="${aCls}">${d.attacker}</span><span class="k-weapon">${icon}</span>${headIcon}<span class="${vCls}">${d.victim}</span><i class="k-agent" style="background:${vCol}"></i>`;
+    const assist = d.assist
+      ? `<span class="k-plus">+</span><span class="k-assist" style="color:${agentColor(d.assist)}">${d.assist}</span>`
+      : '';
+    div.innerHTML = `<i class="k-agent" style="background:${aCol}"></i><span class="${aCls}">${d.attacker}</span>${assist}<span class="k-weapon">${icon}</span>${headIcon}<span class="${vCls}">${d.victim}</span><i class="k-agent" style="background:${vCol}"></i>`;
     this.el.killfeed.prepend(div);
     while (this.el.killfeed.children.length > 6) this.el.killfeed.lastChild.remove();
     setTimeout(() => div.classList.add('out'), 4500);
@@ -630,6 +781,7 @@ export class HUD {
 
   // ---------------------------------------------------------------- match end
   showMatchEnd(d) {
+    this._hideMvp(); // final round also emits round:end + mvp; matchend takes over
     const el = this.el.matchend;
     el.classList.add('show');
     const title = d.playerWon ? 'SIEG' : 'NIEDERLAGE';

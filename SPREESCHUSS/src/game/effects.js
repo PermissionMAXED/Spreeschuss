@@ -1,9 +1,12 @@
 import * as THREE from 'three';
+import { agentById } from '../agents/agents.js';
 
 // Procedural combat feedback: impact sparks + hot glow dots + dust puffs,
 // bullet-hole decals, layered blood puffs with kill shock-rings, tapered
 // hot-core tracers with muzzle streaks and ricochets, layered smoke shells
 // and spike drama (double-blink pulse, pillar-of-light detonation).
+// Also: per-agent CAST SIGNATURES (castSignature) — short agent-color-tinted
+// compositions shaped by ability type, with an ult beacon-column variant.
 // Everything is pooled and capped; per-frame updates run from
 // Game.renderExtras via update(dt); clear() empties every pool and disposes
 // GPU resources (called from Game._clearEffects on round start / match load).
@@ -16,6 +19,8 @@ const MAX_BURSTS = 32;
 const MAX_TRACERS = 56; // main beams + muzzle streaks + ricochets share one pool
 const MAX_DOTS = 24;    // brief additive glow flashes (impacts, headshots)
 const MAX_RINGS = 12;   // expanding shock rings (kills, detonation)
+const MAX_RUNES = 8;    // cast-signature rune planes (wall/trap/turret shapes)
+const MAX_BEACONS = 4;  // ult cast beacon columns
 const BURST_N = 16;     // particles per burst (fixed buffer size)
 
 const _Y = new THREE.Vector3(0, 1, 0);
@@ -24,6 +29,14 @@ const _Z = new THREE.Vector3(0, 0, 1);
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
+// cast-signature scratch — kept separate from _v1.._v3 because the shared
+// primitive spawners (e.g. _spawnBeam) use those internally mid-composition
+const _s1 = new THREE.Vector3();
+const _s2 = new THREE.Vector3();
+const _s3 = new THREE.Vector3();
+const _s4 = new THREE.Vector3();
+const _cA = new THREE.Color();
+const _WHITE = new THREE.Color(0xffffff);
 
 // slight per-shot spark tint variation so autofire doesn't strobe uniformly
 const SPARK_COLORS = [0xffc46a, 0xffd685, 0xffab55];
@@ -44,6 +57,10 @@ export class EffectsSystem {
     this._dotPool = [];
     this.rings = [];
     this._ringPool = [];
+    this.runes = [];    // cast-signature glyph planes (rising/sinking/spinning)
+    this._runePool = [];
+    this.beacons = [];  // ult cast beacon columns
+    this._beaconPool = [];
     this.timed = [];    // one-shot animated meshes (flashes, pillars, lights)
     this._pending = []; // delayed spawn callbacks (e.g. staggered ember bursts)
 
@@ -56,7 +73,9 @@ export class EffectsSystem {
     const decalTex = makeDecalTexture();
     const sparkTex = makeSparkTexture();
     const puffTex = makePuffTexture();
+    const runeTex = makeRuneTexture(); // cast-signature glyph (tinted per rune)
     this._shared = {
+      runeTex,
       // unit-height tapered beam, +Y (radiusTop) points at the target
       beamGeo: new THREE.CylinderGeometry(0.012, 0.03, 1, 6, 1, true),
       decalGeo: new THREE.PlaneGeometry(1, 1), // also reused by glow dots
@@ -82,6 +101,8 @@ export class EffectsSystem {
     this._updateBursts(dt);
     this._updateDots(dt);
     this._updateRings(dt);
+    this._updateRunes(dt);
+    this._updateBeacons(dt);
     this._updateTimed(dt);
     this._updateSmokes(dt);
     this._updateSpike();
@@ -280,7 +301,7 @@ export class EffectsSystem {
   // ------------------------------------------------------------ glow dots
   // Tiny camera-facing additive flashes: the hot spot where a bullet lands,
   // the headshot flick. Pooled planes on the shared unit quad.
-  _spawnDot(point, o) { // { color, size, life, op }
+  _spawnDot(point, o) { // { color, size, life, op, rise?, soft? }
     if (this.dots.length >= MAX_DOTS) this._releaseDot(this.dots.shift());
     const s = this._ensureShared();
     let d = this._dotPool.pop();
@@ -289,11 +310,13 @@ export class EffectsSystem {
         map: s.sparkTex, color: 0xffffff, transparent: true, opacity: 1,
         blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
       });
-      d = { mesh: new THREE.Mesh(s.decalGeo, mat), mat, life: 0, max: 1, size: 0.1, baseOp: 1 };
+      d = { mesh: new THREE.Mesh(s.decalGeo, mat), mat, life: 0, max: 1, size: 0.1, baseOp: 1, rise: 0, soft: false };
     }
     d.life = d.max = o.life;
     d.size = o.size;
     d.baseOp = o.op;
+    d.rise = o.rise || 0;   // vertical drift (soul wisps float upward)
+    d.soft = o.soft === true; // linear fade instead of the hot k*k falloff
     d.mat.color.setHex(o.color);
     d.mat.opacity = o.op;
     d.mesh.position.copy(point);
@@ -320,8 +343,9 @@ export class EffectsSystem {
         continue;
       }
       const k = d.life / d.max;
+      if (d.rise) d.mesh.position.y += d.rise * dt;
       d.mesh.quaternion.copy(cam.quaternion);
-      d.mat.opacity = d.baseOp * k * k; // hot flash: fast falloff
+      d.mat.opacity = d.baseOp * (d.soft ? k : k * k); // hot flash: fast falloff
       d.mesh.scale.setScalar(d.size * (0.6 + 0.4 * k));
     }
   }
@@ -385,6 +409,263 @@ export class EffectsSystem {
       if (r.billboard) r.mesh.quaternion.copy(cam.quaternion);
       r.mesh.scale.setScalar(r.from + (r.to - r.from) * (1 - k * k)); // ease-out expansion
       r.mat.opacity = r.baseOp * k;
+    }
+  }
+
+  // ------------------------------------------------------------ rune planes (cast signatures)
+  // Pooled additive glyph quads on the shared unit quad + shared rune texture.
+  // Three orientation modes: camera billboard, flat on the ground, or upright
+  // facing a horizontal normal. Runes can rise/sink, spin and grow/shrink.
+  _spawnRune(pos, o) { // { color, size, life, op, rise?, spin?, mode?, grow?, aspect?, normal? }
+    if (this.runes.length >= MAX_RUNES) this._releaseRune(this.runes.shift());
+    const s = this._ensureShared();
+    let u = this._runePool.pop();
+    if (!u) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: s.runeTex, color: 0xffffff, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false,
+      });
+      u = {
+        mesh: new THREE.Mesh(s.decalGeo, mat), mat, life: 0, max: 1,
+        size: 0.5, baseOp: 1, rise: 0, spin: 0, ang: 0, mode: 'billboard', grow: 1, aspect: 1,
+      };
+    }
+    u.life = u.max = o.life;
+    u.size = o.size;
+    u.baseOp = o.op;
+    u.rise = o.rise || 0;
+    u.spin = o.spin || 0;
+    u.ang = Math.random() * Math.PI * 2;
+    u.mode = o.mode || 'billboard';
+    u.grow = o.grow ?? 1; // end-of-life scale multiplier (<1 shrinks = "assembling")
+    u.aspect = o.aspect ?? 1;
+    u.mat.color.setHex(o.color);
+    u.mat.opacity = o.op;
+    u.mesh.position.copy(pos);
+    if (u.mode === 'flat') {
+      u.mesh.rotation.set(-Math.PI / 2, 0, u.ang);
+    } else if (u.mode === 'upright' && o.normal) {
+      u.mesh.rotation.set(0, 0, 0);
+      u.mesh.quaternion.setFromUnitVectors(_Z, o.normal);
+    } else {
+      u.mesh.quaternion.copy(this.r.camera.quaternion);
+    }
+    u.mesh.scale.set(o.size, o.size * u.aspect, 1);
+    this.r.scene.add(u.mesh);
+    this.runes.push(u);
+  }
+
+  _releaseRune(u) {
+    this.r.scene.remove(u.mesh);
+    this._runePool.push(u);
+  }
+
+  _updateRunes(dt) {
+    const cam = this.r.camera;
+    for (let i = this.runes.length - 1; i >= 0; i--) {
+      const u = this.runes[i];
+      u.life -= dt;
+      if (u.life <= 0) {
+        this._releaseRune(u);
+        this.runes[i] = this.runes[this.runes.length - 1];
+        this.runes.pop();
+        continue;
+      }
+      const k = u.life / u.max;
+      u.ang += u.spin * dt;
+      if (u.rise) u.mesh.position.y += u.rise * dt;
+      if (u.mode === 'flat') {
+        u.mesh.rotation.z = u.ang;
+      } else if (u.mode === 'billboard') {
+        u.mesh.quaternion.copy(cam.quaternion);
+        u.mesh.rotateZ(u.ang);
+      }
+      const sc = u.size * (1 + (u.grow - 1) * (1 - k));
+      u.mesh.scale.set(sc, sc * u.aspect, 1);
+      // quick bloom-in, then fade out over the remaining life
+      u.mat.opacity = u.baseOp * Math.min(1, (1 - k) * 6) * k;
+    }
+  }
+
+  // ------------------------------------------------------------ beacon columns (ult casts)
+  // Pooled additive light columns on the shared pillar geometry — a brief
+  // vertical "this was an ULT" telegraph at the caster's feet.
+  _spawnBeacon(pos, o) { // { color, radius, height, life, op }
+    if (this.beacons.length >= MAX_BEACONS) this._releaseBeacon(this.beacons.shift());
+    const s = this._ensureShared();
+    let b = this._beaconPool.pop();
+    if (!b) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 1, blending: THREE.AdditiveBlending,
+        depthWrite: false, side: THREE.DoubleSide, fog: false,
+      });
+      b = { mesh: new THREE.Mesh(s.pillarGeo, mat), mat, life: 0, max: 1, baseOp: 1, radius: 1 };
+    }
+    b.life = b.max = o.life;
+    b.baseOp = o.op;
+    b.radius = o.radius;
+    b.mat.color.setHex(o.color);
+    b.mat.opacity = o.op;
+    b.mesh.position.set(pos.x, pos.y + o.height / 2, pos.z);
+    b.mesh.scale.set(o.radius, o.height, o.radius);
+    this.r.scene.add(b.mesh);
+    this.beacons.push(b);
+  }
+
+  _releaseBeacon(b) {
+    this.r.scene.remove(b.mesh);
+    this._beaconPool.push(b);
+  }
+
+  _updateBeacons(dt) {
+    for (let i = this.beacons.length - 1; i >= 0; i--) {
+      const b = this.beacons[i];
+      b.life -= dt;
+      if (b.life <= 0) {
+        this._releaseBeacon(b);
+        this.beacons[i] = this.beacons[this.beacons.length - 1];
+        this.beacons.pop();
+        continue;
+      }
+      const k = b.life / b.max;
+      const r = b.radius * (1 + (1 - k) * 0.6); // widens as it dissipates
+      b.mesh.scale.x = r;
+      b.mesh.scale.z = r;
+      b.mat.opacity = b.baseOp * k * k;
+    }
+  }
+
+  // ------------------------------------------------------------ cast signatures
+  // Per-agent VFX signature at the caster: a short (≤0.7 s) pooled
+  // composition tinted with the agent color and SHAPED by the ability type.
+  // Ult casts get a bigger variant plus a vertical beacon column.
+  // Called by game.castAbility for player AND bot casts. Purely visual.
+  castSignature(caster, info) {
+    if (!caster || !info || !info.type) return;
+    const ult = !!info.ult;
+    const K = ult ? 1.5 : 1; // ult size/count multiplier
+    // agent tint: base = raw agent color, lite = whitened core/highlight
+    const colStr = caster.agent?.color || agentById(info.agentId)?.color || '#ffffff';
+    _cA.set(colStr);
+    const base = _cA.getHex();
+    const lite = _cA.lerp(_WHITE, 0.55).getHex();
+
+    const pos = caster.pos; // feet
+    const dir = caster.aimDir();
+    // horizontal aim for ground-anchored shapes (never collapses looking down)
+    _s4.set(dir.x, 0, dir.z);
+    if (_s4.lengthSq() < 1e-6) _s4.set(0, 0, -1);
+    _s4.normalize();
+    _s1.set(pos.x, pos.y + 1.1, pos.z);  // chest
+    _s2.set(pos.x, pos.y + 0.06, pos.z); // ground
+
+    switch (info.type) {
+      case 'flash': { // rising star-spark fountain
+        this.spawnBurst(_s1, { color: lite, count: Math.round(9 * K), speed: 3.4 * K, size: 0.055, life: 0.42, gravity: -2.4, drag: 1.6, normal: _Y });
+        this.spawnBurst(_s1, { color: base, count: Math.round(7 * K), speed: 2.2 * K, size: 0.07, life: 0.5, gravity: -1.5, drag: 1.8, normal: _Y });
+        this._spawnDot(_s1, { color: lite, size: 0.32 * K, life: 0.14, op: 0.95 });
+        break;
+      }
+      case 'smoke': { // soft expanding ring puffs
+        _s1.y = pos.y + 0.9;
+        this.spawnBurst(_s1, { tex: 'puff', additive: false, color: base, count: Math.round(8 * K), speed: 1.2, size: 0.2 * K, life: 0.6, gravity: -0.4, drag: 2.4, opacity: 0.45, grow: true });
+        this.spawnBurst(_s1, { tex: 'puff', color: lite, count: 5, speed: 0.8, size: 0.15 * K, life: 0.45, gravity: -0.6, drag: 2, opacity: 0.3, grow: true });
+        this._spawnRing(_s2, { from: 0.3, to: 1.7 * K, life: 0.55, color: base, op: 0.5 });
+        break;
+      }
+      case 'molly': { // ember spray arc along the aim direction
+        this.spawnBurst(_s1, { color: base, count: Math.round(9 * K), speed: 4.2 * K, size: 0.05, life: 0.4, gravity: 6, drag: 0.6, normal: dir });
+        _s3.copy(_s1).addScaledVector(dir, 1.4 * K);
+        this.spawnBurst(_s3, { color: 0xffb050, count: 7, speed: 2.6, size: 0.06, life: 0.45, gravity: 5, drag: 0.6, normal: dir });
+        _s3.copy(_s1).addScaledVector(dir, 2.4 * K);
+        this._spawnBeam(_s1, _s3, { life: 0.12, width: 0.8, glowColor: base, coreColor: lite, glowOp: 0.7, coreOp: 0.9 });
+        break;
+      }
+      case 'slow': { // crystalline shard ring rising around the caster
+        const n = ult ? 8 : 6;
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2 + Math.random() * 0.3;
+          const cx = Math.cos(a);
+          const sz = Math.sin(a);
+          _s3.set(pos.x + cx * 0.9 * K, pos.y + 0.05, pos.z + sz * 0.9 * K);
+          _s1.set(_s3.x + cx * 0.45, pos.y + (0.9 + Math.random() * 0.4) * K, _s3.z + sz * 0.45);
+          this._spawnBeam(_s3, _s1, { life: 0.5, width: 0.5, glowColor: base, coreColor: lite, glowOp: 0.55, coreOp: 0.85 });
+        }
+        this._spawnRing(_s2, { from: 0.4, to: 1.5 * K, life: 0.5, color: lite, op: 0.6 });
+        break;
+      }
+      case 'wall': { // rising rectangular rune planes across the aim line
+        _s3.set(_s4.z, 0, -_s4.x); // right-hand of flat aim
+        const n = ult ? 4 : 3;
+        for (let i = 0; i < n; i++) {
+          const off = (i - (n - 1) / 2) * 0.7 * K;
+          _s1.set(pos.x + _s4.x * 1.2 + _s3.x * off, pos.y + 0.4, pos.z + _s4.z * 1.2 + _s3.z * off);
+          this._spawnRune(_s1, { color: base, size: 0.5 * K, life: 0.55, op: 0.8, rise: 1.6, mode: 'upright', normal: _s4, aspect: 1.5, grow: 1.15 });
+        }
+        break;
+      }
+      case 'dash': { // backward speed-streak burst
+        _s3.copy(_s4).negate();
+        const n = ult ? 7 : 5;
+        for (let i = 0; i < n; i++) {
+          _s1.set(
+            pos.x + (Math.random() - 0.5) * 0.7,
+            pos.y + 0.5 + Math.random() * 0.9,
+            pos.z + (Math.random() - 0.5) * 0.7,
+          );
+          _v2.copy(_s1).addScaledVector(_s3, (1.5 + Math.random() * 1.3) * K);
+          this._spawnBeam(_s1, _v2, { life: 0.18, width: 0.6, glowColor: base, coreColor: lite, glowOp: 0.75, coreOp: 0.9 });
+        }
+        _s1.set(pos.x, pos.y + 1, pos.z);
+        this.spawnBurst(_s1, { color: base, count: 8, speed: 3 * K, size: 0.05, life: 0.3, gravity: 0.5, drag: 1.5, normal: _s3 });
+        break;
+      }
+      case 'heal': { // gentle upward motes + halo
+        _s1.y = pos.y + 0.7;
+        this.spawnBurst(_s1, { color: base, count: Math.round(8 * K), speed: 0.9, size: 0.06, life: 0.65, gravity: -1.3, drag: 2.2, opacity: 0.9 });
+        this.spawnBurst(_s1, { color: lite, count: 5, speed: 0.6, size: 0.045, life: 0.6, gravity: -1.6, drag: 2, opacity: 0.8 });
+        _s1.y = pos.y + 1.2;
+        this._spawnRing(_s1, { from: 0.35 * K, to: 0.95 * K, life: 0.6, color: lite, op: 0.7, billboard: true });
+        break;
+      }
+      case 'recon': { // expanding sonar ring pair
+        this._spawnRing(_s2, { from: 0.2, to: 3.2 * K, life: 0.55, color: base, op: 0.7 });
+        this._spawnRing(_s2, { from: 0.2, to: 2.4 * K, life: 0.5, color: lite, op: 0.6, delay: 0.16 });
+        _s1.set(pos.x, pos.y + 1.7, pos.z);
+        this._spawnDot(_s1, { color: lite, size: 0.22 * K, life: 0.2, op: 0.9 });
+        break;
+      }
+      case 'turret': { // assembling bracket sparks ahead of the caster
+        _s1.set(pos.x + _s4.x * 1.6, pos.y + 0.6, pos.z + _s4.z * 1.6);
+        _s3.set(_s4.z, 0, -_s4.x);
+        for (let i = 0; i < 4; i++) {
+          const sx = i % 2 === 0 ? 1 : -1;
+          const sy = i < 2 ? 1 : -1;
+          _v2.copy(_s1).addScaledVector(_s3, sx * 0.45 * K);
+          _v2.y += sy * 0.35 * K;
+          this._spawnRune(_v2, { color: base, size: 0.3 * K, life: 0.5, op: 0.85, spin: sx * 2.4, mode: 'billboard', grow: 0.5, rise: -sy * 0.4 });
+        }
+        this.spawnBurst(_s1, { color: lite, count: 7, speed: 1.9, size: 0.05, life: 0.35, gravity: 1, drag: 1 });
+        break;
+      }
+      case 'trap': { // sinking rune disc
+        _s1.set(pos.x + _s4.x * 1.3, pos.y + 0.9, pos.z + _s4.z * 1.3);
+        this._spawnRune(_s1, { color: base, size: 0.8 * K, life: 0.55, op: 0.85, rise: -1.4, spin: 2.4, mode: 'flat', grow: 0.75 });
+        _s2.set(_s1.x, pos.y + 0.06, _s1.z);
+        this._spawnRing(_s2, { from: 1.1 * K, to: 0.35, life: 0.5, color: base, op: 0.6 }); // contracting lock-in
+        break;
+      }
+      default: { // future-proof fallback: tinted pop + ground ring
+        this.spawnBurst(_s1, { color: base, count: 8, speed: 2, size: 0.06, life: 0.4, gravity: -1, drag: 1.5 });
+        this._spawnRing(_s2, { from: 0.3, to: 1.4 * K, life: 0.5, color: base, op: 0.6 });
+        break;
+      }
+    }
+
+    if (ult) { // brief vertical beacon column + ground pulse: "ULT cast here"
+      this._spawnBeacon(pos, { color: base, radius: 0.5, height: 7, life: 0.6, op: 0.5 });
+      _s2.set(pos.x, pos.y + 0.06, pos.z);
+      this._spawnRing(_s2, { from: 0.5, to: 2.8, life: 0.55, color: lite, op: 0.8 });
     }
   }
 
@@ -457,6 +738,10 @@ export class EffectsSystem {
   // ------------------------------------------------------------ body hits
   bodyHit(point, part, kill) {
     const head = part === 'head';
+    // impact normal approximation: bullets arrive roughly from the viewer's
+    // side (exact for player shots, readable for bot fights) — sparks kick
+    // back toward the shooter instead of spraying uniformly
+    _v1.copy(this.r.camera.position).sub(point).normalize();
     // dark heavy core droplets
     this.spawnBurst(point, {
       additive: false,
@@ -475,14 +760,28 @@ export class EffectsSystem {
       size: kill ? 0.16 : 0.12, life: 0.34,
       gravity: 1.2, drag: 2.5, opacity: 0.5, grow: true,
     });
+    // bright directional spark spray biased along the impact normal — every
+    // hit gets a fast readable flick without obscuring the target
+    this.spawnBurst(point, {
+      color: head ? 0xffeacb : 0xffc890,
+      count: head ? 5 : 6, speed: head ? 2.2 : 2.5,
+      size: 0.05, life: 0.16, gravity: 2.5, normal: _v1,
+    });
     if (kill) {
-      // camera-facing shock ring makes kill confirms read instantly
-      this._spawnRing(point, { from: 0.12, to: 0.95, life: 0.28, color: 0xff5648, op: 0.85, billboard: true });
+      // camera-facing shock ring makes kill confirms read instantly:
+      // slightly larger, dark-red-tinged, with a touch more hang time
+      this._spawnRing(point, { from: 0.1, to: 1.15, life: 0.34, color: 0xd8362e, op: 0.9, billboard: true });
       this.spawnBurst(point, { color: 0xffd0a0, count: 6, speed: 2.2, size: 0.06, life: 0.18, gravity: 2 });
+      // death accent: one soul-wisp dot drifting up out of the victim
+      _v2.copy(point);
+      _v2.y += 0.15;
+      this._spawnDot(_v2, { color: 0xcfe6ff, size: 0.13, life: 0.5, op: 0.8, rise: 1.4, soft: true });
     }
     if (head) {
-      // tiny bright flick so headshots read at a glance
-      this._spawnDot(point, { color: 0xffe6c0, size: 0.16, life: 0.1, op: 1 });
+      // sharper white-gold micro-flash + thin ring so headshots read at a glance
+      this._spawnDot(point, { color: 0xffffff, size: 0.12, life: 0.07, op: 1 });
+      this._spawnDot(point, { color: 0xffdd96, size: 0.22, life: 0.12, op: 0.95 });
+      this._spawnRing(point, { from: 0.06, to: 0.5, life: 0.16, color: 0xffe4aa, op: 0.95, billboard: true });
       this.spawnBurst(point, { color: 0xffd0a0, count: 4, speed: 1.6, size: 0.045, life: 0.14, gravity: 1 });
     }
   }
@@ -722,6 +1021,14 @@ export class EffectsSystem {
     for (const r of this.rings.concat(this._ringPool)) r.mat.dispose();
     this.rings = []; this._ringPool = [];
 
+    for (const u of this.runes) scene.remove(u.mesh);
+    for (const u of this.runes.concat(this._runePool)) u.mat.dispose();
+    this.runes = []; this._runePool = [];
+
+    for (const b of this.beacons) scene.remove(b.mesh);
+    for (const b of this.beacons.concat(this._beaconPool)) b.mat.dispose();
+    this.beacons = []; this._beaconPool = [];
+
     for (const e of this.timed) this._disposeTimed(e);
     this.timed = [];
     this._pending = [];
@@ -736,6 +1043,7 @@ export class EffectsSystem {
       this._shared.decalTex.dispose();
       this._shared.sparkTex.dispose();
       this._shared.puffTex.dispose();
+      this._shared.runeTex.dispose();
       this._shared = null;
     }
     // smoke/spike meshes are owned by game.smokes / game.spike and removed
@@ -800,6 +1108,41 @@ function makeSparkTexture() {
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 32, 32);
+  return new THREE.CanvasTexture(c);
+}
+
+// angular glyph on a soft diamond frame for cast-signature runes; drawn in
+// white and tinted per-rune via material color
+function makeRuneTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.lineCap = 'round';
+  ctx.shadowColor = 'rgba(255,255,255,0.85)';
+  ctx.shadowBlur = 5;
+  // outer diamond frame
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(32, 5);
+  ctx.lineTo(59, 32);
+  ctx.lineTo(32, 59);
+  ctx.lineTo(5, 32);
+  ctx.closePath();
+  ctx.stroke();
+  // inner square
+  ctx.lineWidth = 1.8;
+  ctx.strokeRect(19, 19, 26, 26);
+  // angular glyph strokes
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(32, 14);
+  ctx.lineTo(32, 50);
+  ctx.moveTo(22, 26);
+  ctx.lineTo(42, 38);
+  ctx.moveTo(42, 26);
+  ctx.lineTo(22, 38);
+  ctx.stroke();
   return new THREE.CanvasTexture(c);
 }
 

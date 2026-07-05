@@ -6,6 +6,8 @@
 // impulse-response convolver (decaying noise burst generated once in init())
 // provides a shared room-reverb send that the big sounds opt into.
 
+import { initVoice } from './voice.js';
+
 // Per-category gunshot recipes. Layer fields:
 //   sub     – low sine thump                { f, to, d(ur), g(ain) }
 //   body    – swept mid oscillator(s)       { w(ave), f, to, d, g, pair(detune cents), lp, lpTo }
@@ -149,6 +151,9 @@ class AudioEngine {
     this._verbIn.connect(this._verb);
     this._verb.connect(this._verbOut);
     this._verbOut.connect(this.master);
+    // Procedural radio-voice callouts (voice.js). Subscribes to the bus once;
+    // guarded so repeat init() calls stay idempotent.
+    initVoice();
   }
 
   // Procedural room impulse response: stereo decaying noise burst whose tail
@@ -404,6 +409,53 @@ class AudioEngine {
     this._pluck(880, 0, 0.12, 0.8);
     this._pluck(1174.7, 0.07, 0.16, 1);
     this._tone({ type: 'sine', freq: 2349.3, dur: 0.06, gain: 0.04, attack: 0.002, when: 0.07 });
+  }
+
+  // -------------------------------------------------------------- movement foley
+  // Cheap by design (2-3 voices each) — these fire many times per second
+  // while running, so heavy randomization does the anti-fatigue work instead
+  // of extra layers.
+  footstep() {
+    if (!this._ready()) return;
+    // sole scuff: short bandpass noise tap, pitch/level/time jittered so a
+    // long run reads as steps, never a machine-gun loop
+    const fj = this._rand(0.78, 1.28);      // wide pitch spread per step
+    const v = this._rand(0.65, 1.0);        // level spread
+    const w = this._rand(0, 0.014);         // micro timing offset
+    this._noise({ filter: 'bandpass', freq: 1050 * fj, sweepTo: 480 * fj, Q: 1.1, dur: 0.03, gain: 0.075 * v, attack: 0.002, when: w });
+    // tiny heel knock underneath; skipped sometimes so step pairs differ
+    if (Math.random() < 0.8) {
+      this._tone({ type: 'sine', freq: this._rand(105, 150), sweepTo: 70, dur: 0.035, gain: 0.075 * v, attack: 0.002, when: w });
+    }
+    // occasional faint grit tick on top (dust/gravel variation)
+    if (Math.random() < 0.3) {
+      this._click({ f: this._rand(2600, 4200), when: w + this._rand(0.004, 0.012), dur: 0.01, gain: 0.02 * v, q: 2.5 });
+    }
+  }
+
+  land(intensity = 0.5) {
+    if (!this._ready()) return;
+    const k = Math.min(1, Math.max(0, intensity));
+    const v = this._rand(0.9, 1.1);
+    // sub knock: body weight arriving, deeper + longer the harder the fall
+    this._tone({ type: 'sine', freq: (120 - 35 * k) * v, sweepTo: 42, dur: 0.08 + 0.09 * k, gain: (0.14 + 0.3 * k) * v, attack: 0.002 });
+    this._knock({ f: 150 * this._rand(0.92, 1.08), gain: 0.06 + 0.12 * k, dur: 0.045 });
+    // noise chuff: boots + gear compressing on impact
+    this._noise({ filter: 'bandpass', freq: 620 * this._rand(0.85, 1.15), sweepTo: 240, Q: 0.9, dur: 0.06 + 0.07 * k, gain: 0.05 + 0.14 * k, attack: 0.002 });
+    // hard landings add a short high scuff on top
+    if (k > 0.55) this._noise({ filter: 'highpass', freq: 2600, dur: 0.03, gain: 0.06 * k, attack: 0.001 });
+  }
+
+  slide() {
+    if (!this._ready()) return;
+    const fj = this._rand(0.88, 1.14);
+    // main scrape: broadband noise through a falling bandpass — fabric and
+    // boot soles losing speed against the floor
+    this._noise({ filter: 'bandpass', freq: 1500 * fj, sweepTo: 260, Q: 0.8, dur: 0.35, gain: 0.16, attack: 0.02 });
+    // darker friction bed underneath, fading with the scrape
+    this._noise({ filter: 'lowpass', freq: 520 * fj, sweepTo: 150, Q: 0.5, dur: 0.32, gain: 0.1, attack: 0.03 });
+    // entry scuff as the slide starts
+    this._noise({ filter: 'highpass', freq: 3200, dur: 0.04, gain: 0.045, attack: 0.003 });
   }
 
   // -------------------------------------------------------------- stingers

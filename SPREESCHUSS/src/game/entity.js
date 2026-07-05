@@ -169,6 +169,12 @@ export class Entity {
 //     revive() restores the bind pose/materials for respawn or round start,
 //     hitReact(part) plays a short flinch. game.js calls these on events
 //     only — never per frame.
+//   - a self-contained distance LOD rides inside the same onBeforeRender
+//     hook: small cosmetic meshes (userData.lodDetail) hide at range, the
+//     avatar stops casting shadows far away and pose updates throttle to
+//     15 / 8 Hz — all hysteretic, never touching the head band, the
+//     team-color plate surfaces or the core silhouette. Zero per-frame work
+//     happens outside the hook, so frustum culling still gates everything.
 
 function _box(parent, mat, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -288,13 +294,17 @@ function _coreRig(M, N, o = {}) {
   const b = o.bulk ?? 1;
   const torsoMat = o.torso ? (M[o.torso] || N[o.torso]) : N.suit;
   const g = new THREE.Group();
+  // Core silhouette meshes are flagged lodPrimary so the detail-LOD tagger
+  // (_tagDetailParts) never hides them at range, whatever their size —
+  // gloves and boots are small, but they define the body's hit-reading.
+  const P = (m) => { m.userData.lodPrimary = true; return m; };
 
   const mkLeg = (side) => {
     const leg = new THREE.Group();
     leg.position.set(0.11 * b * side, 0.78, 0);
-    _box(leg, M.limb, 0.15 * b, 0.4, 0.18 * b, 0, -0.2, 0);        // thigh
-    _box(leg, torsoMat, 0.12 * b, 0.34, 0.14 * b, 0, -0.55, 0.005); // shin
-    _box(leg, N.dark, 0.13 * b, 0.09, 0.24, 0, -0.715, 0.04);      // boot
+    P(_box(leg, M.limb, 0.15 * b, 0.4, 0.18 * b, 0, -0.2, 0));        // thigh
+    P(_box(leg, torsoMat, 0.12 * b, 0.34, 0.14 * b, 0, -0.55, 0.005)); // shin
+    P(_box(leg, N.dark, 0.13 * b, 0.09, 0.24, 0, -0.715, 0.04));      // boot
     g.add(leg);
     return leg;
   };
@@ -303,10 +313,10 @@ function _coreRig(M, N, o = {}) {
 
   const upper = new THREE.Group();
   g.add(upper);
-  _box(upper, torsoMat, 0.4 * b, 0.22, 0.24 * b, 0, 0.75, 0);      // hips
-  _box(upper, N.dark, 0.42 * b, 0.07, 0.26 * b, 0, 0.85, 0);       // belt
-  const torso = _box(upper, torsoMat, 0.46 * b, 0.52, 0.26 * b, 0, 1.14, 0);
-  _box(upper, M.plate, 0.42 * b, 0.32, 0.07, 0, 1.21, 0.13 * b);   // chest plate
+  P(_box(upper, torsoMat, 0.4 * b, 0.22, 0.24 * b, 0, 0.75, 0));      // hips
+  P(_box(upper, N.dark, 0.42 * b, 0.07, 0.26 * b, 0, 0.85, 0));       // belt
+  const torso = P(_box(upper, torsoMat, 0.46 * b, 0.52, 0.26 * b, 0, 1.14, 0));
+  P(_box(upper, M.plate, 0.42 * b, 0.32, 0.07, 0, 1.21, 0.13 * b));   // chest plate
 
   const head = new THREE.Group();
   head.position.y = 1.62;
@@ -318,13 +328,13 @@ function _coreRig(M, N, o = {}) {
   upper.add(hold);
   const rel = (x, y, z) => [x, y - 1.3, z];
   // right arm: shoulder -> elbow -> rear grip
-  _limb(hold, M.limb, rel(0.28 * b, 1.33, 0.02), rel(0.27, 1.12, 0.12), 0.11 * b, 0.12 * b);
-  _limb(hold, torsoMat, rel(0.27, 1.12, 0.12), rel(0.12, 1.17, 0.24), 0.09, 0.09);
-  _box(hold, N.dark, 0.08, 0.08, 0.08, ...rel(0.11, 1.17, 0.26));  // right glove
+  P(_limb(hold, M.limb, rel(0.28 * b, 1.33, 0.02), rel(0.27, 1.12, 0.12), 0.11 * b, 0.12 * b));
+  P(_limb(hold, torsoMat, rel(0.27, 1.12, 0.12), rel(0.12, 1.17, 0.24), 0.09, 0.09));
+  P(_box(hold, N.dark, 0.08, 0.08, 0.08, ...rel(0.11, 1.17, 0.26)));  // right glove
   // left arm: shoulder -> elbow -> foregrip
-  _limb(hold, M.limb, rel(-0.28 * b, 1.33, 0.02), rel(-0.2, 1.12, 0.18), 0.11 * b, 0.12 * b);
-  _limb(hold, torsoMat, rel(-0.2, 1.12, 0.18), rel(0.0, 1.2, 0.4), 0.09, 0.09);
-  _box(hold, N.dark, 0.08, 0.08, 0.08, ...rel(0.01, 1.2, 0.42));   // left glove
+  P(_limb(hold, M.limb, rel(-0.28 * b, 1.33, 0.02), rel(-0.2, 1.12, 0.18), 0.11 * b, 0.12 * b));
+  P(_limb(hold, torsoMat, rel(-0.2, 1.12, 0.18), rel(0.0, 1.2, 0.4), 0.09, 0.09));
+  P(_box(hold, N.dark, 0.08, 0.08, 0.08, ...rel(0.01, 1.2, 0.42)));   // left glove
   let gun = null;
   if (o.gun !== false) {
     gun = _gunProp(hold, N.metal, N.dark);
@@ -773,6 +783,73 @@ const AGENT_STYLES = {
   },
 };
 
+// ---------------------------------------------------------------- detail LOD
+// Build-time classification for the distance LOD. Small cosmetic meshes
+// (badges, antennae, straps, chain links, sigils, greebles) are tagged
+// userData.lodDetail = true and get hidden at range; everything that defines
+// the silhouette / team reading is never tagged:
+//   - anything inside the `head` group (the analytic headshot band must read
+//     identically at every distance),
+//   - every M.plate surface (the team-color primary),
+//   - core-rig meshes flagged lodPrimary in _coreRig (limbs/boots/gloves are
+//     small but define the body's hit-reading).
+// Detail parts never cast shadows (they are unreadable in a shadow anyway).
+// The returned lists are consumed by the per-avatar runtime LOD attached in
+// _attachAnim; every mesh keeps its default frustumCulled = true so a fully
+// off-screen avatar costs nothing (its onBeforeRender never fires).
+const DETAIL_MAX_DIM = 0.25; // meters: largest extent still considered "small"
+
+function _tagDetailParts(rig, M) {
+  const { g, head } = rig;
+  const detail = []; // hidden beyond LOD_DETAIL_FAR
+  const solid = [];  // always visible; stop casting shadows beyond LOD_SHADOW_FAR
+  g.traverse((o) => {
+    if (!o.isMesh) return;
+    o.receiveShadow = true;
+    let inHead = false;
+    for (let p = o.parent; p && p !== g; p = p.parent) {
+      if (p === head) { inHead = true; break; }
+    }
+    let small = false;
+    if (!inHead && !o.userData.lodPrimary && o.material !== M.plate) {
+      o.geometry.computeBoundingBox();
+      const bb = o.geometry.boundingBox;
+      small = Math.max(
+        (bb.max.x - bb.min.x) * Math.abs(o.scale.x),
+        (bb.max.y - bb.min.y) * Math.abs(o.scale.y),
+        (bb.max.z - bb.min.z) * Math.abs(o.scale.z),
+      ) <= DETAIL_MAX_DIM;
+    }
+    if (small) {
+      o.userData.lodDetail = true;
+      o.castShadow = false;
+      detail.push(o);
+    } else {
+      o.castShadow = true;
+      solid.push(o);
+    }
+  });
+  return { detail, solid };
+}
+
+// ---------------------------------------------------------------- LOD tuning
+// Distances in meters from the rendering camera. Every toggle is hysteretic
+// (far threshold > near threshold) so an avatar strafing on a band edge can
+// never flicker parts or pump its animation rate.
+const LOD_EVAL_DT = 0.12;      // seconds between distance re-checks (~8 Hz)
+const LOD_DETAIL_FAR = 28;     // hide lodDetail parts beyond this ...
+const LOD_DETAIL_NEAR = 24;    // ... show them again under this
+const LOD_SHADOW_FAR = 30;     // whole avatar stops casting shadows beyond ...
+const LOD_SHADOW_NEAR = 26;    // ... and casts again under this
+const LOD_ANIM_MID = 22;       // pose ticks drop to 15 Hz beyond this (full
+const LOD_ANIM_MID_EXIT = 20;  //   rate guaranteed <= 20 m; 2 m hysteresis)
+const LOD_ANIM_FAR = 42;       // pose ticks drop to 8 Hz beyond this
+const LOD_ANIM_FAR_EXIT = 38;  //   (back to 15 Hz under this)
+const LOD_ANIM_MID_TICK = 1 / 15;
+const LOD_ANIM_FAR_TICK = 1 / 8;
+
+const _camPos = new THREE.Vector3(); // scratch vector (plain math object, not a GPU resource)
+
 // ---------------------------------------------------------------- animation
 // Self-driven: movement speed is inferred from the group's position deltas
 // (game.js moves the group every tick) inside an onBeforeRender hook on the
@@ -790,6 +867,9 @@ const AGENT_STYLES = {
 // game.js only calls die()/revive()/hitReact() on events — never per frame.
 // Everything is keyed off performance.now(), so an avatar culled off-screen
 // costs nothing and snaps to the correct pose when rendered again.
+// The distance LOD (detail visibility, shadow casting, pose-tick throttling)
+// also lives inside this hook — see the LOD tuning constants above. Death
+// collapses and hit flinches bypass the throttle and always run full-rate.
 
 const DIE_DUR = 1.05;  // collapse length in seconds (contract: <= 1.1 s)
 const HIT_DUR = 0.18;  // hit-flinch length in seconds
@@ -804,7 +884,7 @@ function _seed01(str) {
 
 function _smooth(x) { return x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x); }
 
-function _attachAnim(rig, idleFn, gait = {}, M = null, agent = null) {
+function _attachAnim(rig, idleFn, gait = {}, M = null, agent = null, lodParts = { detail: [], solid: [] }) {
   const bob = gait.bob ?? 1;
   const swingAmp = gait.swing ?? 0.55;
   const { g, upper, head, hold, legL, legR, torso } = rig;
@@ -822,6 +902,15 @@ function _attachAnim(rig, idleFn, gait = {}, M = null, agent = null) {
     dying: false, dieT0: 0,
     hitUntil: 0, hitPart: 'body', hitSign: 1,
   };
+  // ------------------------------------------------------------ distance LOD
+  // Runtime state for the throttled camera-distance checks (all transitions
+  // hysteretic, see LOD tuning above). tier: 0 = full-rate pose updates,
+  // 1 = 15 Hz (LOD_ANIM_MID..FAR), 2 = 8 Hz (beyond LOD_ANIM_FAR).
+  const detailParts = lodParts.detail;
+  const solidParts = lodParts.solid;
+  const lod = { nextEval: 0, detailOn: true, shadowsOn: true, tier: 0, nextPose: 0 };
+  const setDetail = (on) => { lod.detailOn = on; for (const m of detailParts) m.visible = on; };
+  const setShadows = (on) => { lod.shadowsOn = on; for (const m of solidParts) m.castShadow = on; };
   // per-agent-seeded collapse: tip direction (unit x/z in body space) and an
   // asymmetric knee fold so no two agents die identically
   const dieAng = seed * Math.PI * 2;
@@ -856,6 +945,14 @@ function _attachAnim(rig, idleFn, gait = {}, M = null, agent = null) {
       M.glow.emissiveIntensity = glowBase;
       M.glowSoft.emissiveIntensity = glowSoftBase;
     }
+    // reset the LOD to its near/bind state; the first rendered frame after
+    // the respawn teleport re-evaluates distance and re-applies the right
+    // tier, so the LOD never carries stale state across a respawn
+    lod.nextEval = 0;
+    lod.nextPose = 0;
+    lod.tier = 0;
+    if (!lod.detailOn) setDetail(true);
+    if (!lod.shadowsOn) setShadows(true);
   };
 
   g.userData.hitReact = (part) => {
@@ -865,8 +962,30 @@ function _attachAnim(rig, idleFn, gait = {}, M = null, agent = null) {
     anim.hitSign = Math.random() < 0.5 ? -1 : 1;
   };
 
-  torso.onBeforeRender = () => {
+  torso.onBeforeRender = (renderer, scene, camera) => {
     const now = performance.now() / 1000;
+
+    // ------------------------------------------------------ distance LOD
+    // Throttled distance re-check against the rendering camera; between
+    // checks nothing is touched. Visibility / castShadow flips take effect
+    // next frame (three builds its render + shadow lists before calling
+    // onBeforeRender) — a one-frame delay is invisible at these distances.
+    if (now >= lod.nextEval) {
+      lod.nextEval = now + LOD_EVAL_DT;
+      const d = _camPos.setFromMatrixPosition(camera.matrixWorld).distanceTo(g.position);
+      if (lod.detailOn && d > LOD_DETAIL_FAR) setDetail(false);
+      else if (!lod.detailOn && d < LOD_DETAIL_NEAR) setDetail(true);
+      if (lod.shadowsOn && d > LOD_SHADOW_FAR) setShadows(false);
+      else if (!lod.shadowsOn && d < LOD_SHADOW_NEAR) setShadows(true);
+      if (lod.tier === 0) {
+        if (d > LOD_ANIM_MID) lod.tier = d > LOD_ANIM_FAR ? 2 : 1;
+      } else if (lod.tier === 1) {
+        if (d < LOD_ANIM_MID_EXIT) lod.tier = 0;
+        else if (d > LOD_ANIM_FAR) lod.tier = 2;
+      } else if (d < LOD_ANIM_FAR_EXIT) {
+        lod.tier = d < LOD_ANIM_MID_EXIT ? 0 : 1;
+      }
+    }
 
     // ------------------------------------------------------ death collapse
     // Pure function of time since die(): buckle -> pitch/tip -> settle. Runs
@@ -901,10 +1020,18 @@ function _attachAnim(rig, idleFn, gait = {}, M = null, agent = null) {
       return;
     }
 
+    // ------------------------------------------------------ pose throttling
+    // At range the pose is only re-applied on due ticks (15 Hz / 8 Hz) and
+    // simply holds in between; anim.lastT keeps spanning the gap so walk
+    // phase and speed inference stay continuous. Hit flinches (like the
+    // death collapse above) always run full-rate: short and salient.
+    if (lod.tier > 0 && now >= anim.hitUntil && now < lod.nextPose) return;
+    lod.nextPose = now + (lod.tier === 2 ? LOD_ANIM_FAR_TICK : lod.tier === 1 ? LOD_ANIM_MID_TICK : 0);
+
     if (anim.lastT < 0) { anim.lastT = now; anim.lastX = g.position.x; anim.lastZ = g.position.z; return; }
     let dt = now - anim.lastT;
     if (dt < 0.001) return; // ignore extra render passes in the same frame
-    dt = Math.min(dt, 0.1);
+    dt = Math.min(dt, lod.tier === 2 ? 0.15 : 0.1); // 8 Hz ticks span up to 0.125 s
     anim.lastT = now;
     const dx = g.position.x - anim.lastX;
     const dz = g.position.z - anim.lastZ;
@@ -1009,7 +1136,9 @@ export function buildAvatar(color, agent) {
   const rig = _coreRig(M, N, style?.rig);
   if (agent?.role) _roleArmor(rig, M, N, agent.role);
   const idleFn = style ? style.build(rig, M, N) : _genericDecor(rig, M, N);
-  _attachAnim(rig, idleFn, style?.gait, M, agent);
-  rig.g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  // classify cosmetic detail meshes + set shadow flags (detail parts never
+  // cast); the lists feed the runtime distance LOD inside _attachAnim
+  const lodParts = _tagDetailParts(rig, M);
+  _attachAnim(rig, idleFn, style?.gait, M, agent, lodParts);
   return rig.g;
 }

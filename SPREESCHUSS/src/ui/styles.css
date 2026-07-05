@@ -248,6 +248,34 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
   38% { opacity: calc(var(--vig) * 0.9); }
   58% { opacity: calc(var(--vig) * 0.55); } }
 
+/* floating damage numbers — pooled DOM nodes positioned at the victim's
+   projected screen point; they rise ~40px and fade over ~0.7s */
+.dmg-numbers { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.dmg-num { position: absolute; left: -100px; top: -100px; transform: translate(-50%, -100%); opacity: 0;
+  font-family: var(--font-num); font-weight: 800; font-size: 17px; letter-spacing: 0.5px;
+  color: rgba(240, 248, 255, 0.92); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 10px rgba(0, 0, 0, 0.45);
+  will-change: transform, opacity; }
+.dmg-num.on { animation: dmg-rise 0.7s ease-out forwards; }
+@keyframes dmg-rise {
+  0% { opacity: 1; transform: translate(-50%, calc(-100% - 4px)); }
+  65% { opacity: 0.92; }
+  100% { opacity: 0; transform: translate(-50%, calc(-100% - 40px)); } }
+.dmg-num.head { color: var(--gold); font-size: 21px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 12px rgba(255, 209, 102, 0.55); }
+.dmg-num.head::after { content: '!'; margin-left: 1px; }
+.dmg-num.kill { color: #ff7a6a; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 14px rgba(255, 90, 90, 0.6); }
+
+/* directional damage indicator — short arc segment around the screen center,
+   rotated toward the attacker (0deg = straight ahead, 180deg = behind);
+   distinct from the fullscreen flash overlay */
+.dmg-dir { position: absolute; left: 50%; top: 50%; width: 250px; height: 250px; margin: -125px 0 0 -125px; pointer-events: none; }
+.dd-arc { position: absolute; inset: 0; border-radius: 50%; opacity: 0; will-change: transform, opacity;
+  background: conic-gradient(from -33deg, transparent 0deg, rgba(255, 84, 68, 0.92) 33deg, transparent 66deg);
+  -webkit-mask: radial-gradient(closest-side, transparent 77%, #000 82%, #000 93%, transparent 97%);
+  mask: radial-gradient(closest-side, transparent 77%, #000 82%, #000 93%, transparent 97%);
+  filter: drop-shadow(0 0 6px rgba(255, 60, 50, 0.55)); }
+.dd-arc.on { animation: dd-fade 0.5s ease-out forwards; }
+@keyframes dd-fade { 0% { opacity: 1; } 100% { opacity: 0; } }
+
 /* scope overlay: vignette + thin cross, toggled from hud.js via game.scopeActive */
 .scope-overlay { position: absolute; inset: 0; display: none; pointer-events: none;
   background: radial-gradient(circle at center, transparent 26%, rgba(2, 6, 10, 0.45) 46%, rgba(2, 6, 10, 0.94) 66%); }
@@ -306,6 +334,8 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
 .k-ffa { color: #d0d8e0; font-weight: 700; }
 .k-weapon { color: #b8c8d6; display: inline-flex; }
 .k-head { color: var(--gold); display: inline-flex; }
+.k-plus { color: var(--text-faint); font-size: 11px; font-weight: 800; margin: 0 -3px; }
+.k-assist { font-size: 11.5px; font-weight: 600; opacity: 0.75; }
 
 /* center banner */
 .center-banner { position: absolute; top: 30%; left: 50%; transform: translate(-50%, -50%); text-align: center; opacity: 0; pointer-events: none; }
@@ -319,6 +349,24 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
 .center-banner.win { color: var(--green); text-shadow: 0 0 34px rgba(67, 209, 122, 0.55); }
 .center-banner.lose { color: var(--red); text-shadow: 0 0 34px rgba(255, 90, 90, 0.45); }
 .center-banner.neutral { color: var(--gold); text-shadow: 0 0 34px rgba(255, 209, 102, 0.45); }
+
+/* round MVP strip — compact card below the win/lose banner during the
+   round-end pause; --mvp-accent is the MVP's agent color */
+.mvp-strip { --mvp-accent: var(--accent); position: absolute; top: 42%; left: 50%; transform: translateX(-50%) translateY(8px);
+  display: flex; align-items: center; gap: 12px; padding: 7px 20px 7px 8px; border-radius: 11px;
+  background: linear-gradient(180deg, rgba(10, 18, 27, 0.9), rgba(8, 14, 22, 0.78)); border: 1px solid var(--line-soft);
+  box-shadow: inset 3px 0 0 var(--mvp-accent), 0 10px 30px rgba(0, 0, 0, 0.45); backdrop-filter: blur(2px);
+  opacity: 0; pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease; }
+.mvp-strip.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.mvp-portrait { width: 44px; height: 44px; border-radius: 9px; flex: none;
+  border: 1px solid var(--line-soft); box-shadow: 0 0 0 1px var(--mvp-accent), 0 3px 10px rgba(0, 0, 0, 0.4); }
+.mvp-text { display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.mvp-name { font-size: 15px; font-weight: 800; letter-spacing: 1px; color: var(--text); }
+.mvp-name.att { color: var(--att-soft); }
+.mvp-name.def { color: var(--def-soft); }
+.mvp-stats { font-size: 10.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-dim); font-family: var(--font-num); white-space: nowrap; }
+.mvp-badge { font-style: normal; font-weight: 900; color: #201700; background: linear-gradient(90deg, var(--gold), #ffc23e);
+  border-radius: 7px; padding: 1px 6px; font-size: 9.5px; letter-spacing: 1.5px; box-shadow: 0 1px 7px rgba(255, 209, 102, 0.35); }
 
 .toast { position: absolute; bottom: 132px; left: 50%; transform: translateX(-50%) translateY(10px); background: rgba(8, 15, 23, 0.88);
   border: 1px solid var(--line-soft); padding: 8px 18px; border-radius: 8px; opacity: 0; transition: 0.2s; font-size: 14px; letter-spacing: 0.4px; }
@@ -459,6 +507,7 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
 .scoreboard tr.me td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
 .scoreboard tr.dead td { opacity: 0.38; }
 .scoreboard .c-num { font-family: var(--font-num); }
+.scoreboard .c-ass { color: var(--accent-soft); }
 .scoreboard .c-cred { color: var(--gold); }
 .scoreboard .c-top { color: var(--gold); font-weight: 800; }
 .scoreboard .c-kd.pos { color: var(--green); }

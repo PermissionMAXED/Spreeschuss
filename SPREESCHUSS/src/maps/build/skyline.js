@@ -1,26 +1,39 @@
 import * as THREE from 'three';
 import { surfaceTexture, glowTexture } from '../../engine/textures.js';
-import { paletteKey, placedBox, mergeInto } from './util.js';
+import { paletteKey, placedBox, mergeInto, mulberry32, hashStr } from './util.js';
 
 // =====================================================================
 // FROZEN INTERFACE — out-of-bounds skyline decoration (NO colliders).
 //
 //   addSkyline(group, w, d, palette, rand)
-//     Everything OUTSIDE the perimeter walls: two depth rings of
-//     buildings (near ring with lit facades, setbacks and rooftop
-//     clutter; far ring of dark slabs for parallax), a per-palette
-//     landmark (dome / minaret / spire / glacier / broken tower /
-//     cooling tower / chimney stacks), antenna masts, construction
-//     cranes, corner obelisks, and — for Spree — a distant bridge.
+//     Everything OUTSIDE the perimeter walls, layered into THREE depth
+//     rings for a dense panorama: a near ring (lit facades, setbacks,
+//     rooftop clutter, dark parallax slabs), a mid ring at ~1.5x the
+//     near distance (stepped towers, slabs with rooftop clutter, gas
+//     holders, skybridges + per-palette signatures: Neon sign stacks,
+//     Ruins half-towers, Ice glacial ridges, Sand mesas/minarets,
+//     Toxic tank farms, Crimson spire clusters, Spree Altbau rows and
+//     cranes), and a far ring at ~2.2x (near-silhouette flats tinted
+//     toward the palette sky horizon). Plus a per-palette landmark
+//     (dome / minaret / spire / glacier / broken tower / cooling tower
+//     / chimney stacks), antenna masts, construction cranes, corner
+//     obelisks, and — for Spree — a distant bridge.
 //     Players can never reach these, so none of it has colliders and
-//     rotation is allowed. Deterministic from `rand` (the shared
-//     map-seeded PRNG) — this module is the first `rand` consumer in
-//     the build pipeline, so earlier stages must not draw from it.
+//     rotation is allowed.
 //
-// Budget: everything merges into 5 meshes (facades / near dark / far
-// slabs / accent caps / tip bulbs) and at most 10 glow sprites. The
-// tip() helper enforces the sprite cap; landmark, masts and cranes are
-// built FIRST so they win the aviation-light budget.
+// PRNG DISCIPLINE (critical): the ORIGINAL content draws from `rand`
+// (the shared map-seeded PRNG; buildStructures consumes it before this
+// module and addProps after) — the number and order of those draws is
+// FROZEN. All mid/far-ring content added later draws exclusively from
+// a LOCAL PRNG (`rnd2`, seeded from the map size) so the shared stream
+// is untouched and props output stays identical.
+//
+// Budget: everything merges into <= 9 meshes (facades / near dark /
+// far slabs / accent caps / tip bulbs + mid facades / mid dark / mid
+// signs / far flats) — well under the 14-draw-call cap — plus at most
+// 10 + 6 glow sprites. The tip()/tip2() helpers enforce the sprite
+// caps; landmark, masts and cranes are built FIRST so they win the
+// near-ring aviation-light budget.
 // =====================================================================
 
 // Skyline identity per palette (keyed by util.paletteKey).
@@ -32,6 +45,18 @@ const SKYLINES = {
   Ruins: { style: 'slabs', cranes: 2, winDensity: 0.12, landmark: 'broken', bridge: false },
   Toxic: { style: 'city', cranes: 2, winDensity: 0.26, landmark: 'cooling', bridge: false },
   Crimson: { style: 'city', cranes: 2, winDensity: 0.34, landmark: 'stacks', bridge: false },
+};
+
+// Mid-ring identity per palette: `sig` picks the signature block builder,
+// `city` toggles lit-facade probability, skybridges and tall far flats.
+const MIDRINGS = {
+  Spree: { sig: 'altbau', city: true },
+  Sand: { sig: 'mesa', city: false },
+  Neon: { sig: 'signs', city: true },
+  Ice: { sig: 'glacial', city: false },
+  Ruins: { sig: 'broken', city: false },
+  Toxic: { sig: 'tanks', city: true },
+  Crimson: { sig: 'spires', city: true },
 };
 
 export function addSkyline(group, w, d, palette, rand) {
@@ -373,9 +398,378 @@ export function addSkyline(group, w, d, palette, rand) {
     }
   }
 
+  // ===================================================================
+  // Mid + far panorama rings. EVERYTHING below draws exclusively from
+  // the LOCAL PRNG `rnd2` — the shared `rand` stream above is frozen
+  // (addProps consumes it next; its output must not change).
+  // ===================================================================
+  const rnd2 = mulberry32(hashStr(String(w) + 'x' + String(d) + ':skyline2'));
+  const mid = MIDRINGS[paletteKey(pal)];
+  const skyHorizon = new THREE.Color(pal.skyBottom ?? pal.fog ?? '#5a6b7a');
+
+  // mid ring: slightly hazier than the near dark mass; scene fog adds the rest
+  const midDarkMat = new THREE.MeshLambertMaterial({ color: fogCol.clone().multiplyScalar(0.48) });
+  const midFacadeSurf = surfaceTexture('facade', pal.wall, pal.accent, { density: Math.min(0.85, theme.winDensity + 0.08) });
+  const midFacadeMat = new THREE.MeshLambertMaterial({
+    map: midFacadeSurf.map,
+    emissiveMap: midFacadeSurf.map,
+    emissive: new THREE.Color('#ffffff'),
+    emissiveIntensity: 0.34, // dimmer than the near ring -> reads as distance haze
+  });
+  // signature emissive (sign stacks, lit rings) — deliberately above the
+  // 0.9 bloom threshold, everything else in the new rings stays below it
+  const signMat = new THREE.MeshLambertMaterial({
+    color: new THREE.Color(pal.accent).multiplyScalar(0.35),
+    emissive: new THREE.Color(pal.accent),
+    emissiveIntensity: 1.45,
+  });
+  // far ring: unlit flats tinted toward the sky horizon color, fog disabled
+  // so the tint holds — a stable atmospheric backdrop, not fog-double-dipped
+  const farFlatMat = new THREE.MeshBasicMaterial({
+    color: fogCol.clone().lerp(skyHorizon, 0.45),
+    fog: false,
+  });
+
+  const midDarkGeos = [];
+  const midFacadeGeos = [];
+  const signGeos = [];
+  const farFlatGeos = [];
+  const glowSpots2 = [];
+  // aviation bulb + glow sprite for the new rings (own 6-sprite budget)
+  const tip2 = (x, y, z, r = 0.26) => {
+    if (glowSpots2.length >= 6) return;
+    const g = new THREE.SphereGeometry(r, 6, 6);
+    g.translate(x, y, z);
+    tipGeos.push(g);
+    glowSpots2.push([x, y, z]);
+  };
+  const midLit = () => (mid.city ? rnd2() > 0.35 : rnd2() > 0.8);
+
+  // ---------------------------------------------- mid-ring shape kit
+  const steppedTower = (x, z, yaw) => {
+    const bucket = midLit() ? midFacadeGeos : midDarkGeos;
+    let tw = 5.5 + rnd2() * 4.5;
+    let td = 5 + rnd2() * 4;
+    const tiers = 2 + (rnd2() > 0.45 ? 1 : 0);
+    let y0 = -0.6;
+    for (let t = 0; t < tiers; t++) {
+      const th = t === 0 ? 10 + rnd2() * 12 : 5 + rnd2() * 7;
+      bucket.push(placedBox(tw, th, td, x, y0 + th / 2, z, yaw));
+      midDarkGeos.push(placedBox(tw + 0.3, 0.24, td + 0.3, x, y0 + th, z, yaw));
+      y0 += th;
+      tw *= 0.62 + rnd2() * 0.16;
+      td *= 0.62 + rnd2() * 0.16;
+    }
+    if (rnd2() > 0.6) {
+      const mh = 2.5 + rnd2() * 3.5;
+      midDarkGeos.push(placedBox(0.16, mh, 0.16, x, y0 + mh / 2, z, yaw));
+      y0 += mh;
+    }
+    if (mid.city && rnd2() > 0.75) {
+      capGeos.push(placedBox(3.6 + rnd2() * 2.5, 0.12, 0.12, x, y0 * 0.55, z, yaw));
+    }
+    if (y0 > 26 && rnd2() > 0.5) tip2(x, y0 + 0.4, z);
+  };
+  const clutterSlab = (x, z, yaw) => {
+    const bw = 10 + rnd2() * 8;
+    const bd = 6 + rnd2() * 4;
+    const bh = 9 + rnd2() * 8;
+    const bucket = midLit() ? midFacadeGeos : midDarkGeos;
+    bucket.push(placedBox(bw, bh, bd, x, bh / 2 - 0.6, z, yaw));
+    midDarkGeos.push(placedBox(bw + 0.3, 0.24, bd + 0.3, x, bh - 0.1, z, yaw));
+    const n = 2 + Math.floor(rnd2() * 3); // rooftop clutter: tanks / AC / vents
+    for (let k = 0; k < n; k++) {
+      const [ox, oz] = rot((rnd2() - 0.5) * bw * 0.55, (rnd2() - 0.5) * bd * 0.5, yaw);
+      if (rnd2() > 0.5) {
+        const tr = 0.6 + rnd2() * 0.5;
+        midDarkGeos.push(cyl(tr, tr, 1.2 + rnd2() * 1.1, x + ox, bh + 0.6, z + oz, 7));
+      } else {
+        midDarkGeos.push(placedBox(1 + rnd2() * 1.2, 0.6 + rnd2() * 0.8, 0.9 + rnd2() * 0.9, x + ox, bh + 0.3, z + oz, yaw));
+      }
+    }
+  };
+  const gasHolder = (x, z) => {
+    const r = 4.5 + rnd2() * 2.5;
+    const h = 7 + rnd2() * 5;
+    midDarkGeos.push(cyl(r, r, h, x, h / 2 - 0.6, z, 12));
+    midDarkGeos.push(cyl(r * 0.9, r * 0.9, h * 0.3, x, h + h * 0.13, z, 12));
+    midDarkGeos.push(cyl(r + 0.25, r + 0.25, 0.35, x, h, z, 12));
+  };
+  // twin towers joined by a skybridge, spread along the side axis (ax, az)
+  const twinBridge = (x, z, ax, az) => {
+    const gap = 8 + rnd2() * 4;
+    const h1 = 13 + rnd2() * 12;
+    const h2 = 13 + rnd2() * 12;
+    const w1 = 4 + rnd2() * 2.5;
+    const w2 = 4 + rnd2() * 2.5;
+    const x1 = x - ax * gap / 2;
+    const z1 = z - az * gap / 2;
+    const x2 = x + ax * gap / 2;
+    const z2 = z + az * gap / 2;
+    (midLit() ? midFacadeGeos : midDarkGeos).push(placedBox(w1, h1, w1, x1, h1 / 2 - 0.6, z1));
+    (midLit() ? midFacadeGeos : midDarkGeos).push(placedBox(w2, h2, w2, x2, h2 / 2 - 0.6, z2));
+    const by = Math.min(h1, h2) * (0.55 + rnd2() * 0.25);
+    midDarkGeos.push(placedBox(gap, 1.3, 2.1, x, by, z, az ? Math.PI / 2 : 0));
+    if (rnd2() > 0.6) capGeos.push(placedBox(gap * 0.7, 0.1, 0.1, x, by + 0.75, z, az ? Math.PI / 2 : 0));
+  };
+
+  // ------------------------------------- per-palette mid-ring signatures
+  const sigAltbau = (x, z, yaw) => { // Berlin tenement row with pitched roof
+    const L = 11 + rnd2() * 7;
+    const H = 6.5 + rnd2() * 2;
+    const D = 6 + rnd2() * 2;
+    (rnd2() > 0.4 ? midFacadeGeos : midDarkGeos).push(placedBox(L, H, D, x, H / 2 - 0.5, z, yaw));
+    const r = D * 0.62;
+    const roof = new THREE.CylinderGeometry(r, r, L, 3, 1); // triangular prism
+    roof.rotateZ(Math.PI / 2);
+    roof.rotateY(yaw);
+    roof.translate(x, H - 0.5 + r * 0.5, z);
+    midDarkGeos.push(roof);
+    const nCh = 1 + Math.floor(rnd2() * 2); // ridge chimneys
+    for (let k = 0; k < nCh; k++) {
+      const [ox, oz] = rot((rnd2() - 0.5) * L * 0.7, 0, yaw);
+      midDarkGeos.push(placedBox(0.7, 1.6, 0.7, x + ox, H + r * 1.5 - 0.9, z + oz, yaw));
+    }
+  };
+  const sigMesa = (x, z, yaw) => { // stacked dune mesa
+    let tw = 13 + rnd2() * 8;
+    let td = 9 + rnd2() * 5;
+    let y0 = -0.6;
+    const tiers = 2 + Math.floor(rnd2() * 2);
+    for (let t = 0; t < tiers; t++) {
+      const th = 4 + rnd2() * 4;
+      midDarkGeos.push(placedBox(tw, th, td, x, y0 + th / 2, z, yaw));
+      y0 += th;
+      tw *= 0.66 + rnd2() * 0.12;
+      td *= 0.7 + rnd2() * 0.12;
+    }
+  };
+  const sigMinaret = (x, z) => {
+    const h = 15 + rnd2() * 8;
+    midDarkGeos.push(cyl(0.7, 1.05, h, x, h / 2 - 0.5, z, 8));
+    midDarkGeos.push(cyl(1.5, 1.5, 0.7, x, h * 0.78, z, 8));
+    capGeos.push(cyl(0.9, 0.9, 0.28, x, h * 0.78 + 0.5, z, 8)); // lit balcony ring
+    const cone = new THREE.ConeGeometry(1.1, 2.6, 8);
+    cone.translate(x, h + 1.3, z);
+    midDarkGeos.push(cone);
+    if (rnd2() > 0.5) { // low dome house at the foot
+      const [hx, hz] = [x + (rnd2() - 0.5) * 8, z + (rnd2() - 0.5) * 6];
+      midDarkGeos.push(placedBox(6 + rnd2() * 3, 3.2, 6, hx, 1.1, hz));
+      const dome = new THREE.SphereGeometry(2.6, 9, 7);
+      dome.translate(hx, 3.2, hz);
+      midDarkGeos.push(dome);
+    }
+  };
+  // stacked billboard signs climbing the inward face of a tower
+  const sigSignTower = (x, z, side) => {
+    const bw = 6 + rnd2() * 3.5;
+    const bd = 5.5 + rnd2() * 3;
+    const bh = 14 + rnd2() * 14;
+    (rnd2() > 0.3 ? midFacadeGeos : midDarkGeos).push(placedBox(bw, bh, bd, x, bh / 2 - 0.5, z));
+    midDarkGeos.push(placedBox(bw + 0.3, 0.24, bd + 0.3, x, bh, z));
+    const inX = side.axis === 'x' ? -side.sign : 0;
+    const inZ = side.axis === 'z' ? -side.sign : 0;
+    const n = 2 + Math.floor(rnd2() * 3);
+    let sy = 3 + rnd2() * 2.5;
+    for (let k = 0; k < n && sy < bh - 2; k++) {
+      const sw = 2 + rnd2() * 2.2;
+      const sh = 1 + rnd2() * 1.2;
+      signGeos.push(inZ
+        ? placedBox(sw, sh, 0.28, x + (rnd2() - 0.5) * (bw - sw) * 0.5, sy, z + inZ * (bd / 2 + 0.35))
+        : placedBox(0.28, sh, sw, x + inX * (bw / 2 + 0.35), sy, z + (rnd2() - 0.5) * (bd - sw) * 0.5));
+      sy += sh + 0.7 + rnd2() * 1.6;
+    }
+    if (rnd2() > 0.45) { // vertical neon column on a corner
+      const vh = 3.5 + rnd2() * 3;
+      signGeos.push(placedBox(0.3, vh, 0.3,
+        x + (bw / 2) * (rnd2() > 0.5 ? 1 : -1), bh - vh / 2 - 0.4, z + (bd / 2) * (rnd2() > 0.5 ? 1 : -1)));
+    }
+    if (bh > 22) tip2(x, bh + 0.4, z);
+  };
+  const sigBroken = (x, z, yaw) => { // war-torn half-tower
+    const bw = 4.5 + rnd2() * 3;
+    const h = 12 + rnd2() * 10;
+    midDarkGeos.push(placedBox(bw, h * 0.55, bw, x, h * 0.275 - 0.5, z, yaw));
+    const [ox, oz] = rot(bw * 0.22, 0, yaw);
+    midDarkGeos.push(placedBox(bw * 0.45, h * 0.45, bw * 0.85, x + ox, h * 0.775 - 0.5, z + oz, yaw));
+    const chunk = placedBox(bw * 0.9, h * 0.2, bw * 0.5, 0, 0, 0, yaw);
+    chunk.rotateZ(0.4 + rnd2() * 0.25);
+    chunk.translate(x - ox * 2, h * 0.5, z - oz * 2);
+    midDarkGeos.push(chunk);
+    const rubble = new THREE.ConeGeometry(bw * 0.8, 2.5, 6);
+    rubble.translate(x + (rnd2() - 0.5) * 4, 0.6, z + (rnd2() - 0.5) * 4);
+    midDarkGeos.push(rubble);
+  };
+  const sigGlacial = (x, z) => { // glacial ridge segment
+    const gh = 16 + rnd2() * 20;
+    const cone = new THREE.ConeGeometry(6 + rnd2() * 5, gh, 5);
+    cone.rotateZ((rnd2() - 0.5) * 0.22);
+    cone.rotateY(rnd2() * Math.PI);
+    cone.translate(x, gh / 2 - 1, z);
+    midDarkGeos.push(cone);
+    if (rnd2() > 0.45) {
+      const h2 = 8 + rnd2() * 12;
+      const c2 = new THREE.ConeGeometry(3 + rnd2() * 3, h2, 5);
+      c2.rotateY(rnd2() * Math.PI);
+      c2.translate(x + (rnd2() - 0.5) * 12, h2 / 2 - 0.8, z + (rnd2() - 0.5) * 12);
+      midDarkGeos.push(c2);
+    }
+    if (rnd2() > 0.7) { // vertical ice shard
+      const sh = 10 + rnd2() * 9;
+      const s = new THREE.ConeGeometry(1.2 + rnd2(), sh, 5);
+      s.translate(x + (rnd2() - 0.5) * 10, sh / 2 - 0.5, z + (rnd2() - 0.5) * 10);
+      midDarkGeos.push(s);
+    }
+  };
+  const sigTanks = (x, z, ax, az) => { // storage tank farm
+    const n = 2 + Math.floor(rnd2() * 2);
+    const r = 2.4 + rnd2() * 1.2;
+    const sp = r * 2 + 1.4;
+    const th = 4.5 + rnd2() * 3;
+    for (let k = 0; k < n; k++) {
+      const tx = x + ax * (k - (n - 1) / 2) * sp;
+      const tz = z + az * (k - (n - 1) / 2) * sp;
+      midDarkGeos.push(cyl(r, r, th, tx, th / 2 - 0.5, tz, 10));
+      midDarkGeos.push(cyl(r * 0.55, r * 0.9, 0.9, tx, th + 0.4, tz, 10));
+    }
+    midDarkGeos.push(placedBox(n * sp, 0.3, 0.3, x, th * 0.6, z, az ? Math.PI / 2 : 0)); // pipe run
+    if (rnd2() > 0.5) { // sphere tank
+      const sr = 2.4 + rnd2();
+      const sph = new THREE.SphereGeometry(sr, 10, 8);
+      sph.translate(x + az * (sp + sr), sr + 0.4, z + ax * (sp + sr));
+      midDarkGeos.push(sph);
+    }
+    if (rnd2() > 0.55) { // flare stack
+      const fh = 11 + rnd2() * 7;
+      midDarkGeos.push(cyl(0.35, 0.6, fh, x - az * sp, fh / 2 - 0.5, z - ax * sp, 6));
+      tip2(x - az * sp, fh + 0.3, z - ax * sp, 0.3);
+    }
+  };
+  const sigSpires = (x, z, yaw) => { // gothic spire cluster
+    const n = 2 + Math.floor(rnd2() * 3);
+    let best = { h: 0, x, z };
+    for (let k = 0; k < n; k++) {
+      const [ox, oz] = rot((rnd2() - 0.5) * 9, (rnd2() - 0.5) * 7, yaw);
+      const sh = 14 + rnd2() * 14;
+      const sw = 1.8 + rnd2() * 1.4;
+      midDarkGeos.push(placedBox(sw, sh, sw, x + ox, sh / 2 - 0.5, z + oz, yaw));
+      const ch = 3 + rnd2() * 3;
+      const cone = new THREE.ConeGeometry(sw * 0.75, ch, 4);
+      cone.rotateY(yaw + Math.PI / 4);
+      cone.translate(x + ox, sh + ch / 2 - 0.5, z + oz);
+      midDarkGeos.push(cone);
+      if (sh > best.h) best = { h: sh + ch, x: x + ox, z: z + oz };
+    }
+    if (best.h > 24 && rnd2() > 0.5) tip2(best.x, best.h + 0.3, best.z);
+  };
+
+  // ------------------------------------------------------- mid ring loop
+  for (const side of sides) {
+    const len = side.axis === 'z' ? w : d;
+    const half = (side.axis === 'z' ? d : w) / 2; // outward half-extent
+    const span = len + 56; // overshoot to fill the corners
+    const baseAway = half * 0.5 + 16; // ~1.5x the near-ring distance
+    const count = Math.max(7, Math.round(span / 8));
+    const ax = side.axis === 'z' ? 1 : 0;
+    const az = ax ? 0 : 1;
+    for (let i = 0; i < count; i++) {
+      const along = -span / 2 + (i + 0.15 + rnd2() * 0.7) * (span / count);
+      const away = baseAway + rnd2() * 14;
+      const [x, z] = post(side, along, away);
+      const yaw = (rnd2() - 0.5) * 0.5;
+      if (mid.sig === 'glacial') { // Ice: the whole mid ring is glacial ridge
+        sigGlacial(x, z);
+        continue;
+      }
+      const roll = rnd2();
+      if (roll < 0.42) {
+        if (mid.sig === 'altbau') sigAltbau(x, z, yaw);
+        else if (mid.sig === 'mesa') (rnd2() > 0.3 ? sigMesa(x, z, yaw) : sigMinaret(x, z));
+        else if (mid.sig === 'signs') sigSignTower(x, z, side);
+        else if (mid.sig === 'broken') sigBroken(x, z, yaw);
+        else if (mid.sig === 'tanks') sigTanks(x, z, ax, az);
+        else sigSpires(x, z, yaw);
+      } else if (roll < 0.64) {
+        steppedTower(x, z, yaw);
+      } else if (roll < 0.82) {
+        clutterSlab(x, z, yaw);
+      } else if (roll < 0.92 && mid.city) {
+        twinBridge(x, z, ax, az);
+      } else {
+        gasHolder(x, z);
+      }
+    }
+  }
+  if (mid.sig === 'altbau') { // Spree: extra mid-distance construction cranes
+    for (let i = 0; i < 2; i++) {
+      const sx = rnd2() > 0.5 ? 1 : -1;
+      const sz = rnd2() > 0.5 ? 1 : -1;
+      const cx = sx * (w * 0.75 + 18 + rnd2() * 10);
+      const cz = sz * (d * 0.75 + 18 + rnd2() * 10);
+      const ch = 20 + rnd2() * 8;
+      const jib = 12 + rnd2() * 6;
+      const cyaw = rnd2() * Math.PI * 2;
+      const parts = [
+        placedBox(0.8, ch, 0.8, 0, ch / 2, 0),
+        placedBox(jib, 0.55, 0.6, jib / 2 - 2, ch + 1, 0),
+        placedBox(3.6, 0.5, 0.6, -3.4, ch + 1, 0),
+        placedBox(1.4, 1.2, 1.2, -4.6, ch + 0.4, 0),
+      ];
+      for (const g of parts) {
+        g.rotateY(cyaw);
+        g.translate(cx, -0.5, cz);
+        midDarkGeos.push(g);
+      }
+      tip2(cx + Math.cos(cyaw) * (jib - 2), ch + 1, cz - Math.sin(cyaw) * (jib - 2));
+    }
+  }
+
+  // ------------------------------------------------------- far ring loop
+  // Near-silhouette flats hugging the horizon; taller than the mid ring so
+  // their rooflines peek over it through the gaps.
+  for (const side of sides) {
+    const len = side.axis === 'z' ? w : d;
+    const half = (side.axis === 'z' ? d : w) / 2;
+    const span = len + 120;
+    const baseAway = half * 1.2 + 26; // ~2.2x the near-ring distance
+    const count = Math.max(9, Math.round(span / 11));
+    for (let i = 0; i < count; i++) {
+      const along = -span / 2 + (i + 0.1 + rnd2() * 0.8) * (span / count);
+      const away = baseAway + rnd2() * 18;
+      const [x, z] = post(side, along, away);
+      if (mid.sig === 'glacial') { // Ice: mountain silhouettes
+        const gh = 24 + rnd2() * 34;
+        const cone = new THREE.ConeGeometry(9 + rnd2() * 9, gh, 5);
+        cone.rotateY(rnd2() * Math.PI);
+        cone.translate(x, gh / 2 - 1.5, z);
+        farFlatGeos.push(cone);
+        continue;
+      }
+      const bw = 12 + rnd2() * 18;
+      const bh = mid.city ? 20 + rnd2() * rnd2() * 34 : 13 + rnd2() * rnd2() * 26;
+      const yaw = (rnd2() - 0.5) * 0.6;
+      farFlatGeos.push(placedBox(bw, bh, 7 + rnd2() * 7, x, bh / 2 - 1, z, yaw));
+      if (rnd2() > 0.55) { // stepped notch on the roofline
+        farFlatGeos.push(placedBox(bw * (0.3 + rnd2() * 0.3), 4 + rnd2() * 8, 6, x + (rnd2() - 0.5) * bw * 0.4, bh + 1.5, z, yaw));
+      }
+      if (mid.sig === 'spires' && rnd2() > 0.72) { // Crimson: far chimneys
+        const fh = bh + 8 + rnd2() * 10;
+        farFlatGeos.push(cyl(1, 1.6, fh, x + (rnd2() - 0.5) * bw * 0.5, fh / 2 - 1, z, 7));
+      }
+      if (mid.sig === 'mesa' && rnd2() > 0.75) { // Sand: far minaret needles
+        const fh = bh + 6 + rnd2() * 9;
+        farFlatGeos.push(cyl(0.5, 0.9, fh, x + (rnd2() - 0.5) * bw * 0.6, fh / 2 - 1, z, 6));
+      }
+    }
+  }
+
   mergeInto(deco, facadeGeos, facadeMat);
   mergeInto(deco, darkGeos, darkMat);
   mergeInto(deco, farGeos, farMat);
+  mergeInto(deco, midFacadeGeos, midFacadeMat);
+  mergeInto(deco, midDarkGeos, midDarkMat);
+  mergeInto(deco, signGeos, signMat);
+  mergeInto(deco, farFlatGeos, farFlatMat);
   mergeInto(deco, capGeos, capMat);
   mergeInto(deco, tipGeos, tipMat);
 
@@ -388,6 +782,21 @@ export function addSkyline(group, w, d, palette, rand) {
     for (const [x, y, z] of glowSpots) {
       const sp = new THREE.Sprite(gm);
       sp.scale.set(1.7, 1.7, 1.7);
+      sp.position.set(x, y, z);
+      deco.add(sp);
+    }
+  }
+
+  // mid-ring glow sprites (own material: accent for Neon signs, red else)
+  if (glowSpots2.length) {
+    const gm2 = new THREE.SpriteMaterial({
+      map: glowTexture(),
+      color: new THREE.Color(mid.sig === 'signs' ? pal.accent : '#ff5544'),
+      transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+    });
+    for (const [x, y, z] of glowSpots2) {
+      const sp = new THREE.Sprite(gm2);
+      sp.scale.set(1.5, 1.5, 1.5);
       sp.position.set(x, y, z);
       deco.add(sp);
     }

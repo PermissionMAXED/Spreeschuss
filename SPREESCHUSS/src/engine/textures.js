@@ -149,17 +149,44 @@ function shade(ctx, S, hex, rand, { grain = 14, amp = 14, temp = 8, axis = [1, 0
 }
 
 // Grayscale bump base built from a field (usually the one shade() returned).
-function bumpFromField(bctx, S, field, mid = 128, amp = 18, rand = null, grain = 0) {
+// `fine` bakes in an extra high-frequency (but smooth-interpolated) octave so
+// close-range relief reads sharper while values stay comfortably mid-range.
+function bumpFromField(bctx, S, field, mid = 128, amp = 18, rand = null, grain = 0, fine = 0) {
+  const fF = fine && rand ? noiseField(S, rand, 6) : null;
   const img = bctx.createImageData(S, S);
   const d = img.data;
   for (let i = 0, p = 0; i < S * S; i++, p += 4) {
-    const g = c255(mid + field[i] * amp + (grain && rand ? (rand() - 0.5) * grain : 0));
+    const g = c255(mid + field[i] * amp + (fF ? fF[i] * fine : 0) + (grain && rand ? (rand() - 0.5) * grain : 0));
     d[p] = g;
     d[p + 1] = g;
     d[p + 2] = g;
     d[p + 3] = 255;
   }
   bctx.putImageData(img, 0, 0);
+}
+
+// High-frequency soft noise overlaid at low alpha onto a bump canvas whose
+// base is a flat fill (bricks / block kinds). Applied after the opaque
+// per-block fills so it survives; kept subtle so seam/brick structure and
+// mid-range values are preserved (no NaN-baiting extremes).
+function overlayFineBump(bctx, S, rand, alpha = 0.24, amp = 28) {
+  const f = noiseField(S, rand, 6);
+  const tmp = makeCanvas(S);
+  const tctx = tmp.getContext('2d');
+  const img = tctx.createImageData(S, S);
+  const d = img.data;
+  for (let i = 0, p = 0; i < S * S; i++, p += 4) {
+    const g = c255(128 + f[i] * amp);
+    d[p] = g;
+    d[p + 1] = g;
+    d[p + 2] = g;
+    d[p + 3] = 255;
+  }
+  tctx.putImageData(img, 0, 0);
+  bctx.save();
+  bctx.globalAlpha = alpha;
+  bctx.drawImage(tmp, 0, 0);
+  bctx.restore();
 }
 
 // ---------------------------------------------------------- paint helpers
@@ -243,6 +270,169 @@ function drips(ctx, S, rand, n, rgb, maxA = 0.14) {
   for (let i = 0; i < n; i++) {
     dripAt(ctx, rand() * S, rand() * S * 0.6, 1.5 + rand() * 3, 40 + rand() * 100, rgb, (0.4 + rand() * 0.6) * maxA);
   }
+}
+
+// Drip stains anchored just below horizontal seam lines (weathering runs out
+// of the joints, not from random spots). Wrapped on both axes so tiling
+// stays clean; a seam at y=0 doubles as the bottom-edge seam of the tile.
+function seamDrips(ctx, S, rand, ys, perSeam, rgb, maxA = 0.12, maxLen = 90) {
+  const seen = new Set();
+  for (const y0 of ys) {
+    const y = ((y0 % S) + S) % S;
+    if (seen.has(y)) continue;
+    seen.add(y);
+    const n = 1 + Math.floor(rand() * perSeam);
+    for (let i = 0; i < n; i++) {
+      const x = rand() * S;
+      const w = 1.5 + rand() * 3.5;
+      const len = 24 + rand() * maxLen;
+      const a = (0.35 + rand() * 0.65) * maxA;
+      const draw = (dx) => {
+        dripAt(ctx, dx, y + 1, w, len, rgb, a);
+        if (y + 1 + len > S) dripAt(ctx, dx, y + 1 - S, w, len, rgb, a);
+      };
+      draw(x);
+      if (x < 4) draw(x + S);
+      else if (x > S - 4) draw(x - S);
+    }
+  }
+}
+
+// Very low-alpha warm/cool wash — per-tile colour TEMPERATURE drift. Alpha
+// stays tiny so the palette hue identity is untouched; adjacent tiles just
+// stop reading as identical clones at close range.
+function tempTint(ctx, x, y, w, h, rand, amt = 1) {
+  const warm = rand() < 0.5;
+  const a = (0.02 + rand() * 0.035) * amt;
+  ctx.fillStyle = warm ? `rgba(255,186,120,${a.toFixed(3)})` : `rgba(120,160,255,${a.toFixed(3)})`;
+  ctx.fillRect(x, y, w, h);
+}
+
+// Soft-edged warm/cool temperature washes for seamless (un-tiled) surfaces
+// like plaster or ice — same discipline as tempTint, radial falloff instead
+// of a rect so no patch outline is visible. Wrapped for clean tiling.
+function tempBlotches(ctx, S, rand, n = 4, amt = 1) {
+  for (let i = 0; i < n; i++) {
+    const x = rand() * S;
+    const y = rand() * S;
+    const r = S * (0.18 + rand() * 0.24);
+    const warm = rand() < 0.5;
+    const a = (0.02 + rand() * 0.03) * amt;
+    const rgb = warm ? '255,186,120' : '120,160,255';
+    for (const ox of [-S, 0, S]) {
+      for (const oy of [-S, 0, S]) {
+        const cx = x + ox;
+        const cy = y + oy;
+        if (cx + r < 0 || cx - r > S || cy + r < 0 || cy - r > S) continue;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        g.addColorStop(0, `rgba(${rgb},${a.toFixed(3)})`);
+        g.addColorStop(1, `rgba(${rgb},0)`);
+        ctx.fillStyle = g;
+        ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+      }
+    }
+  }
+}
+
+// Blotchy grime hugging a tile/panel border — layered OVER the smooth AO
+// vignette so edges read as accumulated dirt instead of a clean gradient.
+// Stamps stay inside the rect, so tiling is unaffected.
+function edgeGrime(ctx, x, y, w, h, rand, alpha = 0.1) {
+  const n = Math.max(3, Math.round((w + h) / 34));
+  for (let i = 0; i < n; i++) {
+    const onX = rand() < w / (w + h);
+    const t = rand();
+    const inset = 2 + rand() * rand() * Math.min(w, h) * 0.14;
+    let px;
+    let py;
+    if (onX) {
+      px = x + t * w;
+      py = rand() < 0.5 ? y + inset : y + h - inset;
+    } else {
+      px = rand() < 0.5 ? x + inset : x + w - inset;
+      py = y + t * h;
+    }
+    const r = 3 + rand() * 9;
+    const a = (0.3 + rand() * 0.7) * alpha;
+    const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+    g.addColorStop(0, `rgba(12,12,14,${a.toFixed(3)})`);
+    g.addColorStop(1, 'rgba(12,12,14,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(px - r, py - r, r * 2, r * 2);
+  }
+}
+
+// Precomputed relative grime stamps for blocks that are wrap-drawn twice
+// (bricks / ashlar): the style object carries the stamps so both copies of
+// an edge-crossing block are pixel-identical.
+function grimeStamps(rand, w, h, alpha = 0.1) {
+  const n = Math.max(2, Math.round((w + h) / 44));
+  const stamps = [];
+  for (let i = 0; i < n; i++) {
+    const onX = rand() < w / (w + h);
+    const t = rand();
+    const inset = (2 + rand() * rand() * Math.min(w, h) * 0.16) / Math.min(w, h);
+    stamps.push([
+      onX ? t : (rand() < 0.5 ? inset : 1 - inset),
+      onX ? (rand() < 0.5 ? inset : 1 - inset) : t,
+      2.5 + rand() * 7,
+      (0.3 + rand() * 0.7) * alpha,
+    ]);
+  }
+  return stamps;
+}
+
+function drawGrimeStamps(ctx, x, y, w, h, stamps) {
+  for (const [u, v, r, a] of stamps) {
+    const px = x + u * w;
+    const py = y + v * h;
+    const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+    g.addColorStop(0, `rgba(12,12,14,${a.toFixed(3)})`);
+    g.addColorStop(1, 'rgba(12,12,14,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(px - r, py - r, r * 2, r * 2);
+  }
+}
+
+// Broad, soft, slightly cool damp patches (moisture darkening). Elliptical,
+// wrapped for tiling, alpha kept low so wet areas read colder/darker without
+// shifting the base hue.
+function moisture(ctx, S, rand, n = 3, maxA = 0.13, rgb = '10,14,18') {
+  for (let i = 0; i < n; i++) {
+    const x = rand() * S;
+    const y = rand() * S;
+    const rx = (0.16 + rand() * 0.26) * S;
+    const ry = rx * (0.5 + rand() * 0.7);
+    const a = (0.4 + rand() * 0.6) * maxA;
+    for (const ox of [-S, 0, S]) {
+      for (const oy of [-S, 0, S]) {
+        const cx = x + ox;
+        const cy = y + oy;
+        if (cx + rx < 0 || cx - rx > S || cy + ry < 0 || cy - ry > S) continue;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(1, ry / rx);
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+        g.addColorStop(0, `rgba(${rgb},${a.toFixed(3)})`);
+        g.addColorStop(0.65, `rgba(${rgb},${(a * 0.45).toFixed(3)})`);
+        g.addColorStop(1, `rgba(${rgb},0)`);
+        ctx.fillStyle = g;
+        ctx.fillRect(-rx, -rx, rx * 2, rx * 2);
+        ctx.restore();
+      }
+    }
+  }
+}
+
+// Rising-damp gradient inside a block face (bottom-up darkening) — per-block
+// so it tiles cleanly no matter how the wall UVs repeat vertically.
+function dampBand(ctx, x, y, w, h, frac, alpha) {
+  const bh = Math.max(3, h * frac);
+  const g = ctx.createLinearGradient(0, y + h, 0, y + h - bh);
+  g.addColorStop(0, `rgba(8,12,14,${alpha.toFixed(3)})`);
+  g.addColorStop(1, 'rgba(8,12,14,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(x, y + h - bh, w, bh);
 }
 
 // Jagged crack polyline (points only — callers stroke it on 1+ canvases so
@@ -431,7 +621,14 @@ function graffiti(ctx, S, rand, colors) {
 }
 
 // Clumpy moss patch: many small overlapping soft dots read as growth.
+// A soft damp halo under each clump ties the growth to the wet substrate.
 function mossClump(ctx, bctx, S, rand, mossHex, cx, cy, R, dense = 1) {
+  const hr = R * (1.4 + rand() * 0.5);
+  const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, hr);
+  halo.addColorStop(0, `rgba(8,14,8,${(0.08 + rand() * 0.07).toFixed(3)})`);
+  halo.addColorStop(1, 'rgba(8,14,8,0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(cx - hr, cy - hr, hr * 2, hr * 2);
   const n = Math.round((6 + rand() * 8) * dense);
   for (let i = 0; i < n; i++) {
     const a = rand() * Math.PI * 2;
@@ -457,16 +654,19 @@ function mossClump(ctx, bctx, S, rand, mossHex, cx, cy, R, dense = 1) {
 
 function paintConcrete(ctx, S, color, rand, bctx) {
   const fB = shade(ctx, S, color, rand, { grain: 13, amp: 15, temp: 9 });
-  if (bctx) bumpFromField(bctx, S, fB, 132, 20, rand, 8);
+  if (bctx) bumpFromField(bctx, S, fB, 132, 20, rand, 8, 7);
   const P = S / 2;
-  // 2x2 cast panels: per-panel tone, AO vignette, consistent top light
+  // 2x2 cast panels: per-panel tone, temperature drift, AO vignette + grime
   for (let px = 0; px < 2; px++) {
     for (let py = 0; py < 2; py++) {
       const x = px * P;
       const y = py * P;
       ctx.fillStyle = css(color, 0.82 + rand() * 0.36, 0.1);
       ctx.fillRect(x, y, P, P);
+      tempTint(ctx, x, y, P, P, rand);
       panelShade(ctx, x + 2, y + 2, P - 4, P - 4, { ao: 0.16, inset: 0.14, top: 0.09, bottom: 0.13 });
+      edgeGrime(ctx, x + 2, y + 2, P - 4, P - 4, rand, 0.11);
+      if (rand() < 0.45) dampBand(ctx, x + 2, y + 2, P - 4, P - 4, 0.16 + rand() * 0.18, 0.08 + rand() * 0.08);
       // form-tie holes near the corners, some bleeding rust
       for (const [ox, oy] of [[24, 24], [P - 24, 24], [24, P - 24], [P - 24, P - 24]]) {
         boltHole(ctx, x + ox, y + oy, 4.5, bctx);
@@ -489,10 +689,12 @@ function paintConcrete(ctx, S, color, rand, bctx) {
       bctx.fillRect(0, i * P - 2, S, 4);
     }
   }
-  // layered weathering
+  // layered weathering: broad damp, general stains, seam-anchored run-off
+  moisture(ctx, S, rand, 3, 0.11);
   stains(ctx, S, rand, 5, '0,0,0', 0.15);
   stains(ctx, S, rand, 2, '255,255,255', 0.05, 0.2); // efflorescence
-  drips(ctx, S, rand, 6, '20,22,26', 0.12);
+  seamDrips(ctx, S, rand, [0, P], 3, '20,22,26', 0.13, 100);
+  drips(ctx, S, rand, 4, '20,22,26', 0.1);
   cracks(ctx, S, rand, 3, 'rgba(0,0,0,0.26)', 1.2, 0.3, bctx, 2);
   // chipped spots exposing darker aggregate
   for (let i = 0; i < 5; i++) {
@@ -504,7 +706,9 @@ function paintConcrete(ctx, S, color, rand, bctx) {
 // chipped patches exposing masonry, worn graffiti tags.
 function paintPlaster(ctx, S, color, accent, rand, bctx) {
   const fB = shade(ctx, S, color, rand, { grain: 11, amp: 9, temp: 8, octaves: 5 });
-  if (bctx) bumpFromField(bctx, S, fB, 130, 8, rand, 5);
+  if (bctx) bumpFromField(bctx, S, fB, 130, 8, rand, 5, 6);
+  // large soft warm/cool temperature blotches (sun-bleached vs shaded render)
+  tempBlotches(ctx, S, rand, 4, 0.9);
   // broad, very faint trowel sweep arcs
   for (let i = 0; i < 10; i++) {
     const x = rand() * S;
@@ -562,16 +766,20 @@ function paintPlaster(ctx, S, color, accent, rand, bctx) {
     ctx.fillRect(x - 30, y - 14, 60, 24);
     ctx.restore();
   }
-  // hairline cracks, a couple anchored to the top edge
+  // hairline cracks, a couple anchored to the top edge — water follows the
+  // cracks, so each anchored crack gets a grime run-off below its start
   cracks(ctx, S, rand, 4, 'rgba(0,0,0,0.30)', 1.0, 0.25, bctx, 1.6);
   for (let i = 0; i < 2; i++) {
     const pts = crackPts(S, rand, rand() * S, 0, Math.PI / 2 + (rand() - 0.5) * 0.7);
     strokeTaper(ctx, pts, 'rgba(0,0,0,0.28)', 1.1, 0.2);
     if (bctx) strokeTaper(bctx, pts, gray(74, 0.8), 1.6, 0.5);
+    dripAt(ctx, pts[0][0], 0, 2.5 + rand() * 2.5, 50 + rand() * 90, '26,28,28', 0.06 + rand() * 0.06);
   }
   graffiti(ctx, S, rand, [accent, accent, '#232830']);
+  moisture(ctx, S, rand, 3, 0.1, '12,14,14');
   drips(ctx, S, rand, 5, '30,32,30', 0.1);
   stains(ctx, S, rand, 4, '20,22,20', 0.1);
+  stains(ctx, S, rand, 3, '8,9,10', 0.07, 0.12); // sooty close-range grime
 }
 
 function paintBricks(ctx, S, color, rand, ruined, bctx) {
@@ -615,6 +823,9 @@ function paintBricks(ctx, S, color, rand, ruined, bctx) {
       ctx.fillRect(x + 2 + sx * (w - 4), y + 2 + sy * (h - 4), r, r);
     }
     panelShade(ctx, x, y, w, h, { ao: 0.13, inset: 0.18, top: 0.12, bottom: 0.16 });
+    drawGrimeStamps(ctx, x, y, w, h, st.grime);
+    // moisture wicking up from the mortar joint below some bricks
+    if (st.damp) dampBand(ctx, x, y, w, h, st.damp[0], st.damp[1]);
     // shadow cast into the mortar joint below (top light)
     ctx.fillStyle = 'rgba(0,0,0,0.30)';
     ctx.fillRect(x, y + h, w, 2);
@@ -649,6 +860,8 @@ function paintBricks(ctx, S, color, rand, ruined, bctx) {
         chip: null,
         speckle: [],
         rubble: [[rand(), rand()], [rand(), rand()]],
+        grime: grimeStamps(rand, w, h, ruined ? 0.16 : 0.11),
+        damp: rand() < (ruined ? 0.35 : 0.22) ? [0.2 + rand() * 0.25, 0.09 + rand() * 0.09] : null,
       };
       if (!ruined && rand() < 0.07) { // over-fired clinker brick
         st.tone *= 0.52;
@@ -664,16 +877,24 @@ function paintBricks(ctx, S, color, rand, ruined, bctx) {
       if (x + w > S) drawBrick(x - S, y, w, h, st);
     }
   }
+  // run-off anchored under a few mortar rows + broad damp darkening
+  const rowLines = [];
+  for (let i = 0; i < (ruined ? 3 : 2); i++) rowLines.push(Math.floor(rand() * rows) * bh);
   if (ruined) {
     cracks(ctx, S, rand, 5, 'rgba(0,0,0,0.34)', 1.6, 0.4, bctx, 2.4);
+    moisture(ctx, S, rand, 3, 0.15, '12,12,10');
     stains(ctx, S, rand, 6, '24,16,8', 0.2);
-    drips(ctx, S, rand, 6, '14,10,6', 0.2);
+    seamDrips(ctx, S, rand, rowLines, 3, '14,10,6', 0.18, 110);
+    drips(ctx, S, rand, 4, '14,10,6', 0.16);
     stains(ctx, S, rand, 3, '210,200,180', 0.06); // dust / efflorescence
   } else {
+    moisture(ctx, S, rand, 2, 0.1, '12,12,12');
     stains(ctx, S, rand, 4, '0,0,0', 0.1);
+    seamDrips(ctx, S, rand, rowLines, 2, '18,16,12', 0.1, 80);
     stains(ctx, S, rand, 2, '235,230,215', 0.05);
     cracks(ctx, S, rand, 1, 'rgba(0,0,0,0.2)', 1, 0.3, bctx, 1.5);
   }
+  if (bctx) overlayFineBump(bctx, S, rand, 0.22, 26);
 }
 
 // Ashlar sandstone blocks (walls) or large flags (opts.floor): sediment
@@ -717,6 +938,9 @@ function paintSandstone(ctx, S, color, rand, floor, bctx) {
     }
     ctx.restore();
     panelShade(ctx, x, y, w, h, floor ? { ao: 0.18, inset: 0.12 } : { ao: 0.15, inset: 0.14, top: 0.07, bottom: 0.12 });
+    drawGrimeStamps(ctx, x, y, w, h, st.grime);
+    // moisture darkening soaking up from the bed joint (per-block, tiles clean)
+    if (st.damp) dampBand(ctx, x, y, w, h, st.damp[0], st.damp[1]);
     if (!floor) {
       ctx.fillStyle = 'rgba(0,0,0,0.30)';
       ctx.fillRect(x, y + h, w, 2);
@@ -752,6 +976,8 @@ function paintSandstone(ctx, S, color, rand, floor, bctx) {
         grains: [],
         pits: [],
         chip: null,
+        grime: grimeStamps(rand, w, h, 0.1),
+        damp: rand() < (floor ? 0.25 : 0.35) ? [0.18 + rand() * 0.25, 0.09 + rand() * 0.1] : null,
       };
       const nStrata = 2 + Math.floor(rand() * 3);
       for (let i = 0; i < nStrata; i++) st.strata.push([rand(), 3 + rand() * 5, rand() < 0.5, 0.035 + rand() * 0.045]);
@@ -787,10 +1013,16 @@ function paintSandstone(ctx, S, color, rand, floor, bctx) {
       ctx.fill();
     }
   } else {
-    drips(ctx, S, rand, 4, '40,30,16', 0.12);
+    // weather run-off follows the bed joints between block courses
+    const courses = [];
+    for (let i = 0; i < 2; i++) courses.push(Math.floor(rand() * rows) * bh);
+    seamDrips(ctx, S, rand, courses, 3, '40,30,16', 0.13, 100);
+    drips(ctx, S, rand, 3, '40,30,16', 0.1);
     stains(ctx, S, rand, 3, '30,22,10', 0.12);
   }
+  moisture(ctx, S, rand, floor ? 3 : 2, 0.12, '16,14,10');
   cracks(ctx, S, rand, floor ? 3 : 2, 'rgba(30,20,8,0.30)', 1.2, 0.3, bctx, 1.8);
+  if (bctx) overlayFineBump(bctx, S, rand, 0.24, 26);
 }
 
 // Dark tech panels + accent light seams. Halo is drawn on the color map
@@ -798,7 +1030,7 @@ function paintSandstone(ctx, S, color, rand, floor, bctx) {
 function paintNeon(ctx, S, color, accent, rand, emCtx, bctx) {
   const base = blend(color, '#090b12', 0.6);
   const fB = shade(ctx, S, base, rand, { grain: 8, amp: 9, temp: 6 });
-  if (bctx) bumpFromField(bctx, S, fB, 130, 10, rand, 4);
+  if (bctx) bumpFromField(bctx, S, fB, 130, 10, rand, 4, 5);
   const P = S / 4;
   for (let px = 0; px < 4; px++) {
     for (let py = 0; py < 4; py++) {
@@ -806,7 +1038,9 @@ function paintNeon(ctx, S, color, accent, rand, emCtx, bctx) {
       const y = py * P;
       ctx.fillStyle = css(base, 0.8 + rand() * 0.5, 0.12);
       ctx.fillRect(x, y, P, P);
+      tempTint(ctx, x, y, P, P, rand, 0.6);
       panelShade(ctx, x + 1, y + 1, P - 2, P - 2, { ao: 0.22, inset: 0.16, top: 0.05, bottom: 0.1 });
+      edgeGrime(ctx, x + 1, y + 1, P - 2, P - 2, rand, 0.09);
       const roll = rand();
       if (roll < 0.16) { // vent slats
         const vw = P * 0.5;
@@ -851,6 +1085,20 @@ function paintNeon(ctx, S, color, accent, rand, emCtx, bctx) {
       bctx.fillRect(0, i * P - 1.5, S, 3);
     }
   }
+  // handling scuffs + grime run-off out of a couple of panel seams
+  for (let i = 0; i < 6; i++) {
+    const x = rand() * S;
+    const y = rand() * S;
+    const dx = (rand() - 0.5) * 60;
+    const dy = (rand() - 0.5) * 26;
+    ctx.strokeStyle = `rgba(255,255,255,${0.05 + rand() * 0.07})`;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + dx, y + dy);
+    ctx.stroke();
+  }
+  seamDrips(ctx, S, rand, [Math.floor(rand() * 4) * P, Math.floor(rand() * 4) * P], 2, '6,7,10', 0.1, 70);
   // choose glowing seam segments + LED dots once, then draw halo (color map)
   // and crisp core (emissive map) from the same geometry
   const segs = [];
@@ -940,6 +1188,25 @@ function paintPanelGlass(ctx, S, color, accent, rand, emCtx, bctx) {
         ctx.fillStyle = css('#ffd9a0', 0.6, 0.1);
         ctx.fillRect(x + w * 0.15 + rand() * w * 0.3, y + h * 0.25, w * 0.28, h * 0.5);
       }
+      // subtle pane-to-pane temperature drift (keeps the glass hue)
+      tempTint(ctx, x, y, w, h, rand, 0.5);
+      // dirt film collecting along the bottom gasket of each pane
+      const dg = ctx.createLinearGradient(0, y + h, 0, y + h - h * 0.22);
+      dg.addColorStop(0, `rgba(14,16,18,${0.1 + rand() * 0.08})`);
+      dg.addColorStop(1, 'rgba(14,16,18,0)');
+      ctx.fillStyle = dg;
+      ctx.fillRect(x, y + h - h * 0.22, w, h * 0.22);
+      // faint dried rain streaks running down the pane
+      const nStreak = rand() < 0.6 ? 1 + Math.floor(rand() * 2) : 0;
+      for (let k = 0; k < nStreak; k++) {
+        const sx2 = x + 4 + rand() * (w - 8);
+        const sw = 0.8 + rand() * 1.4;
+        const sl = ctx.createLinearGradient(0, y, 0, y + h);
+        sl.addColorStop(0, `rgba(200,214,228,${0.03 + rand() * 0.04})`);
+        sl.addColorStop(1, 'rgba(200,214,228,0)');
+        ctx.fillStyle = sl;
+        ctx.fillRect(sx2, y, sw, h);
+      }
       // mullion overhang shadow on the glass (top light)
       const sg = ctx.createLinearGradient(0, y, 0, y + 6);
       sg.addColorStop(0, 'rgba(0,0,0,0.30)');
@@ -975,6 +1242,8 @@ function paintPanelGlass(ctx, S, color, accent, rand, emCtx, bctx) {
       rivet(ctx, c * pw, r * ph, 2.2, bctx);
     }
   }
+  // weather grime bleeding out from under a couple of horizontal mullions
+  seamDrips(ctx, S, rand, [Math.floor(rand() * rows) * ph + M, Math.floor(rand() * rows) * ph + M], 2, '10,12,14', 0.09, 60);
   // accent LED strip on one mullion + a few node dots
   const yLed = (1 + Math.floor(rand() * (rows - 1))) * ph;
   const segs = [];
@@ -1028,10 +1297,12 @@ function paintPanelGlass(ctx, S, color, accent, rand, emCtx, bctx) {
 
 function paintIce(ctx, S, color, rand, bctx) {
   const fB = shade(ctx, S, color, rand, { grain: 5, amp: 12, temp: 9, axis: [-0.7, 0.15, 1], octaves: 5 });
-  if (bctx) bumpFromField(bctx, S, fB, 128, 7, rand, 3);
+  if (bctx) bumpFromField(bctx, S, fB, 128, 7, rand, 3, 4);
   const deep = blend(color, '#0a2a4a', 0.65);
   const [dr, dg, db] = srgb(deep);
   stains(ctx, S, rand, 7, `${dr},${dg},${db}`, 0.16, 0.3); // depth pockets
+  tempBlotches(ctx, S, rand, 3, 0.7); // faint warm/cool light play in the ice
+  moisture(ctx, S, rand, 2, 0.1, `${dr},${dg},${db}`); // wet melt darkening
   // vertical sheen bands
   for (let i = 0; i < 5; i++) {
     const x = rand() * S;
@@ -1103,13 +1374,14 @@ function paintMoss(ctx, S, color, accent, rand, bctx) {
     ctx.arc(rand() * S, rand() * S, 2 + rand() * 4, 0, Math.PI * 2);
     ctx.fill();
   }
+  moisture(ctx, S, rand, 3, 0.14, '8,14,10'); // permanently damp concrete
   drips(ctx, S, rand, 7, '10,20,8', 0.2);
 }
 
 function paintMetal(ctx, S, color, rand, bctx) {
   const base = blend(color, '#101216', 0.3);
   const fB = shade(ctx, S, base, rand, { grain: 8, amp: 10, temp: 6 });
-  if (bctx) bumpFromField(bctx, S, fB, 130, 9, rand, 4);
+  if (bctx) bumpFromField(bctx, S, fB, 130, 9, rand, 4, 5);
   // brushed streaks
   for (let i = 0; i < 55; i++) {
     ctx.fillStyle = i % 2 ? `rgba(255,255,255,${rand() * 0.05})` : `rgba(0,0,0,${rand() * 0.07})`;
@@ -1117,14 +1389,17 @@ function paintMetal(ctx, S, color, rand, bctx) {
   }
   const pw = S / 2;
   const ph = S / 3;
-  // plates: per-plate tone, AO, top light, worn shiny corners
+  // plates: per-plate tone + heat/temper tint, AO + edge grime, top light,
+  // worn shiny corners
   for (let px = 0; px < 2; px++) {
     for (let py = 0; py < 3; py++) {
       const x = px * pw;
       const y = py * ph;
       ctx.fillStyle = css(base, 0.8 + rand() * 0.45, 0.12);
       ctx.fillRect(x, y, pw, ph);
+      tempTint(ctx, x, y, pw, ph, rand, 0.8);
       panelShade(ctx, x + 2, y + 2, pw - 4, ph - 4, { ao: 0.16, inset: 0.12, top: 0.1, bottom: 0.12 });
+      edgeGrime(ctx, x + 2, y + 2, pw - 4, ph - 4, rand, 0.1);
       if (rand() < 0.5) {
         const cx = x + (rand() < 0.5 ? 8 : pw - 8);
         const cy = y + (rand() < 0.5 ? 8 : ph - 8);
@@ -1133,6 +1408,12 @@ function paintMetal(ctx, S, color, rand, bctx) {
         g.addColorStop(1, 'rgba(230,235,245,0)');
         ctx.fillStyle = g;
         ctx.fillRect(cx - 14, cy - 14, 28, 28);
+      }
+      // chipped paint patches exposing brighter bare metal
+      if (rand() < 0.45) {
+        const chx = x + 14 + rand() * (pw - 28);
+        const chy = y + 14 + rand() * (ph - 28);
+        drawChip(ctx, chx, chy, chipShape(rand, 3.5 + rand() * 6), 'rgba(198,206,220,0.5)', bctx, 0.26);
       }
     }
   }
@@ -1168,6 +1449,14 @@ function paintMetal(ctx, S, color, rand, bctx) {
       }
     }
   }
+  // worn-bright segments where traffic rubs the horizontal seam lips clean
+  for (let i = 0; i < 5; i++) {
+    const y = (1 + Math.floor(rand() * 2)) * ph;
+    const x = rand() * S * 0.8;
+    const len = 24 + rand() * 60;
+    ctx.fillStyle = `rgba(228,234,244,${0.08 + rand() * 0.08})`;
+    ctx.fillRect(x, y + 1.5, len, 1.4);
+  }
   // scratches: bright line with a dark parallel shadow
   for (let i = 0; i < 9; i++) {
     const x = rand() * S;
@@ -1193,6 +1482,35 @@ function paintMetal(ctx, S, color, rand, bctx) {
       bctx.stroke();
     }
   }
+  // fine hairline scuffs (no shadow pass — just close-range micro detail)
+  for (let i = 0; i < 12; i++) {
+    const x = rand() * S;
+    const y = rand() * S;
+    const dx = (rand() - 0.5) * 44;
+    const dy = (rand() - 0.5) * 18;
+    ctx.strokeStyle = rand() < 0.5
+      ? `rgba(255,255,255,${0.04 + rand() * 0.06})`
+      : `rgba(0,0,0,${0.06 + rand() * 0.07})`;
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + dx, y + dy);
+    ctx.stroke();
+  }
+  // arc scuffs from dragged gear
+  for (let i = 0; i < 4; i++) {
+    const x = rand() * S;
+    const y = rand() * S;
+    const r = 26 + rand() * 70;
+    const a0 = rand() * Math.PI * 2;
+    ctx.strokeStyle = `rgba(0,0,0,${0.06 + rand() * 0.07})`;
+    ctx.lineWidth = 1.5 + rand() * 2.5;
+    ctx.beginPath();
+    ctx.arc(x, y, r, a0, a0 + 0.3 + rand() * 0.5);
+    ctx.stroke();
+  }
+  // rust weeping out of the horizontal plate seams
+  seamDrips(ctx, S, rand, [ph, ph * 2], 3, '112,58,24', 0.12, 60);
   stains(ctx, S, rand, 3, '112,58,24', 0.13, 0.16); // rust
   stains(ctx, S, rand, 3, '8,8,10', 0.16, 0.22); // grime
 }
@@ -1239,6 +1557,30 @@ function paintAccent(ctx, S, color, rand, emCtx) {
   };
   drawStripes(ctx, css(color, 1.55, 0.85), 'rgba(0,0,0,0.25)');
   panelShade(ctx, B, B, S - 2 * B, S - 2 * B, { ao: 0.18, inset: 0.1, top: 0.06, bottom: 0.1 });
+  // shipping wear on the frame: hairline scuffs + grimy corners (color map
+  // only — the emissive mask below is untouched, bloom discipline intact)
+  for (let i = 0; i < 10; i++) {
+    const onTop = rand() < 0.5;
+    const x = rand() * S;
+    const y = onTop ? rand() * B : S - rand() * B;
+    const dx = (rand() - 0.5) * 40;
+    ctx.strokeStyle = rand() < 0.5
+      ? `rgba(255,255,255,${0.05 + rand() * 0.07})`
+      : `rgba(0,0,0,${0.08 + rand() * 0.08})`;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + dx, y + (rand() - 0.5) * 6);
+    ctx.stroke();
+  }
+  for (const [gx, gy] of [[B / 2, B / 2], [S - B / 2, B / 2], [B / 2, S - B / 2], [S - B / 2, S - B / 2]]) {
+    const r = B * (0.8 + rand() * 0.5);
+    const g2 = ctx.createRadialGradient(gx, gy, 0, gx, gy, r);
+    g2.addColorStop(0, `rgba(10,10,12,${0.1 + rand() * 0.08})`);
+    g2.addColorStop(1, 'rgba(10,10,12,0)');
+    ctx.fillStyle = g2;
+    ctx.fillRect(gx - r, gy - r, r * 2, r * 2);
+  }
   ctx.save();
   ctx.strokeStyle = css(color, 1.7, 0.95);
   ctx.shadowColor = css(color, 1.4, 1);
@@ -1311,7 +1653,7 @@ function paintFacade(ctx, S, color, accent, rand, density) {
 
 function paintFloorConcrete(ctx, S, color, rand, bctx) {
   const fB = shade(ctx, S, color, rand, { grain: 15, amp: 16, temp: 8 });
-  if (bctx) bumpFromField(bctx, S, fB, 132, 18, rand, 8);
+  if (bctx) bumpFromField(bctx, S, fB, 132, 18, rand, 8, 7);
   const P = S / 2;
   for (let px = 0; px < 2; px++) {
     for (let py = 0; py < 2; py++) {
@@ -1319,7 +1661,9 @@ function paintFloorConcrete(ctx, S, color, rand, bctx) {
       const y = py * P;
       ctx.fillStyle = css(color, 0.84 + rand() * 0.3, 0.1);
       ctx.fillRect(x, y, P, P);
+      tempTint(ctx, x, y, P, P, rand);
       panelShade(ctx, x + 3, y + 3, P - 6, P - 6, { ao: 0.14, inset: 0.1 });
+      edgeGrime(ctx, x + 3, y + 3, P - 6, P - 6, rand, 0.12);
       for (const [ox, oy] of [[30, 30], [P - 30, 30], [30, P - 30], [P - 30, P - 30]]) {
         boltHole(ctx, x + ox, y + oy, 3.5, bctx);
       }
@@ -1364,6 +1708,29 @@ function paintFloorConcrete(ctx, S, color, rand, bctx) {
     ctx.arc(x, y, r, a0, a0 + 0.3 + rand() * 0.5);
     ctx.stroke();
   }
+  // dirt collecting in and along the expansion joints
+  for (let i = 0; i < 10; i++) {
+    const onX = rand() < 0.5;
+    const line = Math.floor(rand() * 3) * P;
+    const along = rand() * S;
+    const len = 30 + rand() * 70;
+    const a = 0.05 + rand() * 0.07;
+    const band = (pos) => {
+      const g = onX
+        ? ctx.createLinearGradient(0, pos - 8, 0, pos + 8)
+        : ctx.createLinearGradient(pos - 8, 0, pos + 8, 0);
+      g.addColorStop(0, 'rgba(8,9,10,0)');
+      g.addColorStop(0.5, `rgba(8,9,10,${a.toFixed(3)})`);
+      g.addColorStop(1, 'rgba(8,9,10,0)');
+      ctx.fillStyle = g;
+      if (onX) ctx.fillRect(along, pos - 8, len, 16);
+      else ctx.fillRect(pos - 8, along, 16, len);
+    };
+    band(line);
+    if (line === 0) band(S); // wrap the edge joint
+    else if (line === S) band(0);
+  }
+  moisture(ctx, S, rand, 3, 0.13);
   stains(ctx, S, rand, 6, '0,0,0', 0.18);
   stains(ctx, S, rand, 2, '12,10,6', 0.22, 0.14); // oil
   cracks(ctx, S, rand, 3, 'rgba(0,0,0,0.24)', 1.3, 0.3, bctx, 2);
@@ -1399,7 +1766,19 @@ function paintFloorStone(ctx, S, color, rand, bctx) {
       g.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.fillStyle = g;
       ctx.fillRect(x, y, w, h);
+      tempTint(ctx, x, y, w, h, rand, 0.8);
       panelShade(ctx, x, y, w, h, { ao: 0.2, inset: 0.14 });
+      edgeGrime(ctx, x, y, w, h, rand, 0.11);
+      // some slabs stay damp: moisture-darkened with a faint wet sheen edge
+      if (rand() < 0.3) {
+        ctx.fillStyle = `rgba(10,12,14,${0.1 + rand() * 0.1})`;
+        ctx.fillRect(x, y, w, h);
+        const wg = ctx.createRadialGradient(x + w * 0.35, y + h * 0.35, 2, x + w * 0.35, y + h * 0.35, w * 0.5);
+        wg.addColorStop(0, `rgba(200,214,224,${0.05 + rand() * 0.04})`);
+        wg.addColorStop(1, 'rgba(200,214,224,0)');
+        ctx.fillStyle = wg;
+        ctx.fillRect(x, y, w, h);
+      }
       const nPits = 5 + Math.floor(rand() * 8);
       for (let i = 0; i < nPits; i++) {
         ctx.fillStyle = `rgba(20,14,6,${0.1 + rand() * 0.14})`;
@@ -1441,7 +1820,9 @@ function paintFloorStone(ctx, S, color, rand, bctx) {
     ctx.arc(x, y, 0.7 + rand() * 1.6, 0, Math.PI * 2);
     ctx.fill();
   }
+  moisture(ctx, S, rand, 3, 0.14, '12,12,10'); // ground moisture pooling
   stains(ctx, S, rand, 5, '30,20,8', 0.16);
+  if (bctx) overlayFineBump(bctx, S, rand, 0.24, 26);
 }
 
 function paintFloorNeon(ctx, S, color, accent, rand, emCtx) {
@@ -1453,6 +1834,17 @@ function paintFloorNeon(ctx, S, color, accent, rand, emCtx) {
     for (let gy = 0; gy < n; gy++) {
       ctx.fillStyle = css(base, 0.75 + rand() * 0.55, 0.1);
       ctx.fillRect(gx * cs, gy * cs, cs, cs);
+      tempTint(ctx, gx * cs, gy * cs, cs, cs, rand, 0.5);
+      // scuffed corner on some tiles (traffic wear)
+      if (rand() < 0.2) {
+        const px2 = gx * cs + (rand() < 0.5 ? 6 : cs - 6);
+        const py2 = gy * cs + (rand() < 0.5 ? 6 : cs - 6);
+        const g = ctx.createRadialGradient(px2, py2, 0, px2, py2, 9);
+        g.addColorStop(0, `rgba(0,0,0,${0.1 + rand() * 0.1})`);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(px2 - 9, py2 - 9, 18, 18);
+      }
       if (rand() < 0.1) { // etched circuit trace on a few tiles
         const x0 = gx * cs + 6 + rand() * (cs - 24);
         const y0 = gy * cs + 6 + rand() * (cs - 24);
@@ -1480,7 +1872,20 @@ function paintFloorNeon(ctx, S, color, accent, rand, emCtx) {
     ctx.lineTo(S, i * cs);
     ctx.stroke();
   }
+  // boot-drag scuff arcs across the tile grid
+  for (let i = 0; i < 5; i++) {
+    const x = rand() * S;
+    const y = rand() * S;
+    const r = 30 + rand() * 90;
+    const a0 = rand() * Math.PI * 2;
+    ctx.strokeStyle = `rgba(0,0,0,${0.05 + rand() * 0.06})`;
+    ctx.lineWidth = 2 + rand() * 3;
+    ctx.beginPath();
+    ctx.arc(x, y, r, a0, a0 + 0.25 + rand() * 0.4);
+    ctx.stroke();
+  }
   stains(ctx, S, rand, 4, '0,0,0', 0.14);
+  stains(ctx, S, rand, 3, '6,7,10', 0.1, 0.14); // close-range grime spots
   // glow nodes at intersections + a few tile-edge light segments —
   // halo on the color map, crisp cores on the emissive map
   const dots = [];
@@ -1532,10 +1937,12 @@ function paintFloorNeon(ctx, S, color, accent, rand, emCtx) {
 
 function paintFloorIce(ctx, S, color, rand, bctx) {
   const fB = shade(ctx, S, color, rand, { grain: 5, amp: 10, temp: 8, axis: [-0.7, 0.15, 1], octaves: 5 });
-  if (bctx) bumpFromField(bctx, S, fB, 128, 6, rand, 3);
+  if (bctx) bumpFromField(bctx, S, fB, 128, 6, rand, 3, 4);
   const deep = blend(color, '#08243e', 0.7);
   const [dr, dg, db] = srgb(deep);
   stains(ctx, S, rand, 6, `${dr},${dg},${db}`, 0.18, 0.3);
+  tempBlotches(ctx, S, rand, 3, 0.6);
+  moisture(ctx, S, rand, 2, 0.11, `${dr},${dg},${db}`); // refrozen wet patches
   // frozen glow pockets
   for (let i = 0; i < 6; i++) {
     const x = rand() * S;
@@ -1661,7 +2068,8 @@ function paintFloorMetal(ctx, S, color, rand, bctx) {
 function paintAsphalt(ctx, S, color, accent, rand, bctx) {
   const base = blend(color, '#17181c', 0.6);
   const fB = shade(ctx, S, base, rand, { grain: 12, amp: 9, temp: 5 });
-  if (bctx) bumpFromField(bctx, S, fB, 130, 12, rand, 10);
+  if (bctx) bumpFromField(bctx, S, fB, 130, 12, rand, 10, 8);
+  tempBlotches(ctx, S, rand, 3, 0.7); // sun-warmed vs shaded patches
   // aggregate speckle
   for (let i = 0; i < 420; i++) {
     const light = rand() < 0.55;
@@ -1723,6 +2131,16 @@ function paintAsphalt(ctx, S, color, accent, rand, bctx) {
     ctx.fillStyle = css(base, 0.8 + rand() * 0.4, 0.5);
     ctx.fillRect(x, y, 1.5 + rand() * 3, 1.5 + rand() * 3);
   }
+  // flattened gum spots + damp patches where the surface stays wet
+  for (let i = 0; i < 12; i++) {
+    ctx.fillStyle = rand() < 0.5
+      ? `rgba(12,12,13,${0.2 + rand() * 0.15})`
+      : `rgba(58,60,64,${0.1 + rand() * 0.1})`;
+    ctx.beginPath();
+    ctx.ellipse(rand() * S, rand() * S, 1.6 + rand() * 2.6, 1.3 + rand() * 2, rand() * 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  moisture(ctx, S, rand, 2, 0.15, '8,10,12');
   stains(ctx, S, rand, 3, '10,9,8', 0.24, 0.16); // oil
   stains(ctx, S, rand, 4, '0,0,0', 0.12);
 }
