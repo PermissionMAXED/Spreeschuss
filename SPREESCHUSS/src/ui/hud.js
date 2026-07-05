@@ -1,6 +1,7 @@
 import { bus } from '../engine/eventbus.js';
 import { SHOP_ORDER, WEAPONS, ARMOR } from '../weapons/weapons.js';
 import { AGENTS } from '../agents/agents.js';
+import { agentPortraitURL, ABILITY_ICONS } from './logo.js';
 
 // Small inline-SVG icons (no external assets).
 const svg = (body, vb = '0 0 22 10', w = 22, h = 10) => `<svg viewBox="${vb}" width="${w}" height="${h}" aria-hidden="true">${body}</svg>`;
@@ -11,11 +12,16 @@ const KILL_ICONS = {
   turret: svg('<path d="M5.5 0h3v4.4H13v3H9.8V13H4.2V7.4H1v-3h4.5z" fill="currentColor"/>', '0 0 14 13', 13, 12),
   head: svg('<circle cx="7" cy="7" r="5.4" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="7" cy="7" r="2" fill="currentColor"/>', '0 0 14 14', 12, 12),
 };
+const CHECK_ICON = svg('<path d="M2 7.5l3.4 3.4L12 3.6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>', '0 0 14 14', 11, 11);
 const CAT_LABELS = {
   melee: 'Nahkampf', sidearm: 'Pistole', smg: 'Maschinenpistole', rifle: 'Sturmgewehr',
   shotgun: 'Schrotflinte', sniper: 'Scharfschütze', heavy: 'Schwere Waffe',
 };
 const AGENT_COLORS = Object.fromEntries(AGENTS.map((a) => [a.name, a.color]));
+const AGENT_BY_NAME = Object.fromEntries(AGENTS.map((a) => [a.name, a]));
+
+const MM_SIZE = 220;
+const MM_PAD = 12;
 
 // Builds and maintains the in-game HUD overlay. Subscribes to the event bus.
 export class HUD {
@@ -28,6 +34,11 @@ export class HUD {
     this._bind();
     this.scoreboardHeld = false;
     this._spread = 0; // crosshair bloom, decays each hud tick
+    this._abSig = ''; // ability bar DOM signature (rebuild only on change)
+    this._abEls = {};
+    this._abReady = {};
+    this._spikeSig = 'none';
+    this._mmLayerId = null; // cached minimap wall layer (per map id)
   }
 
   _build() {
@@ -72,6 +83,7 @@ export class HUD {
       <div class="bottom-right">
         <div class="credits" id="credits">¤ 800</div>
         <div class="ammo"><span id="ammoMag">0</span><span class="ammo-sep">/</span><span id="ammoReserve">0</span></div>
+        <div class="reload-hint" id="reloadHint"><b>R</b> NACHLADEN</div>
         <div class="weapon-line"><span class="weapon-name" id="weaponName">Classic</span><span class="weapon-cat" id="weaponCat"></span></div>
       </div>
 
@@ -83,7 +95,7 @@ export class HUD {
       <div class="matchend" id="matchend"></div>
     `;
     this.el = {};
-    for (const id of ['crosshair', 'hitmarker', 'flash', 'dmgv', 'scope', 'scoreAtt', 'scoreDef', 'roundLabel', 'roundTimer', 'phaseLabel', 'spikeStatus', 'minimap', 'killfeed', 'banner', 'toast', 'hp', 'hpFill', 'armor', 'armorFill', 'armorRow', 'abilities', 'credits', 'ammoMag', 'ammoReserve', 'weaponName', 'weaponCat', 'interactBar', 'interactFill', 'interactLabel', 'buyMenu', 'scoreboard', 'deathOverlay', 'matchend']) {
+    for (const id of ['crosshair', 'hitmarker', 'flash', 'dmgv', 'scope', 'scoreAtt', 'scoreDef', 'roundLabel', 'roundTimer', 'phaseLabel', 'spikeStatus', 'minimap', 'killfeed', 'banner', 'toast', 'hp', 'hpFill', 'armor', 'armorFill', 'armorRow', 'abilities', 'credits', 'ammoMag', 'ammoReserve', 'reloadHint', 'weaponName', 'weaponCat', 'interactBar', 'interactFill', 'interactLabel', 'buyMenu', 'scoreboard', 'deathOverlay', 'matchend']) {
       this.el[id] = this.root.querySelector('#' + id);
     }
     this.mmCtx = this.el.minimap.getContext('2d');
@@ -96,13 +108,26 @@ export class HUD {
     bus.on('kill', (d) => this.addKill(d));
     bus.on('toast', (m) => this.toast(m));
     bus.on('interact', (d) => this.showInteract(d));
-    bus.on('scoreboard', (v) => { this.scoreboardHeld = v; this.el.scoreboard.classList.toggle('show', v); });
+    bus.on('scoreboard', (v) => {
+      this.scoreboardHeld = v;
+      if (v && this.last) this._renderScoreboard(this.last.scoreboard, this.last);
+      this.el.scoreboard.classList.toggle('show', v);
+    });
     bus.on('round:end', (d) => this.banner(d.winner === this.game.playerSide ? 'RUNDE GEWONNEN' : 'RUNDE VERLOREN', d.winner === this.game.playerSide ? 'win' : 'lose'));
     bus.on('spike:planted', (d) => this.toast(`Spike auf ${d.site} gepflanzt!`));
     bus.on('halftime', () => this.banner('SEITENWECHSEL', 'neutral'));
     bus.on('buy:toggle', (open) => this.renderBuyMenu(open));
     bus.on('match:end', (d) => this.showMatchEnd(d));
-    bus.on('match:start', () => { this.el.matchend.classList.remove('show'); this.el.deathOverlay.classList.remove('show'); this.scoreboardHeld = false; this.el.scoreboard.classList.remove('show'); });
+    bus.on('match:start', () => {
+      this.el.matchend.classList.remove('show');
+      this.el.deathOverlay.classList.remove('show');
+      this.scoreboardHeld = false;
+      this.el.scoreboard.classList.remove('show');
+      this._abSig = '';
+      this._abReady = {};
+      this._spikeSig = 'none';
+      this._mmLayerId = null;
+    });
     bus.on('muzzle', () => { this._spread = 1; }); // player shot fired → crosshair bloom
   }
 
@@ -113,28 +138,34 @@ export class HUD {
     const hpPct = Math.max(0, Math.min(100, d.hp));
     this.el.hpFill.style.width = hpPct + '%';
     this.el.hpFill.className = 'vital-fill hp-fill' + (hpPct <= 25 ? ' crit' : (hpPct <= 55 ? ' low' : ''));
+    this.el.hp.classList.toggle('crit', hpPct <= 25);
     this.el.armor.textContent = d.armor;
     this.el.armorFill.style.width = Math.max(0, Math.min(100, d.armor * 2)) + '%';
     this.el.armorRow.classList.toggle('empty', d.armor <= 0);
+    // low-HP heartbeat vignette (only while alive, intensity by threshold)
+    this.el.dmgv.className = 'dmg-vignette' + (!d.alive ? '' : (hpPct <= 25 ? ' crit' : (hpPct <= 45 ? ' low' : '')));
 
     this.el.credits.textContent = '¤ ' + d.credits;
     this.el.weaponName.textContent = d.weapon;
     this.el.weaponCat.textContent = CAT_LABELS[d.weaponCat] || '';
     this.el.ammoMag.textContent = d.mag > 0 ? d.ammo : '∞';
     this.el.ammoReserve.textContent = d.mag > 0 ? d.reserve : '';
-    this.el.ammoMag.classList.toggle('low', d.mag > 0 && d.ammo <= Math.max(1, Math.floor(d.mag * 0.25)));
+    const lowAmmo = d.mag > 0 && d.ammo <= Math.max(1, Math.floor(d.mag * 0.25));
+    this.el.ammoMag.classList.toggle('low', lowAmmo);
+    this.el.reloadHint.classList.toggle('show', d.alive && d.mag > 0 && d.ammo === 0 && d.reserve > 0 && !d.buyOpen);
     this.el.scoreAtt.textContent = d.attScore;
     this.el.scoreDef.textContent = d.defScore;
     this.el.scoreAtt.classList.toggle('mine', d.side === 'att');
     this.el.scoreDef.classList.toggle('mine', d.side === 'def');
 
     const plant = d.mode && d.mode.kind === 'plant';
+    const spikeLive = plant && d.spike && d.spike.planted && !d.spike.defused;
     if (plant) {
       const m = Math.floor(d.timeLeft / 60);
       const s = (d.timeLeft % 60).toString().padStart(2, '0');
       this.el.roundTimer.textContent = `${m}:${s}`;
-      this.el.roundTimer.classList.toggle('urgent', d.timeLeft <= 10);
-      this.el.phaseLabel.textContent = { buy: 'KAUFPHASE · [B] SHOP', live: '' }[d.phase] || '';
+      this.el.roundTimer.classList.toggle('urgent', d.timeLeft <= 10 || spikeLive);
+      this.el.phaseLabel.textContent = spikeLive ? 'SPIKE TICKT' : ({ buy: 'KAUFPHASE · [B] SHOP', live: '' }[d.phase] || '');
       this.el.roundLabel.textContent = `RUNDE ${d.round}`;
     } else {
       // deathmatch / tdm / gungame: show goal instead of a countdown
@@ -144,20 +175,9 @@ export class HUD {
       this.el.roundLabel.textContent = '';
     }
 
-    // spike status
-    if (d.spike && d.spike.planted && !d.spike.defused) {
-      this.el.spikeStatus.innerHTML = `<i class="spike-dot"></i> SPIKE AKTIV · SPOT ${d.spike.site}`;
-      this.el.spikeStatus.className = 'spike-status active';
-    } else if (d.spike && d.spike.carrier) {
-      this.el.spikeStatus.innerHTML = '◆ Du trägst den Spike — halte <b>F</b> auf einem Spot';
-      this.el.spikeStatus.className = 'spike-status carry';
-    } else {
-      this.el.spikeStatus.textContent = '';
-      this.el.spikeStatus.className = 'spike-status';
-    }
-
+    this._renderSpike(d);
     this._renderAbilities(d.abilities, d.ultPoints, d.ultMax);
-    this._renderScoreboard(d.scoreboard, d);
+
     // Re-assert scoreboard visibility each HUD tick (~30/s). Hold-to-show is
     // driven by the one-shot 'scoreboard' events AND the live key state, so a
     // missed/blocked keydown self-heals while Tab is physically held, and a
@@ -165,6 +185,7 @@ export class HUD {
     const tabDown = !!this.game.input?.isDown('Tab');
     if (tabDown !== this.scoreboardHeld) this.scoreboardHeld = tabDown;
     this.el.scoreboard.classList.toggle('show', this.scoreboardHeld);
+    if (this.scoreboardHeld) this._renderScoreboard(d.scoreboard, d);
     this._drawMinimap(d.minimap, d.side);
 
     // scope overlay (sniper right-click) — read live game state each tick
@@ -182,60 +203,158 @@ export class HUD {
     this.el.deathOverlay.classList.toggle('show', !d.alive && this.game.state === 'playing');
   }
 
-  _renderAbilities(ab, ultPoints, ultMax) {
-    if (!ab) return;
-    let html = '';
-    for (const key of ['C', 'Q', 'E']) {
-      const a = ab[key];
-      if (!a) continue;
-      const cls = a.ready ? 'ready' : 'notready';
-      const max = Math.max(1, a.max);
-      let pips = '';
-      for (let i = 0; i < max; i++) pips += `<i class="${i < a.charges ? 'on' : ''}"></i>`;
-      html += `<div class="ability ${cls}"><div class="ab-key">${key}</div><div class="ab-name">${a.name}</div><div class="ab-pips">${pips}</div></div>`;
+  // ---------------------------------------------------------------- spike arc
+  // After the plant the payload keeps counting `timeLeft` down; the first tick
+  // after planting is remembered as the full duration so the arc needs no
+  // knowledge of internal game constants.
+  _renderSpike(d) {
+    const el = this.el.spikeStatus;
+    const sp = d.spike;
+    const planted = !!(sp && sp.planted && !sp.defused);
+    const sig = planted ? 'planted:' + sp.site : (sp && sp.carrier ? 'carry' : 'none');
+    if (sig !== this._spikeSig) {
+      this._spikeSig = sig;
+      if (planted) {
+        this._spikeMax = Math.max(1, d.timeLeft);
+        el.className = 'spike-status active';
+        el.innerHTML = `
+          <span class="spike-arc"><svg viewBox="0 0 40 40" width="38" height="38" aria-hidden="true">
+            <circle class="sa-bg" cx="20" cy="20" r="16"></circle>
+            <circle class="sa-fg" cx="20" cy="20" r="16"></circle>
+          </svg><b class="sa-secs">${d.timeLeft}</b></span>
+          <span class="spike-text"><i class="spike-dot"></i> SPIKE AKTIV · SPOT ${sp.site}</span>`;
+        this._spikeArc = el.querySelector('.sa-fg');
+        this._spikeSecs = el.querySelector('.sa-secs');
+      } else if (sp && sp.carrier) {
+        el.className = 'spike-status carry';
+        el.innerHTML = '◆ Du trägst den Spike — halte <b>F</b> auf einem Spot';
+      } else {
+        el.className = 'spike-status';
+        el.textContent = '';
+      }
     }
-    const x = ab.X;
-    if (x) {
-      const cls = x.ready ? 'ready' : 'notready';
-      const max = Math.max(1, ultMax || x.max);
-      const pts = Math.min(max, ultPoints ?? x.charges);
-      let pips = '';
-      for (let i = 0; i < max; i++) pips += `<i class="${i < pts ? 'on' : ''}"></i>`;
-      html += `<div class="ability ult ${cls}"><div class="ab-key">X</div><div class="ab-name">${x.name}</div><div class="ab-pips ult-pips">${pips}</div><div class="ab-charges">${pts}/${max}</div></div>`;
+    if (planted && this._spikeArc) {
+      const frac = Math.max(0, Math.min(1, d.timeLeft / this._spikeMax));
+      const C = 2 * Math.PI * 16;
+      this._spikeArc.style.strokeDasharray = C.toFixed(2);
+      this._spikeArc.style.strokeDashoffset = (C * (1 - frac)).toFixed(2);
+      this._spikeSecs.textContent = d.timeLeft;
+      el.classList.toggle('hot', d.timeLeft <= 10);
     }
-    this.el.abilities.innerHTML = html;
   }
 
+  // ---------------------------------------------------------------- abilities
+  // The ability bar DOM is built once per loadout and then only mutated, so
+  // CSS transitions (pips, ready glow) actually animate. A ready-flip triggers
+  // a one-shot light sweep over the slot.
+  _renderAbilities(ab, ultPoints, ultMax) {
+    if (!ab) return;
+    const agent = this.game.player?.agent;
+    const sig = (agent?.id || '?') + '‖' + ['C', 'Q', 'E', 'X'].map((k) => ab[k] ? `${k}:${ab[k].name}/${ab[k].max}` : '').join('|') + '‖' + (ultMax || 0);
+    if (sig !== this._abSig) {
+      this._abSig = sig;
+      this._abEls = {};
+      this._abReady = {};
+      this.el.abilities.innerHTML = '';
+      for (const key of ['C', 'Q', 'E', 'X']) {
+        const a = ab[key];
+        if (!a) continue;
+        const isUlt = key === 'X';
+        const type = agent?.abilities?.[key]?.type;
+        const icon = ABILITY_ICONS[type] || '';
+        const max = Math.max(1, isUlt ? (ultMax || a.max) : a.max);
+        const div = document.createElement('div');
+        div.className = 'ability' + (isUlt ? ' ult' : '');
+        div.innerHTML = `
+          <i class="ab-sweep"></i>
+          <div class="ab-head"><span class="ab-key">${key}</span><span class="ab-icon" style="color:${agent?.color || 'currentColor'}">${icon}</span></div>
+          <div class="ab-name">${a.name}</div>
+          <div class="ab-pips${isUlt ? ' ult-pips' : ''}">${'<i></i>'.repeat(max)}</div>
+          ${isUlt ? '<div class="ab-charges">0/' + max + '</div>' : ''}`;
+        this.el.abilities.appendChild(div);
+        this._abEls[key] = { root: div, pips: [...div.querySelectorAll('.ab-pips i')], charges: div.querySelector('.ab-charges'), max };
+      }
+    }
+    for (const key of ['C', 'Q', 'E', 'X']) {
+      const a = ab[key];
+      const els = this._abEls[key];
+      if (!a || !els) continue;
+      const isUlt = key === 'X';
+      const count = isUlt ? Math.min(els.max, ultPoints ?? a.charges) : a.charges;
+      els.pips.forEach((pip, i) => pip.classList.toggle('on', i < count));
+      if (els.charges) els.charges.textContent = `${count}/${els.max}`;
+      els.root.classList.toggle('ready', a.ready);
+      els.root.classList.toggle('notready', !a.ready);
+      if (a.ready && this._abReady[key] === false) {
+        // cooldown finished → play the sweep once
+        els.root.classList.remove('just-ready');
+        void els.root.offsetWidth;
+        els.root.classList.add('just-ready');
+        clearTimeout(els._sweepT);
+        els._sweepT = setTimeout(() => els.root.classList.remove('just-ready'), 750);
+      }
+      this._abReady[key] = a.ready;
+    }
+  }
+
+  // ---------------------------------------------------------------- scoreboard
   _renderScoreboard(sb, d) {
     if (!sb) return;
-    const rows = (team) => sb.filter((r) => team === 'all' || r.team === team).map((r) => `
-      <tr class="${r.isPlayer ? 'me' : ''} ${r.alive ? '' : 'dead'}">
-        <td class="c-agent"><i class="agent-dot" style="background:${AGENT_COLORS[r.agent] || '#8298aa'}"></i>${r.agent || ''}</td>
-        <td class="c-name">${r.name}${r.alive ? '' : ' <small class="sb-dead-tag">✕</small>'}</td>
-        <td class="c-num">${r.kills}</td><td class="c-num">${r.deaths}</td><td class="c-num c-cred">¤${r.credits}</td>
-      </tr>`).join('');
-    const head = `<tr><th>Agent</th><th>Name</th><th>K</th><th>D</th><th>¤</th></tr>`;
+    const pipStrip = (score, total, cls) => {
+      if (!total || total > 15) return '';
+      let pips = '';
+      for (let i = 0; i < total; i++) pips += `<i class="${i < score ? 'on' : ''}"></i>`;
+      return `<span class="sb-pips ${cls}">${pips}</span>`;
+    };
+    const rows = (team) => {
+      const list = sb.filter((r) => team === 'all' || r.team === team);
+      const maxK = Math.max(0, ...list.map((r) => r.kills));
+      return list.map((r) => {
+        const agent = AGENT_BY_NAME[r.agent];
+        const portrait = agent
+          ? `<img class="sb-portrait" src="${agentPortraitURL(agent, 26)}" alt="" style="--agent-color:${agent.color}">`
+          : `<i class="agent-dot" style="background:${AGENT_COLORS[r.agent] || '#8298aa'}"></i>`;
+        const top = maxK > 0 && r.kills === maxK;
+        const kd = r.deaths > 0 ? (r.kills / r.deaths).toFixed(1) : r.kills.toFixed(1);
+        return `
+        <tr class="${r.isPlayer ? 'me' : ''} ${r.alive ? '' : 'dead'} ${top ? 'topfrag' : ''}">
+          <td class="c-agent">${portrait}${r.agent || ''}</td>
+          <td class="c-name">${r.name}${r.alive ? '' : ' <small class="sb-dead-tag">✕</small>'}</td>
+          <td class="c-num${top ? ' c-top' : ''}">${r.kills}${top ? '<em class="sb-star">★</em>' : ''}</td>
+          <td class="c-num">${r.deaths}</td>
+          <td class="c-num c-kd ${r.kills >= r.deaths ? 'pos' : 'neg'}">${kd}</td>
+          <td class="c-num c-cred">¤${r.credits}</td>
+        </tr>`;
+      }).join('');
+    };
+    const head = `<tr><th>Agent</th><th>Name</th><th>K</th><th>T</th><th>K/T</th><th>¤</th></tr>`;
     let body;
     if (d.mode && (d.mode.kind === 'ffa' || d.mode.kind === 'gungame')) {
       body = `<table>${head}${rows('all')}</table>`;
     } else {
-      body = `<div class="sb-team att"><h3>Angriff <b>${d.attScore}</b></h3><table>${head}${rows('att')}</table></div>
-              <div class="sb-team def"><h3>Verteidigung <b>${d.defScore}</b></h3><table>${head}${rows('def')}</table></div>`;
+      const rtw = d.mode?.roundsToWin;
+      body = `<div class="sb-team att"><h3>Angriff <b>${d.attScore}</b>${pipStrip(d.attScore, rtw, 'att')}</h3><table>${head}${rows('att')}</table></div>
+              <div class="sb-team def"><h3>Verteidigung <b>${d.defScore}</b>${pipStrip(d.defScore, rtw, 'def')}</h3><table>${head}${rows('def')}</table></div>`;
     }
-    const sub = d.mode?.kind === 'plant' ? ` · Runde ${d.round}` : '';
+    const sub = d.mode?.kind === 'plant' ? ` · Runde ${d.round}` : (d.goalText ? ` · ${d.goalText}` : '');
     this.el.scoreboard.innerHTML = `<div class="sb-inner"><h2>${d.mode?.name || ''} <span class="sb-map">— ${this.game.map?.name || ''}${sub}</span></h2>${body}<div class="sb-hint">Tab halten</div></div>`;
   }
 
-  _drawMinimap(mm, side) {
-    if (!mm) return;
-    const ctx = this.mmCtx;
-    const S = 220;
-    ctx.clearRect(0, 0, S, S);
-    ctx.fillStyle = 'rgba(7,13,20,0.78)';
+  // ---------------------------------------------------------------- minimap
+  // Static layout (backdrop, grid, walls from map.boxes) is rendered ONCE per
+  // map into an offscreen canvas and composited every frame; only the dynamic
+  // markers (sites, spike, entities) are drawn per tick.
+  _wallLayer(mm) {
+    const id = this.game.map?.id || 'none';
+    if (this._mmLayerId === id && this._mmLayer) return this._mmLayer;
+    const S = MM_SIZE; const pad = MM_PAD;
+    const c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = 'rgba(7,13,20,0.80)';
     ctx.fillRect(0, 0, S, S);
     const { minX, maxX, minZ, maxZ } = mm.bounds;
     const w = maxX - minX; const h = maxZ - minZ;
-    const pad = 12;
     const toX = (x) => pad + ((x - minX) / w) * (S - 2 * pad);
     const toY = (z) => pad + ((z - minZ) / h) * (S - 2 * pad);
     // subtle grid
@@ -246,8 +365,46 @@ export class HUD {
       ctx.beginPath(); ctx.moveTo(t, pad); ctx.lineTo(t, S - pad); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(pad, t); ctx.lineTo(S - pad, t); ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(120,160,190,0.22)';
+    // wall layout from map data: solid walls bright, chest-high cover mid,
+    // jumpable low cover faint; overhead lintels/trim are skipped.
+    for (const b of (this.game.map?.boxes || [])) {
+      const bottom = b.pos[1] - b.size[1] / 2;
+      const top = b.pos[1] + b.size[1] / 2;
+      if (bottom > 1.9) continue;
+      const bw = Math.max(1.5, (b.size[0] / w) * (S - 2 * pad));
+      const bh = Math.max(1.5, (b.size[2] / h) * (S - 2 * pad));
+      const x = toX(b.pos[0]) - bw / 2;
+      const y = toY(b.pos[2]) - bh / 2;
+      if (top >= 1.5) {
+        ctx.fillStyle = 'rgba(132,170,198,0.50)';
+        ctx.fillRect(x, y, bw, bh);
+        ctx.strokeStyle = 'rgba(178,210,232,0.30)';
+        ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, bw - 1), Math.max(1, bh - 1));
+      } else if (top >= 0.8) {
+        ctx.fillStyle = 'rgba(132,170,198,0.30)';
+        ctx.fillRect(x, y, bw, bh);
+      } else {
+        ctx.fillStyle = 'rgba(132,170,198,0.14)';
+        ctx.fillRect(x, y, bw, bh);
+      }
+    }
+    ctx.strokeStyle = 'rgba(120,160,190,0.24)';
     ctx.strokeRect(pad, pad, S - 2 * pad, S - 2 * pad);
+    this._mmLayer = c;
+    this._mmLayerId = id;
+    return c;
+  }
+
+  _drawMinimap(mm) {
+    if (!mm) return;
+    const ctx = this.mmCtx;
+    const S = MM_SIZE; const pad = MM_PAD;
+    ctx.clearRect(0, 0, S, S);
+    ctx.drawImage(this._wallLayer(mm), 0, 0);
+    const { minX, maxX, minZ, maxZ } = mm.bounds;
+    const w = maxX - minX; const h = maxZ - minZ;
+    const toX = (x) => pad + ((x - minX) / w) * (S - 2 * pad);
+    const toY = (z) => pad + ((z - minZ) / h) * (S - 2 * pad);
     // sites
     for (const s of mm.sites) {
       const x = toX(s.x); const y = toY(s.z);
@@ -307,16 +464,25 @@ export class HUD {
     });
   }
 
+  // ---------------------------------------------------------------- killfeed
   addKill(d) {
+    const agentColor = (name) => {
+      const row = this.last?.scoreboard?.find((r) => r.name === name);
+      return (row && AGENT_COLORS[row.agent]) || '#8298aa';
+    };
     const div = document.createElement('div');
     const aCls = d.attackerTeam === 'att' ? 'k-att' : (d.attackerTeam === 'def' ? 'k-def' : 'k-ffa');
     const vCls = d.victimTeam === 'att' ? 'k-att' : (d.victimTeam === 'def' ? 'k-def' : 'k-ffa');
+    const aCol = agentColor(d.attacker);
+    const vCol = agentColor(d.victim);
     div.className = 'kill-entry' + (d.player ? ' me' : '');
+    div.style.setProperty('--kf-accent', aCol);
     const icon = KILL_ICONS[d.method] || KILL_ICONS.gun;
     const headIcon = d.head ? `<span class="k-head">${KILL_ICONS.head}</span>` : '';
-    div.innerHTML = `<span class="${aCls}">${d.attacker}</span><span class="k-weapon">${icon}</span>${headIcon}<span class="${vCls}">${d.victim}</span>`;
+    div.innerHTML = `<i class="k-agent" style="background:${aCol}"></i><span class="${aCls}">${d.attacker}</span><span class="k-weapon">${icon}</span>${headIcon}<span class="${vCls}">${d.victim}</span><i class="k-agent" style="background:${vCol}"></i>`;
     this.el.killfeed.prepend(div);
     while (this.el.killfeed.children.length > 6) this.el.killfeed.lastChild.remove();
+    setTimeout(() => div.classList.add('out'), 4500);
     setTimeout(() => div.remove(), 5000);
   }
 
@@ -349,6 +515,7 @@ export class HUD {
     this._intT = setTimeout(() => bar.classList.remove('show'), 200);
   }
 
+  // ---------------------------------------------------------------- buy menu
   renderBuyMenu(open) {
     const menu = this.el.buyMenu;
     menu.classList.toggle('show', open);
@@ -366,21 +533,44 @@ export class HUD {
       const bar = (label, v) => `<div class="stat"><em>${label}</em><i><b style="width:${Math.round(v * 100)}%"></b></i></div>`;
       return `<div class="bi-stats">${bar('Schaden', dmg)}${bar('Rate', rate)}${bar('Magazin', mag)}</div>`;
     };
+    // best value per category: damage output per credit (badge on one item)
+    const bestValueId = (ids) => {
+      let best = null; let bestV = -1;
+      for (const id of ids) {
+        const w = WEAPONS[id];
+        if (!w.price) continue;
+        const v = (w.damage * (w.pellets || 1) * w.fireRate) / w.price;
+        if (v > bestV) { bestV = v; best = id; }
+      }
+      return best;
+    };
     const ownedWeapon = (id) => p.inventory.primary === id || (p.inventory.sidearm === id && WEAPONS[id].cat === 'sidearm');
-    const weaponBtn = (id) => {
+    const priceTag = (owned, ownedLabel, price) => {
+      if (owned) return `<span class="bi-price owned-tag">${CHECK_ICON} ${ownedLabel}</span>`;
+      if (!price) return `<span class="bi-price free">GRATIS</span>`;
+      if (canAfford(price)) return `<span class="bi-price">¤${price}</span>`;
+      return `<span class="bi-price locked">¤${price}<em class="bi-missing">fehlt ¤${price - p.credits}</em></span>`;
+    };
+    const weaponBtn = (id, best) => {
       const w = WEAPONS[id];
       const afford = canAfford(w.price);
       const owned = ownedWeapon(id);
       const cls = 'buy-item' + (afford ? '' : ' unaffordable') + (owned ? ' owned' : '');
+      const badge = best === id && !owned ? '<span class="bi-badge">TOP-WERT</span>' : '';
       return `<button class="${cls}" data-w="${id}">
-        <span class="bi-top"><span class="bi-name">${w.name}</span><span class="bi-price">${owned ? 'IM BESITZ' : '¤' + w.price}</span></span>
+        ${badge}
+        <span class="bi-top"><span class="bi-name">${w.name}</span>${priceTag(owned, 'IM BESITZ', w.price)}</span>
         ${statBars(w)}
       </button>`;
     };
-    const cat = (title, ids) => ids.length ? `
+    const cat = (title, ids) => {
+      if (!ids.length) return '';
+      const best = ids.length > 1 ? bestValueId(ids) : null;
+      return `
       <div class="buy-cat"><h4>${title}</h4><div class="buy-items">
-      ${ids.map(weaponBtn).join('')}
-      </div></div>` : '';
+      ${ids.map((id) => weaponBtn(id, best)).join('')}
+      </div></div>`;
+    };
 
     const armorBtn = (id) => {
       const a = ARMOR[id];
@@ -388,7 +578,7 @@ export class HUD {
       const owned = (p.inventory.armor || 0) >= a.hp;
       const cls = 'buy-item armor-item' + (afford ? '' : ' unaffordable') + (owned ? ' owned' : '');
       return `<button class="${cls}" data-a="${id}">
-        <span class="bi-top"><span class="bi-name">${a.name}</span><span class="bi-price">${owned ? 'AKTIV' : '¤' + a.price}</span></span>
+        <span class="bi-top"><span class="bi-name">${a.name}</span>${priceTag(owned, 'AKTIV', a.price)}</span>
         <div class="bi-stats"><div class="stat"><em>Schild</em><i><b style="width:${a.hp * 2}%"></b></i></div><span class="stat-plus">+${a.hp}</span></div>
       </button>`;
     };
@@ -422,9 +612,10 @@ export class HUD {
       const max = ab.charges ?? 1;
       const full = have >= max;
       const afford = canAfford(ab.cost);
+      const icon = ABILITY_ICONS[ab.type] || '';
       const b = document.createElement('button');
       b.className = 'buy-item ability-item' + (afford && !full ? '' : ' unaffordable') + (full ? ' owned' : '');
-      b.innerHTML = `<span class="bi-top"><span class="bi-name"><b class="bi-key">${key}</b> ${ab.name}</span><span class="bi-price">${full ? 'VOLL' : '¤' + ab.cost}</span></span>
+      b.innerHTML = `<span class="bi-top"><span class="bi-name"><b class="bi-key">${key}</b><span class="bi-abicon" style="color:${p.agent.color}">${icon}</span> ${ab.name}</span>${full ? `<span class="bi-price owned-tag">${CHECK_ICON} VOLL</span>` : priceTag(false, '', ab.cost)}</span>
         <div class="bi-stats"><div class="stat"><em>Ladungen</em><i><b style="width:${(have / max) * 100}%"></b></i></div><span class="stat-plus">${have}/${max}</span></div>`;
       b.onclick = () => { this.game.buyAbility(p, key); this.renderBuyMenu(true); };
       abDiv.appendChild(b);
@@ -437,32 +628,80 @@ export class HUD {
     });
   }
 
+  // ---------------------------------------------------------------- match end
   showMatchEnd(d) {
     const el = this.el.matchend;
     el.classList.add('show');
     const title = d.playerWon ? 'SIEG' : 'NIEDERLAGE';
     const cls = d.playerWon ? 'win' : 'lose';
+    const portrait = (agentName, size, ring) => {
+      const agent = AGENT_BY_NAME[agentName];
+      if (!agent) return `<i class="agent-dot" style="background:#8298aa"></i>`;
+      return `<img class="me-portrait${ring ? ' ' + ring : ''}" src="${agentPortraitURL(agent, size)}" alt="" style="--agent-color:${agent.color};width:${size}px;height:${size}px">`;
+    };
     let sub = '';
-    let podium = '';
+    let detail = '';
     if (d.ffa) {
-      sub = `${d.winner} gewinnt`;
+      sub = `<span class="me-winner">${d.winner}</span> gewinnt`;
       if (Array.isArray(d.scoreboard)) {
         const top = d.scoreboard.slice(0, 3);
-        podium = `<div class="me-podium">${top.map((r, i) => `
-          <div class="me-podium-row${r.isPlayer ? ' me' : ''}">
-            <b class="me-rank">${i + 1}.</b>
-            <i class="agent-dot" style="background:${AGENT_COLORS[r.agent] || '#8298aa'}"></i>
-            <span>${r.name}</span><em>${r.kills} Kills</em>
-          </div>`).join('')}</div>`;
+        // podium: 2nd | 1st | 3rd
+        const order = [top[1], top[0], top[2]].filter(Boolean);
+        const rankOf = (r) => top.indexOf(r) + 1;
+        detail = `<div class="me-podium3">${order.map((r) => {
+          const rank = rankOf(r);
+          const rcls = ['gold', 'silver', 'bronze'][rank - 1];
+          return `
+          <div class="me-pod p${rank}${r.isPlayer ? ' me' : ''}">
+            <div class="me-pod-portrait">${portrait(r.agent, rank === 1 ? 68 : 52, rcls)}</div>
+            <b class="me-pod-name">${r.name}</b>
+            <small>${r.agent || ''}</small>
+            <em>${r.kills} Kills · ${r.deaths} Tode</em>
+            <div class="me-pod-base ${rcls}">${rank}</div>
+          </div>`;
+        }).join('')}</div>`;
+        const rest = d.scoreboard.slice(3, 8);
+        if (rest.length) {
+          detail += `<div class="me-rest">${rest.map((r, i) => `
+            <div class="me-rest-row${r.isPlayer ? ' me' : ''}"><b>${i + 4}.</b>${portrait(r.agent, 20)}<span>${r.name}</span><em>${r.kills} / ${r.deaths}</em></div>`).join('')}</div>`;
+        }
       }
     } else {
       sub = `<span class="me-att">${d.att}</span><span class="me-colon">:</span><span class="me-def">${d.def}</span>`;
+      // per-team breakdown from the last HUD snapshot
+      const sb = this.last?.scoreboard || [];
+      const rtw = this.game.mode?.roundsToWin;
+      if (rtw && rtw <= 15) {
+        const pips = (score, tcls) => {
+          let s = '';
+          for (let i = 0; i < rtw; i++) s += `<i class="${i < score ? 'on' : ''}"></i>`;
+          return `<span class="me-pips ${tcls}">${s}</span>`;
+        };
+        sub += `<div class="me-pip-row">${pips(d.att, 'att')}<span class="me-pip-sep"></span>${pips(d.def, 'def')}</div>`;
+      }
+      const teamPanel = (team, label, score) => {
+        const list = sb.filter((r) => r.team === team);
+        if (!list.length) return '';
+        const maxK = Math.max(0, ...list.map((r) => r.kills));
+        const winner = (team === 'att' ? d.att : d.def) >= (team === 'att' ? d.def : d.att);
+        return `<div class="me-team ${team}${winner ? ' winner' : ''}">
+          <h3>${label}<b>${score}</b></h3>
+          ${list.map((r) => `
+            <div class="me-team-row${r.isPlayer ? ' me' : ''}${maxK > 0 && r.kills === maxK ? ' topfrag' : ''}">
+              ${portrait(r.agent, 24)}
+              <span class="me-tr-name">${r.name}</span>
+              <small>${r.agent || ''}</small>
+              <em>${r.kills} / ${r.deaths}</em>
+            </div>`).join('')}
+        </div>`;
+      };
+      detail = `<div class="me-teams">${teamPanel('att', 'Angriff', d.att)}${teamPanel('def', 'Verteidigung', d.def)}</div>`;
     }
     el.innerHTML = `<div class="me-inner ${cls}">
       <div class="me-kicker">MATCHENDE</div>
       <h1>${title}</h1>
       <div class="me-score">${sub}</div>
-      ${podium}
+      ${detail}
       <button id="meMenu" class="btn primary">Zurück zum Menü</button></div>`;
     el.querySelector('#meMenu').onclick = () => bus.emit('ui:mainmenu');
   }

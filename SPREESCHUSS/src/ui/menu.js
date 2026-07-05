@@ -2,7 +2,7 @@ import { bus } from '../engine/eventbus.js';
 import { AGENTS } from '../agents/agents.js';
 import { MODES } from '../game/modes.js';
 import { PLANT_MAPS, FFA_MAPS, ALL_MAPS } from '../maps/maps.js';
-import { makeLogoCanvas } from './logo.js';
+import { makeLogoCanvas, makeAgentPortrait, ABILITY_ICONS } from './logo.js';
 import { audio } from '../audio/audio.js';
 
 // ---------------------------------------------------------------- visual data
@@ -25,24 +25,43 @@ const MODE_ICONS = {
   gungame: svg('<path d="M1 10h3v3H1zM5.5 6h3v7h-3zM10 1h3v12h-3z" fill="currentColor"/>'),
 };
 
-const ABILITY_ICONS = {
-  flash: svg('<path d="M7 0l1.5 5.5L14 7 8.5 8.5 7 14 5.5 8.5 0 7l5.5-1.5z" fill="currentColor"/>'),
-  smoke: svg('<circle cx="4" cy="9" r="3" fill="currentColor"/><circle cx="7.2" cy="5.6" r="3.6" fill="currentColor"/><circle cx="10.4" cy="9" r="3" fill="currentColor"/>'),
-  molly: svg('<path d="M7 0c1 3 4 4.2 4 8a4 4 0 1 1-8 0c0-2 .9-3.1 1.9-4.2.1 1 .5 1.9 1.2 2.2C6 4 5.6 2 7 0z" fill="currentColor"/>'),
-  slow: svg('<path d="M7 0v14M0 7h14M2.2 2.2l9.6 9.6M11.8 2.2 2.2 11.8" stroke="currentColor" stroke-width="1.4" fill="none"/>'),
-  wall: svg('<path d="M1 2.5h12v3H1zM1 8.5h5.2v3H1zM7.8 8.5H13v3H7.8z" fill="currentColor"/>'),
-  dash: svg('<path d="M1.5 2l5 5-5 5M7.5 2l5 5-5 5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'),
-  heal: svg('<path d="M5 1h4v4h4v4H9v4H5V9H1V5h4z" fill="currentColor"/>'),
-  recon: svg('<ellipse cx="7" cy="7" rx="6.2" ry="4" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="7" cy="7" r="2" fill="currentColor"/>'),
-  turret: svg('<path d="M5.5 1h3v4.4H13v3H9.8V13H4.2V8.4H1v-3h4.5z" fill="currentColor"/>'),
-  trap: svg('<path d="M1 7.5 3.6 3l2 4 1.4-4 1.4 4 2-4L13 7.5V12H1z" fill="currentColor"/>'),
-};
-
 const ABILITY_TYPE_NAMES = {
   flash: 'Blendung', smoke: 'Rauch', molly: 'Flächenschaden', slow: 'Verlangsamung',
   wall: 'Barriere', dash: 'Bewegung', heal: 'Heilung', recon: 'Aufklärung',
   turret: 'Geschütz', trap: 'Falle',
 };
+
+// ---------------------------------------------------------------- persistence
+// Menu.state survives reloads via localStorage. Every value is re-validated on
+// load, so corrupt / stale / missing data can never break the menu.
+const STORAGE_KEY = 'spreeschuss.menu.v1';
+const DIFFICULTIES = ['easy', 'normal', 'hard'];
+const TOGGLE_KEYS = ['infiniteMoney', 'noCooldown', 'infiniteAmmo', 'oneShot', 'godMode'];
+
+function sanitizeState(raw, base) {
+  const out = { ...base, settings: { ...base.settings } };
+  if (!raw || typeof raw !== 'object') return out;
+  if (typeof raw.modeId === 'string' && MODES[raw.modeId]) out.modeId = raw.modeId;
+  if (typeof raw.mapId === 'string' && ALL_MAPS.some((m) => m.id === raw.mapId)) out.mapId = raw.mapId;
+  if (typeof raw.agentId === 'string' && AGENTS.some((a) => a.id === raw.agentId)) out.agentId = raw.agentId;
+  if (DIFFICULTIES.includes(raw.botDifficulty)) out.botDifficulty = raw.botDifficulty;
+  const n = Number(raw.botCount);
+  if (Number.isFinite(n)) out.botCount = Math.min(11, Math.max(1, Math.round(n)));
+  if (raw.settings && typeof raw.settings === 'object') {
+    for (const k of TOGGLE_KEYS) out.settings[k] = raw.settings[k] === true;
+  }
+  return out;
+}
+
+function loadStoredState(base) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return sanitizeState(null, base);
+    return sanitizeState(JSON.parse(raw), base);
+  } catch {
+    return sanitizeState(null, base);
+  }
+}
 
 // ---------------------------------------------------------------- map thumbs
 // Real top-down thumbnails drawn from the map data itself: floor, boxes,
@@ -148,7 +167,7 @@ export class Menu {
     this.root = document.createElement('div');
     this.root.className = 'menu';
     document.getElementById('app').appendChild(this.root);
-    this.state = {
+    const defaults = {
       modeId: 'competitive',
       mapId: PLANT_MAPS[0].id,
       agentId: AGENTS[0].id,
@@ -156,6 +175,7 @@ export class Menu {
       botCount: 9,
       settings: { infiniteMoney: false, noCooldown: false, infiniteAmmo: false, oneShot: false, godMode: false },
     };
+    this.state = loadStoredState(defaults);
     this.screen = 'main';
     this._bind();
     this.render();
@@ -163,6 +183,10 @@ export class Menu {
 
   _bind() {
     bus.on('ui:mainmenu', () => { this.screen = 'main'; this.show(); this.render(); });
+  }
+
+  _persist() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state)); } catch { /* Speicher nicht verfügbar — Menü funktioniert trotzdem */ }
   }
 
   show() { this.root.style.display = 'flex'; }
@@ -180,11 +204,18 @@ export class Menu {
     if (this.screen === 'setup') return this.renderSetup();
   }
 
+  // Shared animated backdrop (pure CSS animation, markup only here).
+  _bgHTML() {
+    return `
+      <div class="menu-bg"></div>
+      <div class="menu-grid-lines"></div>
+      <div class="menu-accents" aria-hidden="true"><i class="streak s1"></i><i class="streak s2"></i><i class="orb o1"></i><i class="orb o2"></i></div>`;
+  }
+
   renderMain() {
     const tagline = `Taktischer 5v5 Shooter · ${AGENTS.length} Agenten · ${ALL_MAPS.length} Karten · ${Object.keys(MODES).length} Modi`;
     this.root.innerHTML = `
-      <div class="menu-bg"></div>
-      <div class="menu-grid-lines"></div>
+      ${this._bgHTML()}
       <div class="main-menu">
         <div class="hero-brand">
           <div class="logo-wrap" id="logoWrap"></div>
@@ -205,8 +236,8 @@ export class Menu {
       </div>`;
     this.root.querySelector('#logoWrap').appendChild(makeLogoCanvas(150));
     this.root.querySelector('#btnPlay').onclick = () => { audio.init(); audio.buy(); this.screen = 'setup'; this.render(); };
-    this.root.querySelector('#btnQuick').onclick = () => { audio.init(); this.state.modeId = 'unrated'; this.state.mapId = PLANT_MAPS[0].id; this.startGame(); };
-    this.root.querySelector('#btnFFA').onclick = () => { audio.init(); this.state.modeId = 'deathmatch'; this.state.mapId = FFA_MAPS[0].id; this.startGame(); };
+    this.root.querySelector('#btnQuick').onclick = () => { audio.init(); this.state.modeId = 'unrated'; this.state.mapId = PLANT_MAPS[0].id; this._persist(); this.startGame(); };
+    this.root.querySelector('#btnFFA').onclick = () => { audio.init(); this.state.modeId = 'deathmatch'; this.state.mapId = FFA_MAPS[0].id; this._persist(); this.startGame(); };
     this.root.querySelector('#btnHelp').onclick = () => this.toggleHelp();
   }
 
@@ -226,14 +257,36 @@ export class Menu {
       <p>Ziel im Spike-Modus: Als Angreifer den Spike auf Spot A/B/C pflanzen und beschützen, als Verteidiger entschärfen oder alle Gegner ausschalten.</p>`;
   }
 
+  // German summary chips for the selected mode, derived from MODES data.
+  _modeDetailHTML(m) {
+    const chips = [];
+    if (m.kind === 'plant') {
+      chips.push(`${m.roundsToWin} Runden zum Sieg`);
+      if (m.spike) chips.push('Spike pflanzen & entschärfen');
+      chips.push(m.buy ? `Kaufphase · Start ¤${m.startCredits}` : 'Zufallswaffen');
+      if (m.halftime) chips.push(`Seitenwechsel nach Runde ${m.halftime}`);
+      chips.push('5 gegen 5');
+    } else if (m.kind === 'tdm') {
+      chips.push(`Ziel ${m.killTarget} Team-Kills`, '5 gegen 5', 'Sofortiger Respawn', 'Freie Fähigkeiten');
+    } else if (m.kind === 'ffa') {
+      chips.push(`Ziel ${m.killTarget} Kills`, 'Jeder gegen jeden', 'Sofortiger Respawn', 'Freie Fähigkeiten');
+    } else if (m.kind === 'gungame') {
+      chips.push('Jeder Kill = nächste Waffe', 'Messer-Kill gewinnt', 'Jeder gegen jeden', 'Sofortiger Respawn');
+    }
+    return `
+      <div class="mode-detail">
+        <div class="md-head">${MODE_ICONS[m.id] || MODE_ICONS.competitive}<b>${m.name}</b></div>
+        <div class="md-chips">${chips.map((c) => `<span class="md-chip">${c}</span>`).join('')}</div>
+      </div>`;
+  }
+
   renderSetup() {
     const maps = this.mapsForMode(this.state.modeId);
     if (!maps.find((m) => m.id === this.state.mapId)) this.state.mapId = maps[0].id;
     const kind = MODES[this.state.modeId].kind;
     const showBotCount = kind === 'ffa' || kind === 'gungame';
     this.root.innerHTML = `
-      <div class="menu-bg"></div>
-      <div class="menu-grid-lines"></div>
+      ${this._bgHTML()}
       <div class="setup">
         <div class="setup-head">
           <button class="btn ghost small" id="back">← Zurück</button>
@@ -244,6 +297,7 @@ export class Menu {
           <div class="setup-col">
             <h3><span class="col-num">01</span> Modus</h3>
             <div class="mode-list" id="modeList"></div>
+            <div id="modeDetail">${this._modeDetailHTML(MODES[this.state.modeId])}</div>
             <h3><span class="col-num">02</span> Bots</h3>
             <div class="row">
               <label>Schwierigkeit</label>
@@ -278,7 +332,7 @@ export class Menu {
       div.innerHTML = `
         <div class="mode-icon">${MODE_ICONS[m.id] || MODE_ICONS.competitive}</div>
         <div class="mode-text"><b>${m.name}</b><span>${m.desc}</span></div>`;
-      div.onclick = () => { this.state.modeId = m.id; this.renderSetup(); };
+      div.onclick = () => { this.state.modeId = m.id; this._persist(); this.renderSetup(); };
       modeList.appendChild(div);
     }
     // toggles
@@ -291,10 +345,10 @@ export class Menu {
       const b = document.createElement('button');
       b.className = 'toggle' + (this.state.settings[k] ? ' on' : '');
       b.innerHTML = `<i class="toggle-dot"></i>${label}`;
-      b.onclick = () => { this.state.settings[k] = !this.state.settings[k]; b.classList.toggle('on'); };
+      b.onclick = () => { this.state.settings[k] = !this.state.settings[k]; b.classList.toggle('on'); this._persist(); };
       toggles.appendChild(b);
     }
-    // maps — cards with real top-down thumbnails from map data
+    // maps — cards with real top-down thumbnails + palette swatch strip
     const mapGrid = this.root.querySelector('#mapGrid');
     for (const m of maps) {
       const div = document.createElement('div');
@@ -307,23 +361,34 @@ export class Menu {
       div.appendChild(thumbWrap);
       const meta = document.createElement('div');
       meta.className = 'map-meta';
-      meta.innerHTML = `<span>${m.name}</span><small>${tag} · ${m.size[0]}×${m.size[1]} m · ${m.palette.name}</small>`;
+      const pal = m.palette;
+      const swatches = [pal.floor, pal.wall, pal.accent, pal.skyBottom]
+        .map((c) => `<i class="pal-swatch" style="background:${c}"></i>`).join('');
+      meta.innerHTML = `
+        <span>${m.name}</span>
+        <small>${tag} · ${m.size[0]}×${m.size[1]} m</small>
+        <div class="pal-strip">${swatches}<em>${pal.name}</em></div>`;
       div.appendChild(meta);
-      div.onclick = () => { this.state.mapId = m.id; this.renderSetup(); };
+      div.onclick = () => { this.state.mapId = m.id; this._persist(); this.renderSetup(); };
       mapGrid.appendChild(div);
     }
-    // agents
+    // agents — cards with procedural portraits (canvas, cached per agent)
     const agentGrid = this.root.querySelector('#agentGrid');
     for (const a of AGENTS) {
       const div = document.createElement('div');
       div.className = 'agent-card' + (a.id === this.state.agentId ? ' active' : '');
       div.style.setProperty('--agent-color', a.color);
       const roleColor = ROLE_COLORS[a.role] || '#9fb3c4';
-      div.innerHTML = `
-        <div class="agent-avatar" style="background:${a.color}">${a.name[0]}</div>
+      const wrap = document.createElement('div');
+      wrap.className = 'agent-portrait';
+      wrap.appendChild(makeAgentPortrait(a, 72));
+      div.appendChild(wrap);
+      const label = document.createElement('div');
+      label.innerHTML = `
         <span>${a.name}</span>
         <small class="role-badge" style="color:${roleColor};border-color:${roleColor}">${a.role}</small>`;
-      div.onclick = () => { this.state.agentId = a.id; this.renderSetup(); };
+      div.appendChild(label);
+      div.onclick = () => { this.state.agentId = a.id; this._persist(); this.renderSetup(); };
       agentGrid.appendChild(div);
     }
     this.renderAgentDetail();
@@ -332,9 +397,9 @@ export class Menu {
     this.root.querySelector('#back').onclick = () => { this.screen = 'main'; this.render(); };
     this.root.querySelector('#start').onclick = () => this.startGame();
     this.root.querySelector('#diff').value = this.state.botDifficulty;
-    this.root.querySelector('#diff').onchange = (e) => { this.state.botDifficulty = e.target.value; };
+    this.root.querySelector('#diff').onchange = (e) => { this.state.botDifficulty = e.target.value; this._persist(); };
     const bc = this.root.querySelector('#botCount');
-    bc.oninput = (e) => { this.state.botCount = +e.target.value; this.root.querySelector('#botCountVal').textContent = e.target.value; };
+    bc.oninput = (e) => { this.state.botCount = +e.target.value; this.root.querySelector('#botCountVal').textContent = e.target.value; this._persist(); };
   }
 
   renderAgentDetail() {
@@ -357,14 +422,19 @@ export class Menu {
     };
     d.innerHTML = `
       <div class="ad-head">
-        <h4 style="color:${a.color}">${a.name}</h4>
-        <small class="role-badge" style="color:${roleColor};border-color:${roleColor}">${a.role}</small>
+        <div class="ad-portrait" id="adPortrait"></div>
+        <div class="ad-title">
+          <h4 style="color:${a.color}">${a.name}</h4>
+          <small class="role-badge" style="color:${roleColor};border-color:${roleColor}">${a.role}</small>
+        </div>
       </div>
       <p>${a.desc}</p>
       ${ab('C')}${ab('Q')}${ab('E')}${ab('X')}`;
+    d.querySelector('#adPortrait').appendChild(makeAgentPortrait(a, 56));
   }
 
   startGame() {
+    this._persist();
     this.hide();
     this.game.loadMatch({
       modeId: this.state.modeId,

@@ -112,7 +112,7 @@ export class Game {
     // meshes for non-players
     for (const e of this.entities) {
       if (e.isPlayer) continue;
-      e.mesh = buildAvatar(e.color);
+      e.mesh = buildAvatar(e.color, e.agent);
       this.r.scene.add(e.mesh);
     }
     // starting credits
