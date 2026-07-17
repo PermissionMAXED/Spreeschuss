@@ -12,7 +12,7 @@
   --berry: #a95f77;
   --lavender: #7767a7;
   --ink: #493936;
-  --muted: #816c66;
+  --muted: #705b55;
   --shadow: 0 18px 48px rgb(73 42 37 / 20%);
   --safe-top: max(10px, env(safe-area-inset-top));
   --safe-bottom: max(9px, env(safe-area-inset-bottom));
@@ -46,6 +46,10 @@ button {
 
 button:disabled {
   cursor: default;
+}
+
+[inert] {
+  pointer-events: none;
 }
 
 button:focus-visible {
@@ -479,7 +483,7 @@ button:focus-visible {
   justify-content: center;
   gap: 3px;
   border-radius: 13px;
-  color: #957970;
+  color: #735c55;
   background: transparent;
 }
 
@@ -497,7 +501,7 @@ button:focus-visible {
 }
 
 .tab-bar button.active {
-  color: #b96350;
+  color: #874e3c;
   background: #f3d3b88c;
 }
 
@@ -747,11 +751,42 @@ button:focus-visible {
 }
 
 [data-scene="city"] .quick-actions,
-[data-scene="minigame"] .quick-actions,
 [data-scene="city"] .tab-bar,
-[data-scene="minigame"] .tab-bar {
+[data-scene="minigame"] .quick-actions,
+[data-scene="minigame"] .tab-bar,
+[data-scene="minigame"] .hud,
+[data-scene="minigame"] .interaction-hint {
   visibility: hidden;
   pointer-events: none;
+}
+
+[data-scene="minigame"] .scene-chrome {
+  top: var(--safe-top);
+  right: 10px;
+  bottom: auto;
+  left: auto;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-scene="minigame"] .scene-chrome > span {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+[data-scene="minigame"] .scene-chrome button {
+  min-width: 72px;
+  min-height: 44px;
+  border: 1px solid #fff8;
+  background: #4c403dee;
+  color: white;
 }
 
 .sheet-backdrop,
@@ -1473,6 +1508,7 @@ button:focus-visible {
 }
 
 .wardrobe-options button {
+  position: relative;
   display: grid;
   min-height: 54px;
   place-items: center;
@@ -1480,6 +1516,15 @@ button:focus-visible {
   border: 1px solid #ebe2dd;
   border-radius: 11px;
   background: #faf7f3;
+}
+
+.selection-mark {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  color: #5f4778;
+  font-size: 10px;
+  font-weight: 900;
 }
 
 .wardrobe-options button.selected {
@@ -1530,7 +1575,7 @@ button:focus-visible {
 .segmented-control button {
   min-height: 44px;
   border-radius: 11px;
-  color: #8c756d;
+  color: #6e5953;
   background: transparent;
   font-size: 10px;
   font-weight: 850;
@@ -1574,6 +1619,15 @@ button:focus-visible {
   background: linear-gradient(145deg, #a3b8a4, #748e7a);
 }
 
+.food-art {
+  background: linear-gradient(145deg, #e4a761, #b9694f);
+}
+
+.inventory-card.is-selected {
+  border-color: #745b96;
+  box-shadow: inset 0 0 0 2px #745b9633;
+}
+
 .inventory-card > div {
   display: grid;
   min-width: 0;
@@ -1588,13 +1642,13 @@ button:focus-visible {
 
 .inventory-card p {
   margin: 3px 0;
-  color: #907970;
+  color: #6e5953;
   font-size: 8px;
   line-height: 1.3;
 }
 
 .inventory-card small {
-  color: #af725d;
+  color: #874e3c;
   font-size: 8px;
   font-weight: 800;
 }
@@ -1610,6 +1664,57 @@ button:focus-visible {
 .mini-action:disabled {
   color: #91847e;
   background: #e6ded8;
+}
+
+.decor-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #d8c9df;
+  border-radius: 17px;
+  background: #f8f2fb;
+}
+
+.decor-controls > b {
+  grid-column: 1 / -1;
+  color: #604e71;
+  font-size: 11px;
+}
+
+.decor-move-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(44px, 1fr));
+  gap: 6px;
+}
+
+.decor-move-grid button {
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid #d8cadf;
+  border-radius: 12px;
+  background: white;
+  color: #5f4b73;
+  font-size: 18px;
+}
+
+.danger-button,
+.parental-action {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 14px;
+  color: #842f36;
+  background: #f8dadd;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.parental-action {
+  width: 100%;
+  margin-top: 12px;
+  border: 1px solid #e7c7c9;
+  background: #fff5f3;
 }
 
 .settings-content {
@@ -1674,7 +1779,7 @@ button:focus-visible {
 .setting-row small {
   margin-top: 2px;
   overflow: hidden;
-  color: #99827a;
+  color: #6e5953;
   font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1739,7 +1844,7 @@ button:focus-visible {
 
 .info-card p {
   margin: 0;
-  color: #87736c;
+  color: #6e5953;
   font-size: 8px;
   line-height: 1.45;
 }
@@ -2130,8 +2235,20 @@ button:focus-visible {
 }
 
 .coach-card .primary-button {
-  min-height: 43px;
+  min-height: 44px;
   margin-top: 7px;
+  pointer-events: auto;
+}
+
+.coach-action {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 7px;
+  border-radius: 12px;
+  color: white;
+  background: #7b6091;
+  font-size: 10px;
+  font-weight: 850;
   pointer-events: auto;
 }
 
@@ -2152,6 +2269,10 @@ button:focus-visible {
   animation-duration: 1ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 1ms !important;
+}
+
+.reduce-motion .fx-layer {
+  display: none;
 }
 
 .fatal-error {

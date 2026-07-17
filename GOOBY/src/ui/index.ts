@@ -1,10 +1,12 @@
 import type { Economy } from "../core/contracts/economy";
 import type { MinigamePayout } from "../core/contracts/minigame";
+import type { CanonicalSaveState } from "../core/contracts/save";
 import type { HomeZoneId, MinigameId, ShopId } from "../core/contracts/scenes";
 import { NEED_KEYS, SLEEP_DURATION_MS, type Needs } from "../core/contracts/simulation";
 import {
   COSMETIC_CATALOG,
   COSMETIC_SLOTS,
+  FOOD_CATALOG,
   FURNITURE_CATALOG,
   type CosmeticSlot,
 } from "../data/catalog";
@@ -25,18 +27,28 @@ import {
 } from "./model";
 
 export interface UiActions {
+  feedback(action: "tap" | "confirm" | "back" | "open" | "close" | "denied"): void;
+  pet(): void;
   feed(): void;
+  consumeFood(itemId: string): void;
   bathe(): void;
   sleep(): void;
+  confirmSleep(): void;
   wake(): void;
   navigateHome(zone: HomeZoneId): void;
   openCity(): void;
   startMinigame(game: MinigameId): void;
   pauseMinigame(): void;
-  equipCosmetic(slot: CosmeticSlot, itemId: string | null): void;
-  placeFurniture(itemId: string): void;
+  resumeMinigame(): void;
+  exitMinigame(): void;
+  equipCosmetic(slot: CosmeticSlot, itemId: string | null): boolean;
+  placeFurniture(itemId: string): boolean;
+  moveDecor(direction: "left" | "right" | "forward" | "back"): boolean;
+  rotateDecor(): boolean;
+  removeDecor(): boolean;
   preferenceChanged(key: PreferenceKey, enabled: boolean): void;
   onboardingComplete(): void;
+  clearLocalData(): void;
 }
 
 export type SceneChrome =
@@ -107,16 +119,20 @@ export class GameUI {
   private lastEconomy: Economy = { coins: 0, xp: 0, level: 1 };
   private lastCarrots = 0;
   private wasSleeping: boolean | null = null;
+  private lastSleepSecond = -1;
+  private selectedDecor: string | null = null;
+  private panelOpener: HTMLElement | null = null;
+  private modalOpener: HTMLElement | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly root: HTMLElement,
     private readonly actions: UiActions,
   ) {
-    this.model = new UiModel(typeof localStorage === "undefined" ? undefined : localStorage);
+    this.model = new UiModel();
     root.innerHTML = `
       <main class="game-shell">
-        <canvas id="game-canvas" aria-label="${STRINGS.home}"></canvas>
+        <canvas id="game-canvas" aria-label="${STRINGS.home}" tabindex="0"></canvas>
         <div class="sun-glow" aria-hidden="true"></div>
 
         <header class="hud">
@@ -179,9 +195,10 @@ export class GameUI {
               <span><b>Bathe</b><small>Scrub with bubbles</small></span>
             </button>
           </div>
-          <nav class="tab-bar glass" aria-label="Main">
-            ${NAV_ITEMS.map(({ id, label, icon }) => `
-              <button data-panel="${id}" aria-label="${label}">
+          <nav class="tab-bar glass" aria-label="Main" role="tablist">
+            ${NAV_ITEMS.map(({ id, label, icon }, index) => `
+              <button id="main-tab-${id}" data-panel="${id}" aria-label="${label}" role="tab"
+                aria-controls="main-tabpanel" aria-selected="false" tabindex="${index === 0 ? "0" : "-1"}">
                 <span>${icon}</span><small>${label}</small>
               </button>`).join("")}
           </nav>
@@ -190,14 +207,14 @@ export class GameUI {
         <div class="sheet-backdrop" data-ui-action="close-panel" hidden></div>
         <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
           <div class="sheet-handle" aria-hidden="true"></div>
-          <div class="sheet-body" data-sheet-body></div>
+          <div class="sheet-body" data-sheet-body id="main-tabpanel" role="tabpanel"></div>
         </section>
 
         <div class="modal-backdrop" hidden>
-          <section class="modal-card glass" role="dialog" aria-modal="true" data-modal-body></section>
+          <section class="modal-card glass" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-modal-body></section>
         </div>
 
-        <section class="onboarding" data-testid="onboarding" hidden>
+        <section class="onboarding" data-testid="onboarding" role="dialog" aria-modal="true" aria-label="Meet Gooby" hidden>
           <div class="onboarding-intro">
             <div class="welcome-sky" aria-hidden="true"><i>✦</i><i>☁</i><i>·</i></div>
             <div class="onboarding-art" aria-hidden="true">
@@ -230,6 +247,25 @@ export class GameUI {
     this.modalBody = root.querySelector<HTMLElement>("[data-modal-body]") as HTMLElement;
     this.onboarding = root.querySelector<HTMLElement>(".onboarding") as HTMLElement;
     this.root.addEventListener("click", this.handleClick);
+    this.root.addEventListener("keydown", this.handleKeyDown);
+    this.applyPreferences();
+  }
+
+  syncCanonical(state: CanonicalSaveState): void {
+    this.model.replacePersisted({
+      version: 1,
+      equipped: state.ui.equipped,
+      highScores: state.ui.highScores,
+      sleepRationaleSeen: state.ui.sleepRationaleSeen,
+      preferences: {
+        audio: !state.settings.muted,
+        haptics: state.settings.haptics,
+        reducedMotion: state.settings.reducedMotion,
+        notifications: state.settings.notifications,
+      },
+    });
+    this.equippedCosmetics = { ...state.ui.equipped };
+    if (this.currentPanel !== "wardrobe") this.wardrobeDraft = { ...state.ui.equipped };
     this.applyPreferences();
   }
 
@@ -240,6 +276,8 @@ export class GameUI {
     equipped: Readonly<Partial<Record<CosmeticSlot, string>>> = {},
   ): void {
     const carrots = inventory.carrot ?? 0;
+    const previousNeeds = this.lastNeeds;
+    const previousEconomy = this.lastEconomy;
     const levelChanged = this.lastEconomy.level !== economy.level;
     const carrotsChanged = this.lastCarrots !== carrots;
     this.lastNeeds = { ...needs };
@@ -249,6 +287,7 @@ export class GameUI {
     this.equippedCosmetics = { ...equipped };
     if (this.currentPanel !== "wardrobe") this.wardrobeDraft = { ...equipped };
     for (const key of NEED_KEYS) {
+      if (previousNeeds && Math.round(previousNeeds[key]) === Math.round(needs[key])) continue;
       const need = this.root.querySelector<HTMLElement>(`[data-need="${key}"]`);
       const meter = need?.querySelector<HTMLElement>(".meter i");
       const value = need?.querySelector<HTMLElement>("[data-need-value]");
@@ -258,12 +297,14 @@ export class GameUI {
       need?.querySelector(".meter")?.setAttribute("aria-valuenow", rounded.toString());
       need?.classList.toggle("is-low", needs[key] < 30);
     }
-    this.setText("[data-coins]", economy.coins.toString());
-    this.setText("[data-xp]", economy.xp.toString());
-    this.setText("[data-level]", economy.level.toString());
-    const xpProgress = this.root.querySelector<HTMLElement>("[data-xp-progress]");
-    if (xpProgress) xpProgress.style.width = `${getLevelProgress(economy) * 100}%`;
-    this.inventoryCount.textContent = carrots.toString();
+    if (previousEconomy.coins !== economy.coins) this.setText("[data-coins]", economy.coins.toString());
+    if (previousEconomy.xp !== economy.xp) this.setText("[data-xp]", economy.xp.toString());
+    if (previousEconomy.level !== economy.level) this.setText("[data-level]", economy.level.toString());
+    if (previousEconomy.xp !== economy.xp || previousEconomy.level !== economy.level) {
+      const xpProgress = this.root.querySelector<HTMLElement>("[data-xp-progress]");
+      if (xpProgress) xpProgress.style.width = `${getLevelProgress(economy) * 100}%`;
+    }
+    if (carrotsChanged) this.inventoryCount.textContent = carrots.toString();
     if (!this.onboarding.hidden) {
       const previous = this.onboardingProgress.currentStep;
       this.onboardingProgress.observe(needs, carrots);
@@ -279,15 +320,23 @@ export class GameUI {
     this.onboarding.hidden = false;
     this.root.classList.add("is-onboarding");
     this.renderOnboarding();
+    this.updateInert();
+    requestAnimationFrame(() => this.onboarding.querySelector<HTMLElement>("button")?.focus());
   }
 
   setSleeping(sleeping: boolean, remainingMs = 0): void {
-    this.sleepOverlay.hidden = !sleeping;
-    this.sleepCountdown.textContent = formatCountdown(remainingMs);
-    this.sleepProgress.style.width = `${Math.max(0, Math.min(1, 1 - remainingMs / SLEEP_DURATION_MS)) * 100}%`;
-    this.root.classList.toggle("is-sleeping", sleeping);
-    if (sleeping) this.closeModal();
-    if (this.wasSleeping === true && !sleeping) this.showWakeCelebration();
+    const second = Math.max(0, Math.ceil(remainingMs / 1_000));
+    if (this.wasSleeping !== sleeping) {
+      this.sleepOverlay.hidden = !sleeping;
+      this.root.classList.toggle("is-sleeping", sleeping);
+      if (sleeping) this.closeModal();
+      if (this.wasSleeping === true && !sleeping) this.showWakeCelebration();
+    }
+    if (sleeping && this.lastSleepSecond !== second) {
+      this.sleepCountdown.textContent = formatCountdown(remainingMs);
+      this.sleepProgress.style.width = `${Math.max(0, Math.min(1, 1 - remainingMs / SLEEP_DURATION_MS)) * 100}%`;
+      this.lastSleepSecond = second;
+    }
     this.wasSleeping = sleeping;
   }
 
@@ -320,8 +369,11 @@ export class GameUI {
     `;
   }
 
-  showResults(gameId: MinigameId, payout: MinigamePayout): void {
-    const result = this.model.recordResult(gameId, payout.score);
+  showResults(
+    gameId: MinigameId,
+    payout: MinigamePayout,
+    result: { readonly isNewBest: boolean; readonly best: number },
+  ): void {
     const game = MINIGAME_COPY[gameId];
     this.openModal(`
       <div class="result-burst" aria-hidden="true">✦</div>
@@ -373,12 +425,14 @@ export class GameUI {
   dispose(): void {
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.root.removeEventListener("click", this.handleClick);
+    this.root.removeEventListener("keydown", this.handleKeyDown);
     this.root.replaceChildren();
   }
 
   private readonly handleClick = (event: MouseEvent): void => {
     const button = (event.target as Element).closest<HTMLButtonElement>("button");
     if (!button) return;
+    this.actions.feedback("tap");
     const panel = button.dataset.panel as PanelId | undefined;
     if (panel) {
       this.openPanel(panel);
@@ -390,6 +444,12 @@ export class GameUI {
     if (action === "close-panel") {
       this.closePanel();
     } else if (action === "feed") {
+      this.actions.feed();
+    } else if (action === "consume-food") {
+      this.actions.consumeFood(button.dataset.item ?? "");
+    } else if (action === "onboarding-pet") {
+      this.actions.pet();
+    } else if (action === "onboarding-feed") {
       this.actions.feed();
     } else if (action === "bathe") {
       this.actions.bathe();
@@ -404,6 +464,7 @@ export class GameUI {
       if (this.onboardingProgress.complete()) {
         this.onboarding.hidden = true;
         this.root.classList.remove("is-onboarding");
+        this.updateInert();
         this.actions.onboardingComplete();
       }
     } else if (action === "living-room") {
@@ -431,7 +492,7 @@ export class GameUI {
       this.actions.startMinigame(game);
     } else if (action === "results-done" || action === "close-modal") {
       this.closeModal();
-      if (action === "results-done") this.openPanel("play");
+      if (action === "results-done") this.actions.exitMinigame();
     } else if (action === "wardrobe-preview") {
       const slot = button.dataset.slot as CosmeticSlot;
       const item = button.dataset.item;
@@ -441,51 +502,106 @@ export class GameUI {
     } else if (action === "wardrobe-equip") {
       const slot = button.dataset.slot as CosmeticSlot;
       const itemId = this.wardrobeDraft[slot] ?? null;
-      this.model.equip(slot, itemId);
+      if (!this.actions.equipCosmetic(slot, itemId)) {
+        this.actions.feedback("denied");
+        this.wardrobeDraft = { ...this.equippedCosmetics };
+        this.renderPanel();
+        return;
+      }
       this.equippedCosmetics = { ...this.model.persisted.equipped };
-      this.actions.equipCosmetic(slot, itemId);
       this.renderPanel();
       this.toast(STRINGS.toasts.outfitSaved);
     } else if (action === "items-tab") {
       this.itemsTab = button.dataset.tab === "furniture" ? "furniture" : "food";
       this.renderPanel();
+      this.sheet.querySelector<HTMLElement>(`[data-tab="${this.itemsTab}"]`)?.focus();
     } else if (action === "place-item") {
       const item = button.dataset.item ?? "";
-      this.closePanel();
-      this.actions.placeFurniture(item);
+      if (this.actions.placeFurniture(item)) {
+        this.selectedDecor = item;
+        this.renderPanel();
+      } else {
+        this.actions.feedback("denied");
+      }
+    } else if (action === "move-decor") {
+      if (!this.actions.moveDecor(button.dataset.direction as "left" | "right" | "forward" | "back")) {
+        this.actions.feedback("denied");
+      }
+    } else if (action === "rotate-decor") {
+      if (!this.actions.rotateDecor()) this.actions.feedback("denied");
+    } else if (action === "remove-decor") {
+      if (this.actions.removeDecor()) {
+        this.selectedDecor = null;
+        this.renderPanel();
+      } else {
+        this.actions.feedback("denied");
+      }
     } else if (action === "toggle-setting") {
       const key = button.dataset.preference as PreferenceKey;
       const enabled = !this.model.persisted.preferences[key];
-      this.model.setPreference(key, enabled);
       this.actions.preferenceChanged(key, enabled);
       this.applyPreferences();
       this.renderPanel();
       this.toast(STRINGS.toasts.settingSaved);
     } else if (action === "sleep-confirm") {
-      this.model.markSleepRationaleSeen();
       this.closeModal();
-      this.actions.sleep();
+      this.actions.confirmSleep();
     } else if (action === "wake-celebration") {
       this.closeModal();
     } else if (action === "pause") {
       this.actions.pauseMinigame();
+      this.openModal(`
+        <h2 id="modal-title">Adventure paused</h2>
+        <p>Your run is safe until you continue. Leaving never grants a reward.</p>
+        <div class="modal-actions stacked">
+          <button class="primary-button compact" data-ui-action="resume-game">Continue</button>
+          <button class="text-button" data-ui-action="exit-game">Leave without reward</button>
+        </div>
+      `);
+    } else if (action === "resume-game") {
+      this.closeModal();
+      this.actions.resumeMinigame();
+    } else if (action === "exit-game") {
+      this.closeModal();
+      this.actions.exitMinigame();
+    } else if (action === "clear-data") {
+      this.openModal(`
+        <h2 id="modal-title">${STRINGS.settings.clearDataTitle}</h2>
+        <p>${STRINGS.settings.clearDataBody}</p>
+        <div class="modal-actions stacked">
+          <button class="danger-button" data-ui-action="clear-data-confirm">${STRINGS.settings.clearDataConfirm}</button>
+          <button class="text-button" data-ui-action="close-modal">${STRINGS.sleep.rationaleLater}</button>
+        </div>
+      `);
+    } else if (action === "clear-data-confirm") {
+      this.actions.clearLocalData();
     }
   };
 
   private openPanel(panel: PanelId): void {
+    if (!this.currentPanel) {
+      this.panelOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
     this.currentPanel = panel;
     this.sheet.hidden = false;
     const backdrop = this.root.querySelector<HTMLElement>(".sheet-backdrop");
     if (backdrop) backdrop.hidden = false;
     this.root.classList.add("has-sheet");
     for (const navButton of this.root.querySelectorAll<HTMLElement>("[data-panel]")) {
-      navButton.classList.toggle("active", navButton.dataset.panel === panel);
+      const selected = navButton.dataset.panel === panel;
+      navButton.classList.toggle("active", selected);
+      navButton.setAttribute("aria-selected", selected.toString());
+      navButton.tabIndex = selected ? 0 : -1;
     }
+    const tab = this.root.querySelector<HTMLElement>(`[data-panel="${panel}"]`);
+    if (tab) this.sheetBody.setAttribute("aria-labelledby", tab.id);
     this.renderPanel();
+    this.updateInert();
     requestAnimationFrame(() => this.sheet.querySelector<HTMLElement>("button")?.focus());
   }
 
   private closePanel(): void {
+    const opener = this.panelOpener;
     this.currentPanel = null;
     this.sheet.hidden = true;
     const backdrop = this.root.querySelector<HTMLElement>(".sheet-backdrop");
@@ -493,7 +609,96 @@ export class GameUI {
     this.root.classList.remove("has-sheet");
     for (const navButton of this.root.querySelectorAll<HTMLElement>("[data-panel]")) {
       navButton.classList.remove("active");
+      navButton.setAttribute("aria-selected", "false");
     }
+    this.panelOpener = null;
+    this.updateInert();
+    requestAnimationFrame(() => opener?.isConnected && opener.focus());
+  }
+
+  private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      if (!this.modal.hidden) {
+        event.preventDefault();
+        const resumesPausedGame = this.modalBody.querySelector(
+          '[data-ui-action="resume-game"]',
+        ) !== null;
+        this.closeModal();
+        if (resumesPausedGame) this.actions.resumeMinigame();
+      } else if (!this.sheet.hidden) {
+        event.preventDefault();
+        this.closePanel();
+      }
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    if (
+      (event.key === "Enter" || event.key === " ")
+      && target === this.canvas
+      && this.onboardingProgress.currentStep === "pet"
+    ) {
+      event.preventDefault();
+      this.actions.pet();
+      return;
+    }
+
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      const tabs = target.closest(".tab-bar")
+        ? [...this.root.querySelectorAll<HTMLButtonElement>(".tab-bar [role='tab']")]
+        : target.closest(".segmented-control")
+          ? [...this.root.querySelectorAll<HTMLButtonElement>(".segmented-control [role='tab']")]
+          : [];
+      const current = tabs.indexOf(target as HTMLButtonElement);
+      if (current >= 0 && tabs.length > 0) {
+        event.preventDefault();
+        const offset = event.key === "ArrowRight" ? 1 : -1;
+        const next = tabs[(current + offset + tabs.length) % tabs.length];
+        next?.focus();
+        next?.click();
+        return;
+      }
+    }
+
+    if (event.key !== "Tab") return;
+    const layer = !this.modal.hidden
+      ? this.modalBody
+      : !this.sheet.hidden
+        ? this.sheet
+        : !this.onboarding.hidden && this.onboardingProgress.currentStep === "intro"
+          ? this.onboarding
+          : null;
+    if (!layer) return;
+    const focusable = [...layer.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => element.getClientRects().length > 0);
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  private updateInert(): void {
+    const shell = this.root.querySelector<HTMLElement>(".game-shell");
+    if (!shell) return;
+    const active = !this.modal.hidden
+      ? this.modal
+      : !this.sheet.hidden
+        ? this.sheet
+        : !this.onboarding.hidden && this.onboardingProgress.currentStep === "intro"
+          ? this.onboarding
+          : null;
+    for (const child of shell.children) {
+      if (!(child instanceof HTMLElement)) continue;
+      child.inert = active !== null && child !== active;
+    }
+    if (!this.modal.hidden) this.sheet.inert = true;
   }
 
   private renderPanel(): void {
@@ -607,11 +812,11 @@ export class GameUI {
               <div class="slot-title"><span>${slot === "head" ? "☀" : slot === "ears" ? "❀" : slot === "neck" ? "⌁" : "♧"}</span><b>${slotLabels[slot]}</b></div>
               <div class="wardrobe-options">
                 <button class="${selected === undefined ? "selected" : ""}" data-ui-action="wardrobe-preview" data-slot="${slot}">
-                  <i>·</i><small>${STRINGS.wardrobe.none}</small>
+                  <i>·</i><small>${STRINGS.wardrobe.none}</small>${selected === undefined ? '<span class="selection-mark">✓</span>' : ""}
                 </button>
                 ${items.map((item) => `
                   <button class="${selected === item.id ? "selected" : ""}" data-ui-action="wardrobe-preview" data-slot="${slot}" data-item="${item.id}">
-                    <i>${slot === "head" ? "☀" : slot === "ears" ? "❀" : slot === "neck" ? "⌁" : "♧"}</i><small>${item.name}</small>
+                    <i>${slot === "head" ? "☀" : slot === "ears" ? "❀" : slot === "neck" ? "⌁" : "♧"}</i><small>${item.name}</small>${selected === item.id ? '<span class="selection-mark">✓</span>' : ""}
                   </button>
                 `).join("")}
               </div>
@@ -628,11 +833,13 @@ export class GameUI {
   private renderItems(): void {
     this.sheetBody.innerHTML = `
       ${panelHeader(STRINGS.items.title, STRINGS.items.subtitle)}
-      <div class="segmented-control" role="tablist">
-        <button class="${this.itemsTab === "food" ? "active" : ""}" data-ui-action="items-tab" data-tab="food" role="tab">${STRINGS.items.food}</button>
-        <button class="${this.itemsTab === "furniture" ? "active" : ""}" data-ui-action="items-tab" data-tab="furniture" role="tab">${STRINGS.items.furniture}</button>
+      <div class="segmented-control" role="tablist" aria-label="${STRINGS.items.title}">
+        <button id="items-tab-food" class="${this.itemsTab === "food" ? "active" : ""}" data-ui-action="items-tab" data-tab="food"
+          role="tab" aria-controls="items-tabpanel" aria-selected="${this.itemsTab === "food"}" tabindex="${this.itemsTab === "food" ? "0" : "-1"}">${STRINGS.items.food}</button>
+        <button id="items-tab-furniture" class="${this.itemsTab === "furniture" ? "active" : ""}" data-ui-action="items-tab" data-tab="furniture"
+          role="tab" aria-controls="items-tabpanel" aria-selected="${this.itemsTab === "furniture"}" tabindex="${this.itemsTab === "furniture" ? "0" : "-1"}">${STRINGS.items.furniture}</button>
       </div>
-      <div class="sheet-content">
+      <div class="sheet-content" id="items-tabpanel" role="tabpanel" aria-labelledby="items-tab-${this.itemsTab}">
         ${this.itemsTab === "food" ? `
           <div class="inventory-list">
             <article class="inventory-card">
@@ -640,16 +847,38 @@ export class GameUI {
               <div><b>${STRINGS.items.carrot}</b><p>${STRINGS.items.carrotBody}</p><small>${STRINGS.items.owned(this.lastCarrots)}</small></div>
               <button class="mini-action" data-ui-action="feed" ${this.lastCarrots <= 0 ? "disabled" : ""}>${STRINGS.actions.feed}</button>
             </article>
+            ${FOOD_CATALOG.map((item) => {
+              const count = this.lastInventory[item.id] ?? 0;
+              return `
+                <article class="inventory-card" data-catalog-food="${item.id}">
+                  <span class="inventory-art food-art">◇</span>
+                  <div><b>${item.name}</b><p>${item.description}</p><small>${STRINGS.items.owned(count)} · +${item.hunger} Full</small></div>
+                  <button class="mini-action" data-ui-action="consume-food" data-item="${item.id}" ${count <= 0 ? "disabled" : ""}>${STRINGS.actions.feed}</button>
+                </article>`;
+            }).join("")}
           </div>
         ` : `
           <div class="inventory-list">
             ${FURNITURE_CATALOG.filter((item) => (this.lastInventory[item.id] ?? 0) > 0).map((item) => `
-              <article class="inventory-card">
+              <article class="inventory-card ${this.selectedDecor === item.id ? "is-selected" : ""}" data-catalog-decor="${item.id}">
                 <span class="inventory-art furniture-art">▱</span>
                 <div><b>${item.name}</b><small>${STRINGS.items.owned(this.lastInventory[item.id] ?? 0)}</small></div>
                 <button class="mini-action" data-ui-action="place-item" data-item="${item.id}">${STRINGS.actions.place}</button>
               </article>
             `).join("") || '<p class="empty-state">Find cozy furniture at Cloud Boutique.</p>'}
+            ${this.selectedDecor ? `
+              <section class="decor-controls" aria-label="${STRINGS.items.decorControls}">
+                <b>${STRINGS.items.decorControls}</b>
+                <div class="decor-move-grid">
+                  <button data-ui-action="move-decor" data-direction="forward" aria-label="${STRINGS.items.moveForward}">↑</button>
+                  <button data-ui-action="move-decor" data-direction="left" aria-label="${STRINGS.items.moveLeft}">←</button>
+                  <button data-ui-action="move-decor" data-direction="back" aria-label="${STRINGS.items.moveBack}">↓</button>
+                  <button data-ui-action="move-decor" data-direction="right" aria-label="${STRINGS.items.moveRight}">→</button>
+                </div>
+                <button class="secondary-button" data-ui-action="rotate-decor">${STRINGS.items.rotate}</button>
+                <button class="danger-button" data-ui-action="remove-decor">${STRINGS.items.remove}</button>
+              </section>
+            ` : ""}
           </div>
         `}
       </div>
@@ -682,6 +911,7 @@ export class GameUI {
         <article class="info-card">
           <span>✦</span><div><h3>${STRINGS.settings.credits}</h3><p>${STRINGS.settings.creditsBody}</p></div>
         </article>
+        <button class="parental-action" data-ui-action="clear-data">${STRINGS.settings.clearData}</button>
       </div>
     `;
   }
@@ -698,13 +928,15 @@ export class GameUI {
       coach.innerHTML = `
         <span class="coach-step">1 / 3</span>
         <i class="coach-icon">♡</i>
-        <div><b>${STRINGS.onboarding.petTitle}</b><p>${STRINGS.onboarding.petBody}</p><small>${STRINGS.onboarding.petHint}</small></div>
+        <div><b>${STRINGS.onboarding.petTitle}</b><p>${STRINGS.onboarding.petBody}</p><small>${STRINGS.onboarding.petHint}</small>
+          <button class="coach-action" data-ui-action="onboarding-pet">${STRINGS.onboarding.petAction}</button></div>
       `;
     } else if (step === "feed") {
       coach.innerHTML = `
         <span class="coach-step">2 / 3</span>
         <i class="coach-icon">🥕</i>
-        <div><b>${STRINGS.onboarding.feedTitle}</b><p>${STRINGS.onboarding.feedBody}</p><small>${STRINGS.onboarding.feedHint}</small></div>
+        <div><b>${STRINGS.onboarding.feedTitle}</b><p>${STRINGS.onboarding.feedBody}</p><small>${STRINGS.onboarding.feedHint}</small>
+          <button class="coach-action" data-ui-action="onboarding-feed">${STRINGS.actions.feed}</button></div>
       `;
     } else if (step === "meters") {
       coach.innerHTML = `
@@ -715,6 +947,7 @@ export class GameUI {
         </div>
       `;
     }
+    this.updateInert();
   }
 
   private requestSleep(): void {
@@ -744,14 +977,23 @@ export class GameUI {
   }
 
   private openModal(content: string): void {
+    this.modalOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.modalBody.innerHTML = content;
+    const heading = this.modalBody.querySelector<HTMLElement>("h2");
+    if (heading && !heading.id) heading.id = "modal-title";
     this.modal.hidden = false;
+    this.updateInert();
     requestAnimationFrame(() => this.modalBody.querySelector<HTMLElement>("button")?.focus());
   }
 
   private closeModal(): void {
+    if (this.modal.hidden) return;
+    const opener = this.modalOpener;
     this.modal.hidden = true;
     this.modalBody.replaceChildren();
+    this.modalOpener = null;
+    this.updateInert();
+    requestAnimationFrame(() => opener?.isConnected && opener.focus());
   }
 
   private applyPreferences(): void {

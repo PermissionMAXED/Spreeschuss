@@ -89,7 +89,7 @@ describe("event-driven haptics", () => {
     expect(hapticForAudioEvent("audio:minigame", { action: "win" })).toBe("success");
   });
 
-  it("binds typed events and honors shared mute transitions", () => {
+  it("binds typed events while keeping haptic preference independent from audio mute", () => {
     const driver = new SpyHaptics();
     const scheduler = new ManualScheduler();
     const director = new HapticDirector(driver, scheduler);
@@ -99,7 +99,7 @@ describe("event-driven haptics", () => {
     events.emit("audio:ui", { action: "tap" });
     events.emit("audio:mute", { muted: true });
     events.emit("audio:minigame", { action: "win", score: 12 });
-    events.emit("audio:mute", { muted: false });
+    director.setMuted(true);
     events.emit("audio:economy", { action: "coin", amount: 4 });
     expect(driver.impacts).toEqual(["light", "light"]);
   });

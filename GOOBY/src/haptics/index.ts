@@ -133,7 +133,6 @@ export class HapticDirector {
       bus.on("audio:economy", (payload) => this.playMapped("audio:economy", payload)),
       bus.on("audio:car", (payload) => this.playMapped("audio:car", payload)),
       bus.on("audio:minigame", (payload) => this.playMapped("audio:minigame", payload)),
-      bus.on("audio:mute", ({ muted }) => this.setMuted(muted)),
     ];
     this.removeListeners.push(...removers);
     return () => this.remove(removers);

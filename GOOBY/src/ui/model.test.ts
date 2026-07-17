@@ -6,6 +6,8 @@ import {
   OnboardingProgress,
   UI_STORAGE_KEY,
   UiModel,
+  readLegacyUiState,
+  removeLegacyUiState,
   formatCountdown,
   getLevelProgress,
   parseUiState,
@@ -22,6 +24,10 @@ class MemoryStorage implements StorageLike {
 
   setItem(key: string, value: string): void {
     this.values.set(key, value);
+  }
+
+  removeItem(key: string): void {
+    this.values.delete(key);
   }
 }
 
@@ -80,20 +86,25 @@ describe("portrait UI model", () => {
     expect(onboarding.complete()).toBe(true);
   });
 
-  it("persists equipped slots, settings, and high scores defensively", () => {
+  it("reads legacy UI once and keeps subsequent UI state canonical-save only", () => {
     const storage = new MemoryStorage();
-    const model = new UiModel(storage);
+    storage.setItem(UI_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      equipped: { head: "sunny-bucket-hat" },
+      preferences: { audio: false, haptics: true, reducedMotion: true, notifications: false },
+      highScores: { "carrot-catch": 420 },
+      sleepRationaleSeen: true,
+    }));
+    const legacy = readLegacyUiState(storage);
+    expect(legacy).not.toBeNull();
+    const model = new UiModel(legacy ?? undefined);
 
-    model.equip("head", "sunny-bucket-hat");
-    model.setPreference("reducedMotion", true);
-    expect(model.recordResult("carrot-catch", 420)).toEqual({ isNewBest: true, best: 420 });
     expect(model.recordResult("carrot-catch", 120)).toEqual({ isNewBest: false, best: 420 });
-
-    const restored = new UiModel(storage);
-    expect(restored.persisted.equipped.head).toBe("sunny-bucket-hat");
-    expect(restored.persisted.preferences.reducedMotion).toBe(true);
-    expect(restored.persisted.highScores["carrot-catch"]).toBe(420);
+    expect(model.persisted.equipped.head).toBe("sunny-bucket-hat");
+    expect(model.persisted.preferences.reducedMotion).toBe(true);
     expect(storage.values.has(UI_STORAGE_KEY)).toBe(true);
+    removeLegacyUiState(storage);
+    expect(storage.values.has(UI_STORAGE_KEY)).toBe(false);
     expect(parseUiState("{not json")).toMatchObject({ version: 1, highScores: {} });
   });
 

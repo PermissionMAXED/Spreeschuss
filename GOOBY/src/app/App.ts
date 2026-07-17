@@ -3,11 +3,15 @@ import { FakeClock, RealClock, type Clock } from "../core/contracts/clock";
 import { grantReward } from "../core/contracts/economy";
 import { EventBus, type GameEvents } from "../core/contracts/events";
 import type { Gesture } from "../core/contracts/input";
-import type { MinigamePayout } from "../core/contracts/minigame";
+import type {
+  MinigameFeedback,
+  MinigameSettlementReceipt,
+} from "../core/contracts/minigame";
 import { SeededRng } from "../core/contracts/rng";
 import {
-  commitSave,
   loadSave,
+  SaveStateSchema,
+  type CanonicalSaveState,
   type SaveState,
 } from "../core/contracts/save";
 import type {
@@ -24,7 +28,6 @@ import {
 } from "../core/contracts/scenes";
 import {
   advanceSimulation,
-  applyNeedDelta,
   catchUpOffline,
   startSleep,
   wakeEarly,
@@ -33,7 +36,7 @@ import { createPlatform, configureNativeShell } from "../core/platform";
 import { PointerInput } from "../core/pointer-input";
 import { SceneManager, type SceneFactory } from "../core/scene-manager";
 import { CATALOG_BY_ID, type CosmeticSlot } from "../data/catalog";
-import { HOME_ZONE_BLUEPRINTS } from "../data/home";
+import { HOME_GRID_SIZE, HOME_ZONE_BLUEPRINTS } from "../data/home";
 import { FxDirector, type FxEvents } from "../fx/director";
 import { DomFx } from "../fx";
 import { HapticDirector } from "../haptics";
@@ -44,6 +47,7 @@ import { ResourceTracker, GameRenderer } from "../render/renderer";
 import {
   CityRouteMachine,
   createCityDriveScene,
+  type CityTravelSnapshot,
 } from "../scenes/city";
 import type { CityDriveScene } from "../scenes/city";
 import {
@@ -59,8 +63,23 @@ import {
   type CityShopArrival,
 } from "../scenes/shops";
 import { GameUI, type UiActions } from "../ui";
-import type { PreferenceKey } from "../ui/model";
+import {
+  readLegacyUiState,
+  removeLegacyUiState,
+  type PreferenceKey,
+} from "../ui/model";
 import { MinigameScene } from "./minigame-scene";
+import { ReplayableSaveCoordinator, type ReplayableSaveReducer } from "./save-coordinator";
+import {
+  consumeFoodReducer,
+  migrateLegacyUiReducer,
+  reconcileExternalState,
+  sanitizeCanonicalUi,
+  savedTravelSnapshot,
+  settlementReceiptForRun,
+  settleMinigameReducer,
+  withTravelSnapshotReducer,
+} from "./state-reducers";
 
 interface RuntimeDebugSnapshot {
   readonly sceneId: SceneId | null;
@@ -74,6 +93,12 @@ interface RuntimeDebugSnapshot {
   readonly activeMinigame: MinigameId | null;
   readonly minigameRoots: number;
   readonly disposed: boolean;
+  readonly audio: {
+    readonly unlocked: boolean;
+    readonly theme: string | null;
+    readonly muted: boolean;
+    readonly hapticsMuted: boolean;
+  };
   readonly renderer: {
     readonly geometries: number;
     readonly textures: number;
@@ -115,8 +140,8 @@ function cityVisitKey(shop: ShopId): string {
   return `${CITY_VISIT_PREFIX}${shop}`;
 }
 
-function visitedShops(state: SaveState): readonly ShopId[] {
-  return SHOP_IDS.filter((shop) => (state.inventory[cityVisitKey(shop)] ?? 0) > 0);
+function visitedShops(state: CanonicalSaveState): readonly ShopId[] {
+  return state.travel.visitedShops;
 }
 
 export class GoobyApp {
@@ -146,17 +171,21 @@ export class GoobyApp {
   private activeCity: CityDriveScene | null = null;
   private activeMinigame: MinigameScene | null = null;
   private pendingArrival: CityShopArrival | null = null;
-  private state: SaveState | null = null;
-  private revision = 0;
+  private state: CanonicalSaveState | null = null;
+  private saveCoordinator: ReplayableSaveCoordinator | null = null;
   private frame = 0;
   private previousFrameAt = performance.now();
   private previousInteractionAt = Number.NEGATIVE_INFINITY;
-  private saveQueue: Promise<void> = Promise.resolve();
+  private lastHudRefreshAt = Number.NEGATIVE_INFINITY;
+  private particleDensity = 1;
+  private readonly settlementCommits = new Map<string, Promise<void>>();
+  private readonly settlementNewBest = new Map<string, boolean>();
   private removeNativeListener: () => void = () => undefined;
   private currentMusicZone: MusicZone = "home:living-room";
   private cityTripActive = false;
   private previousCityPhase = "destination-board";
   private minigameFinishing = false;
+  private audioUnlockInstalled = false;
   private disposed = false;
 
   constructor(private readonly mount: HTMLElement) {
@@ -166,9 +195,15 @@ export class GoobyApp {
     this.clock = this.fakeClock ?? this.realClock;
     this.platform = createPlatform(this.clock);
     const actions: UiActions = {
+      feedback: (action) => {
+        void this.ensureAudio().then(() => this.audioEvents.emit("audio:ui", { action }));
+      },
+      pet: () => this.keyboardPet(),
       feed: () => this.feed(),
+      consumeFood: (itemId) => this.consumeFood(itemId),
       bathe: () => this.bathe(),
       sleep: () => this.sleep(),
+      confirmSleep: () => this.confirmSleep(),
       wake: () => this.wake(),
       navigateHome: (zone) => {
         void this.navigateHome(zone);
@@ -180,10 +215,20 @@ export class GoobyApp {
         void this.startMinigame(game);
       },
       pauseMinigame: () => this.activeMinigame?.pause(),
+      resumeMinigame: () => this.activeMinigame?.resume(),
+      exitMinigame: () => {
+        void this.exitMinigame();
+      },
       equipCosmetic: (slot, itemId) => this.equipCosmetic(slot, itemId),
       placeFurniture: (itemId) => this.placeFurniture(itemId),
+      moveDecor: (direction) => this.moveDecor(direction),
+      rotateDecor: () => this.rotateDecor(),
+      removeDecor: () => this.removeDecor(),
       preferenceChanged: (key, enabled) => this.preferenceChanged(key, enabled),
       onboardingComplete: () => this.completeOnboarding(),
+      clearLocalData: () => {
+        void this.clearLocalData();
+      },
     };
     this.ui = new GameUI(mount, actions);
     this.renderer = new GameRenderer(this.ui.canvas);
@@ -191,7 +236,8 @@ export class GoobyApp {
     this.fx = new DomFx(this.ui.fxLayer, { clock: this.clock, rng: this.rng });
     this.perf.connectRenderer(this.renderer);
     this.removeDirectors.push(this.perf.onQualityChange(({ particleDensity }) => {
-      this.fx.setDensity(particleDensity);
+      this.particleDensity = particleDensity;
+      this.applyFxPreference();
     }));
     this.fxDirector = new FxDirector(
       this.fx,
@@ -208,48 +254,95 @@ export class GoobyApp {
       this.hapticDirector.bindGameEvents(this.gameEvents),
     );
     this.sceneManager = new SceneManager(this.createSceneRegistry(), this.sceneContext());
+    this.installAudioUnlock();
   }
 
   async boot(): Promise<void> {
     const loaded = await loadSave(this.platform.save, this.clock.now());
-    const preferences = this.ui.preferences;
-    this.state = {
-      ...loaded.state,
-      simulation: catchUpOffline(loaded.state.simulation, this.clock.now()),
-      settings: {
-        muted: !preferences.audio,
-        reducedMotion: preferences.reducedMotion,
-      },
-    };
-    this.revision = loaded.revision;
+    this.state = loaded.state;
+    this.saveCoordinator = new ReplayableSaveCoordinator(
+      this.platform.save,
+      () => this.clock.now(),
+      loaded.state,
+      loaded.revision,
+      (state, reason) => this.installState(state, reason === "optimistic"),
+    );
+    this.ui.syncCanonical(loaded.state);
+    const setupCommits: Promise<void>[] = [];
+    const caughtUp = catchUpOffline(loaded.state.simulation, this.clock.now());
+    if (caughtUp !== loaded.state.simulation) {
+      setupCommits.push(this.applyReducer((state) => SaveStateSchema.parse({
+        ...state,
+        simulation: catchUpOffline(state.simulation, this.clock.now()),
+      })));
+    }
+    if (loaded.recovered) setupCommits.push(this.applyReducer((state) => state));
+
+    const storage = typeof localStorage === "undefined" ? undefined : localStorage;
+    const legacyUi = readLegacyUiState(storage);
+    let legacyMigration: Promise<void> | null = null;
+    if (legacyUi) {
+      legacyMigration = this.applyReducer(migrateLegacyUiReducer(legacyUi));
+      setupCommits.push(legacyMigration);
+    }
+    const legacyVisits = SHOP_IDS.filter((shop) => (this.requireState().inventory[cityVisitKey(shop)] ?? 0) > 0);
+    if (legacyVisits.length > 0) {
+      setupCommits.push(this.applyReducer((state) => {
+        const inventory = { ...state.inventory };
+        for (const shop of SHOP_IDS) delete inventory[cityVisitKey(shop)];
+        return SaveStateSchema.parse({
+          ...state,
+          inventory,
+          travel: {
+            ...state.travel,
+            visitedShops: [...new Set([...state.travel.visitedShops, ...legacyVisits])],
+          },
+        });
+      }));
+    }
+    const sanitized = sanitizeCanonicalUi(this.requireState());
+    if (sanitized !== this.state) setupCommits.push(this.applyReducer(sanitizeCanonicalUi));
+    await Promise.all(setupCommits);
+    if (legacyMigration) removeLegacyUiState(storage);
+
     const visits = visitedShops(this.state);
-    this.cityController = new CityRouteMachine(visits);
+    this.cityController = new CityRouteMachine(visits, savedTravelSnapshot(this.state));
     this.visitHistory = new ShopVisitHistory();
     for (const shop of visits) this.visitHistory.leaveForTown(shop);
-    this.audioEvents.emit("audio:mute", { muted: !preferences.audio });
-    this.hapticDirector.setMuted(!preferences.haptics);
+    this.audioEvents.emit("audio:mute", { muted: this.state.settings.muted });
+    this.platform.audio.setMuted(this.state.settings.muted);
+    this.hapticDirector.setMuted(!this.state.settings.haptics);
+    this.platform.notifications.setForeground(true);
+    this.applyFxPreference();
     this.refreshUi();
     this.updateSleepUi();
     if (!this.state.profile.onboardingComplete) this.ui.showOnboarding();
     if (loaded.recovered) this.toast("Your cozy home was repaired with a fresh save.");
 
     this.renderer.resize();
-    await this.goToScene("home:living-room");
+    const restoredPhase = this.cityController.state.phase;
+    const restoreCity = restoredPhase !== "destination-board";
+    this.cityTripActive = restoreCity;
+    await this.goToScene(restoreCity ? "city:drive" : "home:living-room");
+    if (this.state.simulation.sleep) this.audio.sounds.setZone("lullaby");
     this.input.subscribe(this.handleGesture);
     window.addEventListener("resize", this.resize);
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     window.addEventListener("pagehide", this.onPageHide);
     this.removeNativeListener = await configureNativeShell({
       onBackground: () => {
+        this.platform.notifications.setForeground(false);
         void this.persist();
       },
-      onForeground: () => this.resumeSimulation(),
+      onForeground: () => {
+        this.platform.notifications.setForeground(true);
+        this.resumeSimulation();
+      },
     });
     this.installDebugSurface();
     this.previousFrameAt = performance.now();
     this.frame = requestAnimationFrame(this.loop);
     this.mount.dataset.ready = "true";
-    if (this.state.simulation !== loaded.state.simulation || loaded.recovered) void this.persist();
   }
 
   private createSceneRegistry(): ReadonlyMap<SceneId, SceneFactory> {
@@ -263,7 +356,7 @@ export class GoobyApp {
           writeSave: (state) => this.acceptState(state),
           onEvent: (event) => this.handleHomeEvent(event),
         });
-        scene.equipCatalogCosmetics(this.ui.equipped);
+        scene.equipCatalogCosmetics(this.requireState().ui.equipped);
         this.activeHome = scene;
         return scene;
       });
@@ -288,6 +381,7 @@ export class GoobyApp {
         onBoost: () => {
           this.audioEvents.emit("audio:car", { action: "pickup", intensity: 1 });
         },
+        onTravelSnapshotChanged: (snapshot) => this.saveTravelSnapshot(snapshot),
       });
       this.activeCity = scene;
       return scene;
@@ -305,7 +399,7 @@ export class GoobyApp {
           getState: () => this.requireState(),
           setState: (state) => this.acceptState(state),
           visitHistory: this.visitHistory,
-          equippedCosmetics: this.ui.equipped,
+          equippedCosmetics: this.requireState().ui.equipped,
           onTryOnChanged: (equipped) => {
             this.activeHome?.equipCatalogCosmetics(equipped);
           },
@@ -324,10 +418,36 @@ export class GoobyApp {
           this.ui.minigameMount,
           this.clock,
           this.rng,
-          (payout) => {
-            void this.finishMinigame(game, payout);
+          {
+            persistence: {
+              getBestScore: (id) => this.requireState().ui.highScores[id] ?? 0,
+              getSettlement: (runId) =>
+                settlementReceiptForRun(this.requireState(), runId),
+              settle: (receipt) => this.settleMinigame(receipt),
+            },
+            feedback: this.minigameFeedback(),
+            audio: {
+              emit: (action, value) => {
+                this.audioEvents.emit("audio:minigame", {
+                  action,
+                  ...(action === "combo" && value !== undefined ? { combo: value } : {}),
+                  ...(action === "score" && value !== undefined ? { score: value } : {}),
+                });
+              },
+            },
+            haptics: {
+              impact: (pattern) => {
+                if (this.requireState().settings.haptics) {
+                  void this.platform.haptics.impact(pattern).catch(() => undefined);
+                }
+              },
+            },
+            reducedMotion: this.requireState().settings.reducedMotion,
+            onSettled: (receipt) => this.finishMinigame(game, receipt),
+            ...(this.fakeClock
+              ? { advanceClock: (durationMs: number) => this.fakeClock?.advance(durationMs) }
+              : {}),
           },
-          this.fakeClock ? (durationMs) => this.fakeClock?.advance(durationMs) : undefined,
         );
         this.activeMinigame = scene;
         return scene;
@@ -367,11 +487,16 @@ export class GoobyApp {
       ...this.state,
       simulation: advanceSimulation(this.state.simulation, this.clock.now()),
     };
+    this.saveCoordinator?.replaceLocalState(this.state);
     this.completeSleepIfNeeded(wasSleeping);
     this.activeHome?.gooby.updateNeeds(this.state.simulation.needs);
     this.sceneManager.update(deltaSeconds);
     this.renderer.render();
     this.updateSleepUi();
+    if (this.clock.now() - this.lastHudRefreshAt >= 250) {
+      this.lastHudRefreshAt = this.clock.now();
+      this.refreshUi();
+    }
   }
 
   private readonly handleGesture = (gesture: Gesture): void => {
@@ -412,28 +537,39 @@ export class GoobyApp {
     this.refreshUi();
   }
 
+  private keyboardPet(): void {
+    if (!this.activeHome || this.state?.simulation.sleep) return;
+    this.previousInteractionAt = this.clock.now();
+    this.activeHome.react("pet");
+    this.emitGooby("pet");
+    this.refreshUi();
+  }
+
   private feed(): void {
+    this.consumeInventoryFood("carrot", 22, 10, "Sunny carrot");
+  }
+
+  private consumeFood(itemId: string): void {
+    const item = CATALOG_BY_ID.get(itemId);
+    if (item?.kind !== "food") {
+      this.audioEvents.emit("audio:ui", { action: "denied" });
+      return;
+    }
+    this.consumeInventoryFood(item.id, item.hunger, item.xp, item.name);
+  }
+
+  private consumeInventoryFood(itemId: string, hunger: number, xp: number, label: string): void {
     if (!this.state) return;
     void this.ensureAudio();
     if (this.state.simulation.sleep) {
       this.toast("Shh… Gooby is dreaming.");
       return;
     }
-    const carrots = this.state.inventory.carrot ?? 0;
-    if (carrots <= 0) {
-      this.toast("No carrots left—visit the market soon!");
+    if ((this.state.inventory[itemId] ?? 0) <= 0) {
+      this.toast(`No ${label.toLocaleLowerCase()} left—visit the market soon!`);
       return;
     }
-    this.acceptState({
-      ...this.state,
-      simulation: applyNeedDelta(
-        advanceSimulation(this.state.simulation, this.clock.now()),
-        "hunger",
-        22,
-      ),
-      economy: grantReward(this.state.economy, { xp: 10 }),
-      inventory: { ...this.state.inventory, carrot: carrots - 1 },
-    });
+    void this.applyReducer(consumeFoodReducer(itemId, hunger, xp, this.clock.now()));
     this.activeHome?.react("feed");
     this.fxEvents.emit("fx:burst", {
       kind: "crumbs",
@@ -442,7 +578,7 @@ export class GoobyApp {
       count: 8,
     });
     this.emitGooby("feed");
-    this.toast("Crunch! Hunger +22 · XP +10");
+    this.toast(`Crunch! Full +${hunger} · XP +${xp}`);
   }
 
   private bathe(): void {
@@ -458,18 +594,30 @@ export class GoobyApp {
   }
 
   private sleep(): void {
+    this.beginSleep(false);
+  }
+
+  private confirmSleep(): void {
+    this.beginSleep(true);
+  }
+
+  private beginSleep(markRationaleSeen: boolean): void {
     if (!this.state) return;
     void this.ensureAudio();
     if (this.state.simulation.sleep) return;
     const simulation = startSleep(this.state.simulation, this.clock.now());
-    this.acceptState({
-      ...this.state,
-      simulation,
-    });
+    void this.applyReducer((state) => SaveStateSchema.parse({
+      ...state,
+      simulation: startSleep(state.simulation, this.clock.now()),
+      ui: markRationaleSeen
+        ? { ...state.ui, sleepRationaleSeen: true }
+        : state.ui,
+    }));
     this.activeHome?.setSleeping(true);
     this.emitGooby("sleep");
+    this.audio.sounds.setZone("lullaby");
     const sleep = simulation.sleep;
-    if (sleep && this.ui.preferences.notifications) {
+    if (sleep && this.requireState().settings.notifications) {
       void this.platform.notifications.requestPermission().then((allowed) => {
         if (!allowed) return undefined;
         return this.platform.notifications.schedule({
@@ -477,6 +625,7 @@ export class GoobyApp {
           title: "Gooby is rested!",
           body: "Your fluffy friend is awake and ready to play.",
           at: sleep.completesAt,
+          policy: this.requireState().notificationPolicy,
         });
       }).catch(() => undefined);
     }
@@ -485,12 +634,13 @@ export class GoobyApp {
 
   private wake(): void {
     if (!this.state?.simulation.sleep) return;
-    this.acceptState({
-      ...this.state,
-      simulation: wakeEarly(this.state.simulation, this.clock.now()),
-    });
+    void this.applyReducer((state) => SaveStateSchema.parse({
+      ...state,
+      simulation: wakeEarly(state.simulation, this.clock.now()),
+    }));
     this.activeHome?.setSleeping(false);
     this.emitGooby("wake");
+    this.audio.sounds.setZone(this.currentMusicZone);
     this.cancelSleepNotification();
     this.toast("Good morning, sleepy bun.");
     this.updateSleepUi();
@@ -534,25 +684,59 @@ export class GoobyApp {
     this.ui.closeTransientUi();
     await this.goToScene(`minigame:${game}`);
     this.ui.setSceneChrome({ kind: "minigame", title: this.activeMinigame?.module.title ?? game });
-    this.audioEvents.emit("audio:minigame", { action: "go" });
   }
 
-  private async finishMinigame(game: MinigameId, payout: MinigamePayout): Promise<void> {
+  private settleMinigame(receipt: MinigameSettlementReceipt): MinigameSettlementReceipt {
+    const existing = settlementReceiptForRun(this.requireState(), receipt.runId);
+    if (existing) return existing;
+    const previousBest = this.requireState().ui.highScores[receipt.minigameId] ?? 0;
+    this.settlementNewBest.set(receipt.runId, receipt.payout.score > previousBest);
+    const committed = this.applyReducer(settleMinigameReducer(receipt));
+    this.settlementCommits.set(receipt.runId, committed);
+    return settlementReceiptForRun(this.requireState(), receipt.runId) ?? receipt;
+  }
+
+  private minigameFeedback(): MinigameFeedback {
+    return {
+      emit: (event) => {
+        if (event.kind === "run-began") {
+          this.audioEvents.emit("audio:minigame", { action: "go" });
+        } else if (event.kind === "run-completed") {
+          this.audioEvents.emit("audio:minigame", {
+            action: "win",
+            score: event.receipt.payout.score,
+          });
+        } else {
+          this.audioEvents.emit("audio:ui", { action: "back" });
+        }
+      },
+    };
+  }
+
+  private async finishMinigame(
+    game: MinigameId,
+    receipt: MinigameSettlementReceipt,
+  ): Promise<void> {
     if (this.minigameFinishing || !this.state) return;
     this.minigameFinishing = true;
-    this.acceptState({
-      ...this.state,
-      economy: grantReward(this.state.economy, {
-        coins: payout.coins,
-        xp: payout.xp,
-      }),
-    });
-    this.audioEvents.emit("audio:minigame", {
-      action: "win",
-      score: payout.score,
-    });
+    try {
+      await (this.settlementCommits.get(receipt.runId) ?? this.persist());
+      const persisted = settlementReceiptForRun(this.requireState(), receipt.runId) ?? receipt;
+      this.ui.showResults(game, persisted.payout, {
+        isNewBest: (this.settlementNewBest.get(receipt.runId) ?? false)
+          && persisted.payout.score >= persisted.bestScore,
+        best: persisted.bestScore,
+      });
+    } catch {
+      this.minigameFinishing = false;
+      this.toast("Reward save failed. Please try collecting again.");
+    }
+  }
+
+  private async exitMinigame(): Promise<void> {
+    if (!this.sceneManager.activeId?.startsWith("minigame:")) return;
+    this.minigameFinishing = false;
     await this.goToScene("home:living-room");
-    this.ui.showResults(game, payout);
   }
 
   private async enterShop(shop: ShopId, city: CityDriveScene): Promise<void> {
@@ -565,12 +749,22 @@ export class GoobyApp {
     await this.goToScene("city:drive");
     this.activeCity?.completeShopVisit();
     const state = this.requireState();
-    if ((state.inventory[cityVisitKey(shop)] ?? 0) === 0) {
-      this.acceptState({
-        ...state,
-        inventory: { ...state.inventory, [cityVisitKey(shop)]: 1 },
-      });
+    if (!state.travel.visitedShops.includes(shop)) {
+      void this.applyReducer((current) => SaveStateSchema.parse({
+        ...current,
+        travel: {
+          ...current.travel,
+          visitedShops: [...new Set([...current.travel.visitedShops, shop])],
+        },
+      }));
     }
+  }
+
+  private saveTravelSnapshot(snapshot: CityTravelSnapshot): void {
+    if (!this.state) return;
+    const reducer = withTravelSnapshotReducer(snapshot);
+    if (reducer(this.state) === this.state) return;
+    void this.applyReducer(reducer);
   }
 
   private handleCityState(phase: string, selected?: ShopId): void {
@@ -592,7 +786,7 @@ export class GoobyApp {
     });
   }
 
-  private equipCosmetic(slot: CosmeticSlot, itemId: string | null): void {
+  private equipCosmetic(slot: CosmeticSlot, itemId: string | null): boolean {
     if (itemId) {
       const item = CATALOG_BY_ID.get(itemId);
       if (
@@ -602,34 +796,100 @@ export class GoobyApp {
       ) {
         this.audioEvents.emit("audio:ui", { action: "denied" });
         this.toast("That look needs to be purchased at Fluff Salon first.");
-        return;
+        return false;
       }
     }
-    this.activeHome?.equipCatalogCosmetics(this.ui.equipped);
+    void this.applyReducer((state) => {
+      const equipped = { ...state.ui.equipped };
+      if (itemId) {
+        const item = CATALOG_BY_ID.get(itemId);
+        if (item?.kind !== "cosmetic" || item.slot !== slot || (state.inventory[itemId] ?? 0) <= 0) {
+          return state;
+        }
+        equipped[slot] = itemId;
+      } else {
+        delete equipped[slot];
+      }
+      return SaveStateSchema.parse({
+        ...state,
+        ui: { ...state.ui, equipped },
+      });
+    });
+    this.activeHome?.equipCatalogCosmetics(this.requireState().ui.equipped);
     this.audioEvents.emit("audio:ui", { action: "confirm" });
     this.refreshUi();
+    return true;
   }
 
-  private placeFurniture(itemId: string): void {
+  private placeFurniture(itemId: string): boolean {
     if (!this.activeHome || !this.sceneManager.activeId?.startsWith("home:")) {
       this.toast("Choose a home room before placing furniture.");
-      return;
+      return false;
     }
     if (this.activeHome.placeCatalogItem(itemId)) {
       this.audioEvents.emit("audio:ui", { action: "confirm" });
+      return true;
     }
+    return false;
+  }
+
+  private moveDecor(direction: "left" | "right" | "forward" | "back"): boolean {
+    const home = this.activeHome;
+    const selected = home?.getSelectedDecor();
+    const placement = selected?.instanceId
+      ? home?.getDecorPlacements().find(({ instanceId }) => instanceId === selected.instanceId)
+      : null;
+    if (!home || !placement) return false;
+    const x = placement.gridX * HOME_GRID_SIZE
+      + (direction === "left" ? -HOME_GRID_SIZE : direction === "right" ? HOME_GRID_SIZE : 0);
+    const z = placement.gridZ * HOME_GRID_SIZE
+      + (direction === "forward" ? -HOME_GRID_SIZE : direction === "back" ? HOME_GRID_SIZE : 0);
+    const moved = home.moveSelectedDecor({ x, z });
+    if (moved.valid) this.audioEvents.emit("audio:ui", { action: "confirm" });
+    return moved.valid;
+  }
+
+  private rotateDecor(): boolean {
+    const rotated = this.activeHome?.rotateSelectedDecor();
+    if (rotated?.valid) this.audioEvents.emit("audio:ui", { action: "confirm" });
+    return rotated?.valid ?? false;
+  }
+
+  private removeDecor(): boolean {
+    const removed = this.activeHome?.removeSelectedDecor() ?? false;
+    if (removed) this.audioEvents.emit("audio:ui", { action: "confirm" });
+    return removed;
   }
 
   private preferenceChanged(key: PreferenceKey, enabled: boolean): void {
     if (!this.state) return;
+    if (key === "audio" && !enabled) this.audioEvents.emit("audio:ui", { action: "confirm" });
+    void this.applyReducer((state) => SaveStateSchema.parse({
+      ...state,
+      settings: {
+        ...state.settings,
+        ...(key === "audio" ? { muted: !enabled } : {}),
+        ...(key === "haptics" ? { haptics: enabled } : {}),
+        ...(key === "reducedMotion" ? { reducedMotion: enabled } : {}),
+        ...(key === "notifications" ? { notifications: enabled } : {}),
+      },
+    }));
     if (key === "audio") {
       this.audioEvents.emit("audio:mute", { muted: !enabled });
-      this.hapticDirector.setMuted(!this.ui.preferences.haptics);
-      this.acceptState({ ...this.state, settings: { ...this.state.settings, muted: !enabled } });
+      this.platform.audio.setMuted(!enabled);
+      if (enabled) {
+        void this.ensureAudio();
+        this.audioEvents.emit("audio:ui", { action: "confirm" });
+      }
     } else if (key === "haptics") {
       this.hapticDirector.setMuted(!enabled);
+      if (enabled) this.audioEvents.emit("audio:ui", { action: "confirm" });
     } else if (key === "reducedMotion") {
-      this.acceptState({ ...this.state, settings: { ...this.state.settings, reducedMotion: enabled } });
+      this.applyFxPreference();
+      this.audioEvents.emit("audio:ui", { action: "confirm" });
+    } else if (key === "notifications") {
+      if (!enabled) this.cancelSleepNotification();
+      this.audioEvents.emit("audio:ui", { action: "confirm" });
     }
   }
 
@@ -650,21 +910,39 @@ export class GoobyApp {
   }
 
   private acceptState(state: SaveState): void {
+    if (!this.state) return;
+    void this.applyReducer(reconcileExternalState(this.state, state));
+  }
+
+  private applyReducer(reducer: ReplayableSaveReducer): Promise<void> {
+    const coordinator = this.saveCoordinator;
+    if (!coordinator) throw new Error("Cannot mutate before the canonical save coordinator is ready");
+    const committed = coordinator.apply(reducer);
+    void committed.catch((error: unknown) => {
+      console.error("Save failed", error);
+    });
+    return committed;
+  }
+
+  private installState(state: CanonicalSaveState, emitFeedback: boolean): void {
     const previous = this.state;
     this.state = state;
+    this.ui.syncCanonical(state);
     this.activeHome?.gooby.updateNeeds(state.simulation.needs);
+    if (previous && JSON.stringify(previous.ui.equipped) !== JSON.stringify(state.ui.equipped)) {
+      this.activeHome?.equipCatalogCosmetics(state.ui.equipped);
+    }
     this.refreshUi();
     this.gameEvents.emit("state:changed", {
       simulation: state.simulation,
       economy: state.economy,
     });
-    if (previous && state.economy.coins < previous.economy.coins) {
+    if (emitFeedback && previous && state.economy.coins < previous.economy.coins) {
       this.audioEvents.emit("audio:economy", {
         action: "purchase",
         amount: previous.economy.coins - state.economy.coins,
       });
     }
-    void this.persist();
   }
 
   private refreshUi(): void {
@@ -673,14 +951,13 @@ export class GoobyApp {
       this.state.simulation.needs,
       this.state.economy,
       this.state.inventory,
-      this.ui.equipped,
+      this.state.ui.equipped,
     );
   }
 
   private updateSleepUi(): void {
     const sleep = this.state?.simulation.sleep;
     this.ui.setSleeping(Boolean(sleep), sleep ? sleep.completesAt - this.clock.now() : 0);
-    this.refreshUi();
   }
 
   private async goToScene(id: SceneId): Promise<void> {
@@ -709,10 +986,15 @@ export class GoobyApp {
           ? id
           : id;
     this.currentMusicZone = zone;
+    this.audio.sounds.setZone(this.state?.simulation.sleep ? "lullaby" : zone);
   }
 
-  private ensureAudio(): Promise<void> {
-    return this.audio.start(this.currentMusicZone).catch(() => undefined);
+  private async ensureAudio(): Promise<void> {
+    await Promise.all([
+      this.audio.engine.unlock(),
+      this.platform.audio.unlock(),
+    ]).catch(() => undefined);
+    this.audio.sounds.setZone(this.state?.simulation.sleep ? "lullaby" : this.currentMusicZone);
   }
 
   private emitGooby(kind: GameEvents["gooby:reaction"]["kind"]): void {
@@ -724,27 +1006,25 @@ export class GoobyApp {
     this.gameEvents.emit("toast", { message });
   }
 
-  private requireState(): SaveState {
+  private requireState(): CanonicalSaveState {
     if (!this.state) throw new Error("Gooby save state is not loaded");
     return this.state;
   }
 
   private persist(): Promise<void> {
-    this.saveQueue = this.saveQueue.then(async () => {
-      if (!this.state) return;
-      this.revision = await commitSave(this.platform.save, this.revision, this.state);
-      this.gameEvents.emit("save:committed", { revision: this.revision });
-    }).catch((error: unknown) => {
-      console.error("Save failed", error);
+    if (!this.saveCoordinator) return Promise.resolve();
+    return this.applyReducer((state) => state).then(() => {
+      this.gameEvents.emit("save:committed", { revision: this.saveCoordinator?.revision ?? 0 });
     });
-    return this.saveQueue;
   }
 
   private readonly onVisibilityChange = (): void => {
     if (document.visibilityState !== "visible") {
+      this.platform.notifications.setForeground(false);
       void this.persist();
       return;
     }
+    this.platform.notifications.setForeground(true);
     this.resumeSimulation();
   };
 
@@ -773,6 +1053,12 @@ export class GoobyApp {
           activeMinigame: this.activeMinigame?.module.id ?? null,
           minigameRoots: this.mount.querySelectorAll("[data-minigame]").length,
           disposed: this.disposed,
+          audio: {
+            unlocked: this.audio.engine.unlocked,
+            theme: this.audio.music.currentTheme,
+            muted: this.audio.sounds.isMuted,
+            hapticsMuted: this.hapticDirector.isMuted,
+          },
           renderer: {
             geometries: this.renderer.renderer.info.memory.geometries,
             textures: this.renderer.renderer.info.memory.textures,
@@ -801,7 +1087,9 @@ export class GoobyApp {
         sleep: () => this.sleep(),
         wake: () => this.wake(),
         flushSave: () => this.persist(),
-        clearSave: async () => this.platform.save.clear(),
+        clearSave: async () => {
+          await this.saveCoordinator?.clear();
+        },
         dispose: async () => this.dispose(),
       };
     }
@@ -824,6 +1112,7 @@ export class GoobyApp {
     for (const remove of this.removeDirectors) remove();
     this.removeDirectors.length = 0;
     this.input.dispose();
+    this.removeAudioUnlock();
     this.fxDirector.dispose();
     this.fx.dispose();
     this.hapticDirector.dispose();
@@ -842,10 +1131,12 @@ export class GoobyApp {
   private resumeSimulation(): void {
     if (!this.state || this.disposed) return;
     const wasSleeping = this.state.simulation.sleep !== null;
-    this.state = {
+    const next = SaveStateSchema.parse({
       ...this.state,
       simulation: catchUpOffline(this.state.simulation, this.clock.now()),
-    };
+    });
+    this.state = next;
+    this.saveCoordinator?.replaceLocalState(next);
     this.completeSleepIfNeeded(wasSleeping);
     this.activeHome?.gooby.updateNeeds(this.state.simulation.needs);
     this.updateSleepUi();
@@ -856,11 +1147,46 @@ export class GoobyApp {
     this.activeHome?.setSleeping(false);
     this.activeHome?.react("wake");
     this.emitGooby("wake");
+    this.audio.sounds.setZone(this.currentMusicZone);
     this.cancelSleepNotification();
     void this.persist();
   }
 
   private cancelSleepNotification(): void {
     void this.platform.notifications.cancel(SLEEP_NOTIFICATION_ID).catch(() => undefined);
+  }
+
+  private readonly unlockFromRoot = (): void => {
+    void this.ensureAudio();
+  };
+
+  private installAudioUnlock(): void {
+    if (this.audioUnlockInstalled) return;
+    this.audioUnlockInstalled = true;
+    this.mount.addEventListener("pointerdown", this.unlockFromRoot, true);
+    this.mount.addEventListener("keydown", this.unlockFromRoot, true);
+  }
+
+  private removeAudioUnlock(): void {
+    if (!this.audioUnlockInstalled) return;
+    this.audioUnlockInstalled = false;
+    this.mount.removeEventListener("pointerdown", this.unlockFromRoot, true);
+    this.mount.removeEventListener("keydown", this.unlockFromRoot, true);
+  }
+
+  private applyFxPreference(): void {
+    const reduced = this.state?.settings.reducedMotion ?? false;
+    this.fx.setDensity(reduced ? 0.25 : this.particleDensity);
+    if (reduced) this.fx.clear();
+  }
+
+  private async clearLocalData(): Promise<void> {
+    try {
+      await this.saveCoordinator?.clear();
+      if (typeof localStorage !== "undefined") removeLegacyUiState(localStorage);
+      window.location.reload();
+    } catch {
+      this.toast("Local data could not be cleared. Please try again.");
+    }
   }
 }

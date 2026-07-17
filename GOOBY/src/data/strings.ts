@@ -1,7 +1,7 @@
 import type { MinigameId, ShopId } from "../core/contracts/scenes";
 
 export const STRINGS = {
-  appName: "Gooby",
+  appName: "Gooby’s Cozy Burrow",
   home: "Living Room",
   close: "Close",
   back: "Back",
@@ -43,6 +43,7 @@ export const STRINGS = {
     petTitle: "Say hello",
     petBody: "Give Gooby a gentle pat. You’ll see Fun perk up.",
     petHint: "Tap Gooby in the room",
+    petAction: "Pet Gooby",
     feedTitle: "Share a snack",
     feedBody: "Feed one carrot and watch Full rise.",
     feedHint: "Use the Feed button",
@@ -107,6 +108,13 @@ export const STRINGS = {
     carrot: "Sunny carrot",
     carrotBody: "Crunchy, sweet, and Gooby-approved.",
     placeHandoff: (item: string) => `${item} is ready—choose its spot in the Living Room.`,
+    decorControls: "Selected decor controls",
+    moveForward: "Move decor forward",
+    moveBack: "Move decor back",
+    moveLeft: "Move decor left",
+    moveRight: "Move decor right",
+    rotate: "Rotate",
+    remove: "Remove",
   },
   sleep: {
     title: "Dreaming softly…",
@@ -136,9 +144,13 @@ export const STRINGS = {
     on: "On",
     off: "Off",
     credits: "Credits",
-    creditsBody: "Designed and built with care. All art, sound, and shapes are generated in the app.",
+    creditsBody: "Original procedural art, audio, and game work, plus locally bundled Kenney assets released under CC0. Reference license notices are included with the app.",
     privacy: "Privacy",
     privacyBody: "Gooby has no ads, tracking, in-app purchases, or accounts. Your play data stays on this device.",
+    clearData: "Clear local play data",
+    clearDataTitle: "Grown-ups: clear local data?",
+    clearDataBody: "This permanently removes Gooby’s progress, items, settings, scores, and travel from this device.",
+    clearDataConfirm: "Clear everything",
   },
   chrome: {
     town: "Town",

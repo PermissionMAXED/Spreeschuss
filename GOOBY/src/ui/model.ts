@@ -31,6 +31,7 @@ export interface UiPersistedState {
 export interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem?(key: string): void;
 }
 
 export interface MinigameCard {
@@ -70,6 +71,10 @@ const DEFAULT_STATE: UiPersistedState = {
   highScores: {},
   sleepRationaleSeen: false,
 };
+
+export function createDefaultUiState(): UiPersistedState {
+  return structuredClone(DEFAULT_STATE);
+}
 
 const UNLOCK_LEVELS = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7] as const;
 
@@ -143,6 +148,19 @@ export function parseUiState(raw: string | null): UiPersistedState {
   }
 }
 
+export function readLegacyUiState(storage?: StorageLike): UiPersistedState | null {
+  const raw = storage?.getItem(UI_STORAGE_KEY) ?? null;
+  return raw === null ? null : parseUiState(raw);
+}
+
+export function removeLegacyUiState(storage?: StorageLike): void {
+  try {
+    storage?.removeItem?.(UI_STORAGE_KEY);
+  } catch {
+    // Canonical save remains authoritative if legacy storage is unavailable.
+  }
+}
+
 export function formatCountdown(remainingMs: number): string {
   const seconds = Math.max(0, Math.ceil(remainingMs / 1_000));
   const minutesPart = Math.floor(seconds / 60).toString().padStart(2, "0");
@@ -209,8 +227,8 @@ export class UiModel {
   private cityPhase: CityUiPhase = "home";
   private firstTripActive = false;
 
-  constructor(private readonly storage?: StorageLike) {
-    this.state = parseUiState(storage?.getItem(UI_STORAGE_KEY) ?? null);
+  constructor(initialState: UiPersistedState = createDefaultUiState()) {
+    this.state = structuredClone(initialState);
   }
 
   get persisted(): UiPersistedState {
@@ -229,6 +247,10 @@ export class UiModel {
     };
   }
 
+  replacePersisted(state: UiPersistedState): void {
+    this.state = structuredClone(state);
+  }
+
   equip(slot: WardrobeSlot, itemId: string | null): void {
     const item = itemId ? CATALOG_BY_ID.get(itemId) : null;
     if (itemId && (item?.kind !== "cosmetic" || item.slot !== slot)) return;
@@ -239,7 +261,6 @@ export class UiModel {
       ...this.state,
       equipped,
     };
-    this.persist();
   }
 
   setPreference(key: PreferenceKey, enabled: boolean): void {
@@ -247,13 +268,11 @@ export class UiModel {
       ...this.state,
       preferences: { ...this.state.preferences, [key]: enabled },
     };
-    this.persist();
   }
 
   markSleepRationaleSeen(): void {
     if (this.state.sleepRationaleSeen) return;
     this.state = { ...this.state, sleepRationaleSeen: true };
-    this.persist();
   }
 
   recordResult(id: MinigameId, score: number): { readonly isNewBest: boolean; readonly best: number } {
@@ -266,7 +285,6 @@ export class UiModel {
         ...this.state,
         highScores: { ...this.state.highScores, [id]: best },
       };
-      this.persist();
     }
     return { isNewBest, best };
   }
@@ -311,13 +329,5 @@ export class UiModel {
       };
     }
     return { allowed: true, destination: { kind: "home", zone: "living-room" } };
-  }
-
-  private persist(): void {
-    try {
-      this.storage?.setItem(UI_STORAGE_KEY, JSON.stringify(this.state));
-    } catch {
-      // Private browsing or storage pressure must never block play.
-    }
   }
 }
