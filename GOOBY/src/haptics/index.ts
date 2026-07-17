@@ -112,10 +112,10 @@ export class HapticDirector {
     this.cancelPending();
     for (const pulse of HAPTIC_PATTERNS[pattern]) {
       if (pulse.atMs === 0) {
-        void this.driver.impact(pulse.impact);
+        void this.driver.impact(pulse.impact).catch(() => undefined);
       } else {
         this.pending.push(this.scheduler.schedule(pulse.atMs, () => {
-          if (!this.muted) void this.driver.impact(pulse.impact);
+          if (!this.muted) void this.driver.impact(pulse.impact).catch(() => undefined);
         }));
       }
     }

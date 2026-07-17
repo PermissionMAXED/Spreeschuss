@@ -57,7 +57,6 @@ import {
   createShopScene,
   issueCityShopArrival,
   type CityShopArrival,
-  type WalkableShopScene,
 } from "../scenes/shops";
 import { GameUI, type UiActions } from "../ui";
 import type { PreferenceKey } from "../ui/model";
@@ -66,6 +65,11 @@ import { MinigameScene } from "./minigame-scene";
 interface RuntimeDebugSnapshot {
   readonly sceneId: SceneId | null;
   readonly cityPhase: string | null;
+  readonly cityCar: {
+    readonly position: readonly [number, number];
+    readonly headingRadians: number;
+  } | null;
+  readonly cityRoute: readonly (readonly [number, number])[] | null;
   readonly sceneChildren: number;
   readonly activeMinigame: MinigameId | null;
   readonly minigameRoots: number;
@@ -74,6 +78,8 @@ interface RuntimeDebugSnapshot {
     readonly geometries: number;
     readonly textures: number;
     readonly drawCalls: number;
+    readonly fogEnabled: boolean;
+    readonly qualityTier: string | null;
   };
 }
 
@@ -87,7 +93,6 @@ interface GoobyDebugSurface {
     advanceMinigameTime(durationMs: number): void;
     grantProgressionXp(xp: number): void;
     completeCityLeg(): void;
-    inspectShopItem(itemId: string): boolean;
     feed(): void;
     sleep(): void;
     wake(): void;
@@ -139,7 +144,6 @@ export class GoobyApp {
   private visitHistory = new ShopVisitHistory();
   private activeHome: HomeZoneScene | null = null;
   private activeCity: CityDriveScene | null = null;
-  private activeShop: WalkableShopScene | null = null;
   private activeMinigame: MinigameScene | null = null;
   private pendingArrival: CityShopArrival | null = null;
   private state: SaveState | null = null;
@@ -185,6 +189,10 @@ export class GoobyApp {
     this.renderer = new GameRenderer(this.ui.canvas);
     this.input = new PointerInput(this.ui.canvas, this.clock);
     this.fx = new DomFx(this.ui.fxLayer, { clock: this.clock, rng: this.rng });
+    this.perf.connectRenderer(this.renderer);
+    this.removeDirectors.push(this.perf.onQualityChange(({ particleDensity }) => {
+      this.fx.setDensity(particleDensity);
+    }));
     this.fxDirector = new FxDirector(
       this.fx,
       () => this.ui.canvas.clientWidth / 2,
@@ -231,8 +239,11 @@ export class GoobyApp {
     window.addEventListener("resize", this.resize);
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     window.addEventListener("pagehide", this.onPageHide);
-    this.removeNativeListener = await configureNativeShell(() => {
-      void this.persist();
+    this.removeNativeListener = await configureNativeShell({
+      onBackground: () => {
+        void this.persist();
+      },
+      onForeground: () => this.resumeSimulation(),
     });
     this.installDebugSurface();
     this.previousFrameAt = performance.now();
@@ -301,7 +312,6 @@ export class GoobyApp {
           onTownExit: async () => this.returnToCity(shop),
           onMessage: (message) => this.toast(message),
         });
-        this.activeShop = scene;
         return scene;
       });
     }
@@ -357,13 +367,7 @@ export class GoobyApp {
       ...this.state,
       simulation: advanceSimulation(this.state.simulation, this.clock.now()),
     };
-    if (wasSleeping && !this.state.simulation.sleep) {
-      this.activeHome?.setSleeping(false);
-      this.activeHome?.react("wake");
-      this.emitGooby("wake");
-      void this.platform.notifications.cancel(SLEEP_NOTIFICATION_ID);
-      void this.persist();
-    }
+    this.completeSleepIfNeeded(wasSleeping);
     this.activeHome?.gooby.updateNeeds(this.state.simulation.needs);
     this.sceneManager.update(deltaSeconds);
     this.renderer.render();
@@ -474,7 +478,7 @@ export class GoobyApp {
           body: "Your fluffy friend is awake and ready to play.",
           at: sleep.completesAt,
         });
-      });
+      }).catch(() => undefined);
     }
     this.updateSleepUi();
   }
@@ -487,7 +491,7 @@ export class GoobyApp {
     });
     this.activeHome?.setSleeping(false);
     this.emitGooby("wake");
-    void this.platform.notifications.cancel(SLEEP_NOTIFICATION_ID);
+    this.cancelSleepNotification();
     this.toast("Good morning, sleepy bun.");
     this.updateSleepUi();
   }
@@ -682,9 +686,9 @@ export class GoobyApp {
   private async goToScene(id: SceneId): Promise<void> {
     this.activeHome = null;
     this.activeCity = null;
-    this.activeShop = null;
     this.activeMinigame = null;
     await this.sceneManager.goTo(id);
+    this.perf.markTransition();
     this.gameEvents.emit("route:changed", { routeId: id });
     this.setMusicZone(id);
     if (id.startsWith("home:")) {
@@ -737,15 +741,11 @@ export class GoobyApp {
   }
 
   private readonly onVisibilityChange = (): void => {
-    if (!this.state || document.visibilityState !== "visible") {
+    if (document.visibilityState !== "visible") {
       void this.persist();
       return;
     }
-    this.state = {
-      ...this.state,
-      simulation: catchUpOffline(this.state.simulation, this.clock.now()),
-    };
-    this.refreshUi();
+    this.resumeSimulation();
   };
 
   private readonly onPageHide = (): void => {
@@ -757,19 +757,33 @@ export class GoobyApp {
       version: 1,
       snapshot: () => this.state ? structuredClone(this.state) : null,
       performance: () => this.perf.snapshot(),
-      runtime: () => ({
-        sceneId: this.sceneManager.activeId,
-        cityPhase: this.sceneManager.activeId === "city:drive" ? this.cityController.state.phase : null,
-        sceneChildren: this.renderer.scene.children.length,
-        activeMinigame: this.activeMinigame?.module.id ?? null,
-        minigameRoots: this.mount.querySelectorAll("[data-minigame]").length,
-        disposed: this.disposed,
-        renderer: {
-          geometries: this.renderer.renderer.info.memory.geometries,
-          textures: this.renderer.renderer.info.memory.textures,
-          drawCalls: this.renderer.renderer.info.render.calls,
-        },
-      }),
+      runtime: () => {
+        const city = this.activeCity?.debugSnapshot() ?? null;
+        return {
+          sceneId: this.sceneManager.activeId,
+          cityPhase: this.sceneManager.activeId === "city:drive" ? this.cityController.state.phase : null,
+          cityCar: city
+            ? {
+                position: city.car.position,
+                headingRadians: city.car.headingRadians,
+              }
+            : null,
+          cityRoute: city?.activeRoute ?? null,
+          sceneChildren: this.renderer.scene.children.length,
+          activeMinigame: this.activeMinigame?.module.id ?? null,
+          minigameRoots: this.mount.querySelectorAll("[data-minigame]").length,
+          disposed: this.disposed,
+          renderer: {
+            geometries: this.renderer.renderer.info.memory.geometries,
+            textures: this.renderer.renderer.info.memory.textures,
+            drawCalls: this.renderer.renderer.info.render.calls,
+            fogEnabled: this.renderer.scene.fog !== null,
+            qualityTier: typeof this.renderer.scene.userData.goobyQualityTier === "string"
+              ? this.renderer.scene.userData.goobyQualityTier
+              : null,
+          },
+        };
+      },
     };
     if (import.meta.env.DEV || import.meta.env.MODE === "test") {
       surface.test = {
@@ -783,8 +797,6 @@ export class GoobyApp {
           this.acceptState({ ...state, economy: grantReward(state.economy, { xp }) });
         },
         completeCityLeg: () => this.activeCity?.completeCurrentLegForTest(),
-        inspectShopItem: (itemId) =>
-          this.activeShop ? this.activeShop.inspectItem(itemId) !== null : false,
         feed: () => this.feed(),
         sleep: () => this.sleep(),
         wake: () => this.wake(),
@@ -807,7 +819,6 @@ export class GoobyApp {
     await this.sceneManager.dispose();
     this.activeHome = null;
     this.activeCity = null;
-    this.activeShop = null;
     this.activeMinigame = null;
     this.removeNativeListener();
     for (const remove of this.removeDirectors) remove();
@@ -820,10 +831,36 @@ export class GoobyApp {
     this.assetLoader.dispose();
     this.tracker.dispose();
     this.platform.audio.dispose();
+    this.perf.dispose();
     this.renderer.dispose();
     this.gameEvents.clear();
     this.audioEvents.clear();
     this.fxEvents.clear();
     this.ui.dispose();
+  }
+
+  private resumeSimulation(): void {
+    if (!this.state || this.disposed) return;
+    const wasSleeping = this.state.simulation.sleep !== null;
+    this.state = {
+      ...this.state,
+      simulation: catchUpOffline(this.state.simulation, this.clock.now()),
+    };
+    this.completeSleepIfNeeded(wasSleeping);
+    this.activeHome?.gooby.updateNeeds(this.state.simulation.needs);
+    this.updateSleepUi();
+  }
+
+  private completeSleepIfNeeded(wasSleeping: boolean): void {
+    if (!wasSleeping || this.state?.simulation.sleep) return;
+    this.activeHome?.setSleeping(false);
+    this.activeHome?.react("wake");
+    this.emitGooby("wake");
+    this.cancelSleepNotification();
+    void this.persist();
+  }
+
+  private cancelSleepNotification(): void {
+    void this.platform.notifications.cancel(SLEEP_NOTIFICATION_ID).catch(() => undefined);
   }
 }

@@ -1,0 +1,81 @@
+name: Gooby Web CI
+
+on:
+  push:
+    paths:
+      - "GOOBY/**"
+      - ".github/workflows/gooby-web-ci.yml"
+      - ".github/workflows/gooby-ios.yml"
+  pull_request:
+    paths:
+      - "GOOBY/**"
+      - ".github/workflows/gooby-web-ci.yml"
+      - ".github/workflows/gooby-ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gooby-web-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Lint, test, build, and browser E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: GOOBY
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Use repository Node version
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: GOOBY/.nvmrc
+          cache: npm
+          cache-dependency-path: GOOBY/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Lint
+        run: npm run lint
+      - name: Type-check
+        run: npm run typecheck
+      - name: Unit and specialist tests
+        run: npm run test
+      - name: Audit offline assets
+        run: npm run assets:audit
+      - name: Check runtime asset budget
+        run: npm run audit:asset-size
+      - name: Scan runtime for network access
+        run: npm run audit:no-network
+      - name: Build production web bundle
+        run: npm run build
+      - name: Check production bundle budget
+        run: npm run audit:bundle
+      - name: Scan production bundle
+        run: npm run audit:production
+      - name: Run Chromium E2E
+        run: npm run test:e2e
+      - name: Audit adaptive quality and scene disposal
+        run: npm run audit:perf
+        env:
+          GOOBY_ARTIFACTS: playwright-report/perf-artifacts
+      - name: Check native project inputs
+        run: npm run ci:native-check
+      - name: Check Gooby workflow structure
+        run: npm run ci:workflow-check
+      - name: Upload web bundle and Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gooby-web-dist-and-report
+          path: |
+            GOOBY/dist
+            GOOBY/playwright-report
+          if-no-files-found: warn
+          retention-days: 14

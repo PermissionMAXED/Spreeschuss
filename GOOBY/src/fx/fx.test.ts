@@ -7,6 +7,7 @@ import {
   PARTICLE_KINDS,
   ParticlePool,
   particleForAudioEvent,
+  scaledParticleCount,
   type ParticleEmitter,
   type ParticleKind,
 } from "./index";
@@ -25,6 +26,14 @@ class SpyEmitter implements ParticleEmitter {
 }
 
 describe("fixed particle pool", () => {
+  it("scales bursts to the active quality density without dropping feedback", () => {
+    expect(scaledParticleCount(10, 1)).toBe(10);
+    expect(scaledParticleCount(10, 0.7)).toBe(7);
+    expect(scaledParticleCount(10, 0.4)).toBe(4);
+    expect(scaledParticleCount(1, 0.25)).toBe(1);
+    expect(scaledParticleCount(0, 0.4)).toBe(0);
+  });
+
   it("covers every requested polish effect without exceeding its cap", () => {
     const pool = new ParticlePool(24, new SeededRng(7));
     const identities = [...pool.states];

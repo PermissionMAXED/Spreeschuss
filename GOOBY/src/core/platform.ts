@@ -1,10 +1,4 @@
-import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
-import { Haptics, ImpactStyle, NotificationType } from "@capacitor/haptics";
-import { LocalNotifications } from "@capacitor/local-notifications";
-import { Preferences } from "@capacitor/preferences";
-import { SplashScreen } from "@capacitor/splash-screen";
-import { StatusBar, Style } from "@capacitor/status-bar";
 import type { Clock } from "./contracts/clock";
 import type {
   HapticPattern,
@@ -16,6 +10,11 @@ import type {
   SaveRecord,
 } from "./contracts/platform";
 import { WebAudioSynth } from "./web-audio";
+import {
+  configureNativeShell as configureIosShell,
+  createNativePlatform,
+  type NativeLifecycleHandlers,
+} from "../platform/native";
 
 const SAVE_KEY = "gooby.save.v2";
 
@@ -63,39 +62,11 @@ export class WebSaveAdapter implements SavePort {
   }
 }
 
-class NativeSaveAdapter implements SavePort {
-  async load(): Promise<SaveRecord | null> {
-    return parseRecord((await Preferences.get({ key: SAVE_KEY })).value);
-  }
-
-  async commit(expectedRevision: number, payload: unknown): Promise<SaveRecord> {
-    const current = await this.load();
-    if ((current?.revision ?? 0) !== expectedRevision) throw new RevisionConflictError();
-    const next = { revision: expectedRevision + 1, payload };
-    await Preferences.set({ key: SAVE_KEY, value: JSON.stringify(next) });
-    return next;
-  }
-
-  async clear(): Promise<void> {
-    await Preferences.remove({ key: SAVE_KEY });
-  }
-}
-
 class WebHaptics implements HapticsPort {
   impact(pattern: HapticPattern): Promise<void> {
     const duration = pattern === "light" ? 8 : pattern === "medium" ? 16 : 24;
     navigator.vibrate?.(duration);
     return Promise.resolve();
-  }
-}
-
-class NativeHaptics implements HapticsPort {
-  async impact(pattern: HapticPattern): Promise<void> {
-    if (pattern === "success" || pattern === "warning") {
-      await Haptics.notification({ type: pattern === "success" ? NotificationType.Success : NotificationType.Warning });
-      return;
-    }
-    await Haptics.impact({ style: pattern === "light" ? ImpactStyle.Light : ImpactStyle.Medium });
   }
 }
 
@@ -129,45 +100,26 @@ class WebNotifications implements NotificationsPort {
   }
 }
 
-class NativeNotifications implements NotificationsPort {
-  async requestPermission(): Promise<boolean> {
-    return (await LocalNotifications.requestPermissions()).display === "granted";
-  }
-
-  async schedule(request: NotificationRequest): Promise<void> {
-    await LocalNotifications.schedule({
-      notifications: [{ id: request.id, title: request.title, body: request.body, schedule: { at: new Date(request.at) } }],
-    });
-  }
-
-  async cancel(id: number): Promise<void> {
-    await LocalNotifications.cancel({ notifications: [{ id }] });
-  }
-}
-
 export function createPlatform(clock: Clock): PlatformPorts {
-  const native = Capacitor.isNativePlatform();
+  if (Capacitor.getPlatform() === "ios") {
+    return createNativePlatform(
+      clock,
+      new WebAudioSynth(),
+      () => new RevisionConflictError(),
+    );
+  }
   return {
-    kind: native ? "ios" : "web",
+    kind: "web",
     audio: new WebAudioSynth(),
-    haptics: native ? new NativeHaptics() : new WebHaptics(),
-    notifications: native ? new NativeNotifications() : new WebNotifications(clock),
-    save: native ? new NativeSaveAdapter() : new WebSaveAdapter(),
+    haptics: new WebHaptics(),
+    notifications: new WebNotifications(clock),
+    save: new WebSaveAdapter(),
   };
 }
 
 /** Compile-checked native shell hooks; browser builds safely no-op. */
-export async function configureNativeShell(onBackground: () => void): Promise<() => void> {
-  if (!Capacitor.isNativePlatform()) return () => undefined;
-  await Promise.all([
-    SplashScreen.hide(),
-    StatusBar.setStyle({ style: Style.Light }),
-    StatusBar.setBackgroundColor({ color: "#F5B973" }),
-  ]);
-  const listener = await App.addListener("appStateChange", ({ isActive }) => {
-    if (!isActive) onBackground();
-  });
-  return () => {
-    void listener.remove();
-  };
+export async function configureNativeShell(handlers: NativeLifecycleHandlers): Promise<() => void> {
+  return Capacitor.getPlatform() === "ios"
+    ? configureIosShell(handlers)
+    : () => undefined;
 }

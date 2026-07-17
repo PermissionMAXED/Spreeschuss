@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FakeClock } from "../src/core/contracts/clock";
 import {
   OFFLINE_NEED_FLOOR,
   SLEEP_DURATION_MS,
@@ -29,6 +30,26 @@ describe("simulation", () => {
     const completed = completeSleep(halfway);
     expect(completed.needs.energy).toBe(100);
     expect(completed.sleep).toBeNull();
+  });
+
+  it("completes at exactly 30 minutes, never one millisecond early", () => {
+    const startedAt = 1_700_000_000_000;
+    const sleeping = startSleep(
+      { ...createSimulation(startedAt), needs: { hunger: 70, energy: 1, hygiene: 70, fun: 70 } },
+      startedAt,
+    );
+
+    const early = advanceSimulation(sleeping, startedAt + SLEEP_DURATION_MS - 1);
+    expect(early.sleep).toEqual({
+      startedAt,
+      completesAt: startedAt + SLEEP_DURATION_MS,
+    });
+    expect(early.needs.energy).toBeLessThan(100);
+
+    const onTime = advanceSimulation(early, startedAt + SLEEP_DURATION_MS);
+    expect(onTime.sleep).toBeNull();
+    expect(onTime.needs.energy).toBe(100);
+    expect(onTime.lastSimulatedAt).toBe(startedAt + SLEEP_DURATION_MS);
   });
 
   it("is split-equivalent across sleep completion", () => {
@@ -66,5 +87,31 @@ describe("simulation", () => {
     };
     const caughtUp = catchUpOffline(initial, 30 * 24 * 60 * 60 * 1_000);
     expect(Object.values(caughtUp.needs).every((value) => value >= OFFLINE_NEED_FLOOR)).toBe(true);
+  });
+
+  it("clamps clock rollback and huge forward offline catch-up", () => {
+    const clock = new FakeClock(50_000);
+    const initial = createSimulation(clock.now());
+
+    clock.set(10_000);
+    expect(catchUpOffline(initial, clock.now())).toBe(initial);
+
+    clock.set(50_000 + 10 * 365 * 24 * 60 * 60 * 1_000);
+    const forwarded = catchUpOffline(initial, clock.now());
+    expect(forwarded.lastSimulatedAt).toBe(clock.now());
+    expect(forwarded.needs).toEqual({
+      hunger: OFFLINE_NEED_FLOOR,
+      energy: OFFLINE_NEED_FLOOR,
+      hygiene: OFFLINE_NEED_FLOOR,
+      fun: OFFLINE_NEED_FLOOR,
+    });
+  });
+
+  it("rejects invalid fake-clock movement without changing time", () => {
+    const clock = new FakeClock(123);
+    expect(() => clock.advance(-1)).toThrow(/non-negative/u);
+    expect(() => clock.advance(Number.POSITIVE_INFINITY)).toThrow(/finite/u);
+    expect(() => clock.set(Number.NaN)).toThrow(/finite/u);
+    expect(clock.now()).toBe(123);
   });
 });

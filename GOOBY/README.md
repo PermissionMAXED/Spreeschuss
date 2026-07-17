@@ -17,9 +17,9 @@ Requires Node 22 (see `.nvmrc`).
 | Type-check | `npm run typecheck` |
 | Unit tests | `npm run test` |
 | Browser tests | `npx playwright install chromium && npm run test:e2e` |
-| Full web CI | `npm run ci:workflow-check` |
+| Full web CI | `npm run ci:web` |
 | Asset audit | `npm run assets:audit` |
-| Native input check | `npm run build && npm run ci:native-check` |
+| Native input check | `npm run build && npx cap sync ios && npm run ci:native-check` |
 
 Playwright owns port `4519`; normal Vite development uses `5173`.
 
@@ -57,4 +57,8 @@ All simulation is pure and clock-injected. `Date.now()` is lint-banned outside `
 
 ## Native shell
 
-Capacitor plugins are represented by compile-checked iOS adapters. Once native project generation is desired, run `npm run build`, then `npx cap add ios` and `npx cap sync ios`. Generated iOS project files are intentionally not part of this foundation.
+The checked-in Capacitor 8 shell targets portrait iPhone and iPad with bundle identifier `com.gooby.pet`. The web fallback uses local storage, Web Notifications, vibration, and procedural audio; iOS uses Preferences, Local Notifications, Haptics, App lifecycle events, Splash Screen, and Status Bar adapters. Refresh copied web assets and plugin metadata with `npm run build && npx cap sync ios`.
+
+`npm run ci:web` runs lint, type-checking, all unit/specialist tests, asset/license and size audits, static no-network scanning, production build and bundle/debug scans, both Playwright portrait projects, the adaptive-quality/10-transition audit, native input checks, and workflow/actionlint checks. CocoaPods, Xcode archive, and IPA validation require macOS; see `ios/README.md`.
+
+The iOS workflow always builds and uploads `Gooby-unsigned.ipa` with signing disabled. That artifact is not device-installable or distributable until it is re-signed with a matching Apple certificate and provisioning profile. Optional signed and TestFlight jobs run only when their complete documented secret sets and event gates are satisfied.

@@ -104,6 +104,10 @@ function shopStyles(): string {
     .shop-heading b,.shop-heading small{display:block}.shop-heading b{font-size:15px}.shop-heading small{font-size:9px;margin-top:2px}
     .shop-town{position:absolute;top:max(122px,calc(env(safe-area-inset-top) + 108px));right:12px;
       padding:10px 14px;border-radius:999px;background:#fff8e9;box-shadow:0 7px 20px #51342532;font-weight:850}
+    .shop-catalog{position:absolute;top:max(178px,calc(env(safe-area-inset-top) + 164px));right:12px;left:12px;
+      display:flex;gap:6px;overflow-x:auto;padding:4px;pointer-events:auto;scrollbar-width:none}
+    .shop-catalog::-webkit-scrollbar{display:none}.shop-catalog button{flex:0 0 auto;padding:7px 10px;border-radius:999px;
+      background:#fff8e9e8;box-shadow:0 5px 14px #51342524;font-size:9px;font-weight:800;white-space:nowrap}
     .shop-walk-pad{position:absolute;left:16px;bottom:max(158px,calc(env(safe-area-inset-bottom) + 145px));
       width:94px;height:94px;border-radius:50%;pointer-events:auto;touch-action:none;background:#fff9e555;
       border:2px solid #fff9;box-shadow:inset 0 0 0 25px #5c4b4530}
@@ -115,11 +119,12 @@ function shopStyles(): string {
     .shop-meta{display:flex;gap:5px;flex-wrap:wrap}.shop-meta span{padding:3px 6px;border-radius:99px;background:#ead8c6;font-size:8px;font-weight:800}
     .shop-actions{display:flex;gap:6px;margin-top:8px}.shop-actions button{flex:1;padding:8px 5px;border-radius:10px;background:#6f5a8d;color:white;font-size:10px;font-weight:850}
     .shop-actions .shop-close,.shop-actions .shop-revert{background:#decdbd;color:#594943}
-    .shop-greeting{position:absolute;top:205px;right:18px;left:18px;padding:8px 12px;border-radius:13px;
+    .shop-greeting{position:absolute;top:220px;right:18px;left:18px;padding:8px 12px;border-radius:13px;
       opacity:0;transform:translateY(-5px);background:#4e403be8;color:#fff;font-size:10px;text-align:center;transition:180ms}
     .shop-greeting.show{opacity:1;transform:none}
     @media(max-height:690px){.shop-heading,.shop-town{top:max(106px,calc(env(safe-area-inset-top) + 92px))}
-      .shop-greeting{top:174px}.shop-walk-pad{bottom:132px}.shop-inspect{bottom:126px}}
+      .shop-catalog{top:max(158px,calc(env(safe-area-inset-top) + 144px))}.shop-greeting{top:198px}
+      .shop-walk-pad{bottom:132px}.shop-inspect{bottom:126px}}
   `;
 }
 
@@ -386,6 +391,7 @@ export class WalkableShopScene implements GameScene {
     this.overlay.innerHTML = `
       <header class="shop-heading"><b>${theme.title}</b><small>${theme.subtitle}</small></header>
       <button class="shop-town" data-shop-action="town" aria-label="Return to Town">Town</button>
+      <nav class="shop-catalog" aria-label="${theme.title} catalog"></nav>
       <div class="shop-greeting" role="status" aria-live="polite"></div>
       <div class="shop-walk-pad" aria-label="Walk around shop" role="application">
         <i class="shop-walk-knob"></i>
@@ -400,6 +406,15 @@ export class WalkableShopScene implements GameScene {
       </article>
     `;
     this.dependencies.mount.append(this.overlay);
+    const catalog = this.overlay.querySelector<HTMLElement>(".shop-catalog");
+    catalog?.replaceChildren(...SHOP_CATALOGS[this.shopId].map((item) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.shopItem = item.id;
+      button.textContent = item.name;
+      button.addEventListener("click", () => this.inspectItem(item.id));
+      return button;
+    }));
     this.overlay.querySelector('[data-shop-action="town"]')?.addEventListener("click", () => {
       void this.leaveForTown();
     });

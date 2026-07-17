@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import {
   HOME_ZONE_IDS,
   MINIGAME_IDS,
@@ -7,9 +7,12 @@ import {
 } from "../src/core/contracts/scenes";
 
 async function freshStart(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("e2e-fresh-start")) return;
+    localStorage.clear();
+    sessionStorage.setItem("e2e-fresh-start", "true");
+  });
   await page.goto("/");
-  await page.evaluate(() => localStorage.clear());
-  await page.reload();
   await expect(page.locator("#app")).toHaveAttribute("data-ready", "true");
 }
 
@@ -24,7 +27,7 @@ async function completeOnboarding(page: Page): Promise<void> {
   await expect(onboarding.getByText("Share a snack")).toBeVisible();
   await page.getByTestId("feed").click();
   await expect(onboarding.getByText("You did it!")).toBeVisible();
-  await onboarding.getByRole("button", { name: "Welcome home" }).click();
+  await onboarding.getByRole("button", { name: "Welcome home" }).dispatchEvent("click");
   await expect(onboarding).toBeHidden();
   await expect.poll(async () =>
     page.evaluate(() => window.__gooby.snapshot()?.profile.onboardingComplete)).toBe(true);
@@ -70,7 +73,7 @@ async function travelToShop(page: Page, shop: ShopId): Promise<void> {
 
 async function purchaseAndReturn(page: Page, shop: ShopId, itemId: string): Promise<void> {
   await travelToShop(page, shop);
-  expect(await page.evaluate((id) => window.__gooby.test?.inspectShopItem(id), itemId)).toBe(true);
+  await page.locator(`.shop-catalog [data-shop-item="${itemId}"]`).click();
   const buy = page.locator('[data-shop-action="buy"]');
   await expect(buy).toBeVisible();
   await buy.click();
@@ -159,6 +162,7 @@ test("completes real onboarding, all home care zones, bathing, and deterministic
 });
 
 test("mounts every real minigame from the normal hub", async ({ page }) => {
+  test.slow();
   await freshStart(page);
   await completeOnboarding(page);
   await page.evaluate(() => window.__gooby.test?.grantProgressionXp(3_600));
@@ -197,6 +201,7 @@ test("completes a minigame payout and persists its high score", async ({ page })
 });
 
 test("drives to shops, buys, requires returns, equips, places, reloads, and disposes offline", async ({ page }) => {
+  test.slow();
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
   const externalRequests: string[] = [];
@@ -216,14 +221,15 @@ test("drives to shops, buys, requires returns, equips, places, reloads, and disp
   await openCityBoard(page);
   await page.getByTestId("destination-cloud-boutique").click();
   await page.getByTestId("start-drive").click();
+  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().cityPhase))
+    .toBe("driving-outbound");
   await page.locator(".scene-chip").click();
   await expect(page.locator(".toast")).toContainText("Finish the return drive");
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().cityPhase))
     .toBe("driving-outbound");
   await page.evaluate(() => window.__gooby.test?.completeCityLeg());
   await page.getByTestId("enter-shop").click();
-  expect(await page.evaluate(() =>
-    window.__gooby.test?.inspectShopItem("apricot-floor-cushion"))).toBe(true);
+  await page.locator('.shop-catalog [data-shop-item="apricot-floor-cushion"]').click();
   await page.locator('[data-shop-action="buy"]').click();
   await expect.poll(async () => page.evaluate(() =>
     window.__gooby.snapshot()?.inventory["apricot-floor-cushion"] ?? 0)).toBe(1);

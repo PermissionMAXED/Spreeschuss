@@ -39,6 +39,12 @@ const PARTICLE_PRESETS: Readonly<Record<ParticleKind, ParticlePreset>> = {
   stars: { symbols: ["★", "☆", "✦"], colors: ["#ffcf55", "#fff0a5", "#ff9f68"], lifetimeMs: 1_040, speed: 112, spread: 145, gravity: 90, size: 21 },
 };
 
+export function scaledParticleCount(count: number, density: number): number {
+  if (count <= 0) return 0;
+  const safeDensity = Number.isFinite(density) ? Math.max(0.25, Math.min(1, density)) : 1;
+  return Math.max(1, Math.round(count * safeDensity));
+}
+
 class LocalRng implements RandomSource {
   constructor(private state = 0x45d9f3b) {}
 
@@ -190,6 +196,7 @@ export class DomFx {
   private readonly elements: readonly HTMLSpanElement[];
   private readonly clock: Clock | null;
   private frame = 0;
+  private density = 1;
   private disposed = false;
 
   constructor(
@@ -255,9 +262,15 @@ export class DomFx {
     this.burst("stars", x, y, count);
   }
 
+  setDensity(density: number): void {
+    if (!Number.isFinite(density)) return;
+    this.density = Math.max(0.25, Math.min(1, density));
+  }
+
   burst(kind: ParticleKind, x: number, y: number, count: number, intensity = 1): void {
     if (this.disposed) return;
-    this.pool.emit(kind, x, y, count, this.now(), intensity);
+    const scaledCount = scaledParticleCount(count, this.density);
+    this.pool.emit(kind, x, y, scaledCount, this.now(), intensity);
     if (this.frame === 0) this.frame = requestAnimationFrame(this.animate);
   }
 

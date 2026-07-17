@@ -30,6 +30,84 @@ page.on("request", (request) => {
   }
 });
 
+function headingDelta(from, to) {
+  let delta = to - from;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  return delta;
+}
+
+async function holdControl(control, durationMs) {
+  const box = await control.boundingBox();
+  if (!box) throw new Error("City control has no layout box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  try {
+    await page.waitForTimeout(durationMs);
+  } finally {
+    await page.mouse.up();
+  }
+}
+
+async function steerToward(target, radius, stopPhase) {
+  const left = page.getByRole("button", { name: "Hold to steer left" });
+  const right = page.getByRole("button", { name: "Hold to steer right" });
+  for (let attempt = 0; attempt < 320; attempt += 1) {
+    const runtime = await page.evaluate(() => window.__gooby.runtime());
+    if (stopPhase && runtime.cityPhase === stopPhase) return;
+    if (!runtime.cityCar) throw new Error("City car is unavailable while driving");
+    const dx = target[0] - runtime.cityCar.position[0];
+    const dz = target[1] - runtime.cityCar.position[1];
+    if (Math.hypot(dx, dz) <= radius) return;
+    const error = headingDelta(runtime.cityCar.headingRadians, Math.atan2(dx, dz));
+    if (Math.abs(error) < 0.11) {
+      await page.waitForTimeout(70);
+    } else {
+      await holdControl(
+        error > 0 ? left : right,
+        Math.min(650, Math.max(100, Math.abs(error) * 420)),
+      );
+    }
+  }
+  throw new Error(`Pointer steering did not reach ${target.join(", ")}`);
+}
+
+async function driveCurrentRoute(stopPhase) {
+  const route = await page.evaluate(() => window.__gooby.runtime().cityRoute);
+  if (!route || route.length < 2) throw new Error("Active city route is unavailable");
+  const firstTarget = route[1];
+  await steerToward(firstTarget, 11);
+  await holdControl(page.getByRole("button", { name: "Hold brake" }), 650);
+  for (let index = 1; index < route.length; index += 1) {
+    await steerToward(route[index], 3, index === route.length - 1 ? stopPhase : undefined);
+  }
+  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().cityPhase), {
+    timeout: 25_000,
+  }).toBe(stopPhase);
+}
+
+async function purchaseThroughNormalRoute(shop, itemId) {
+  await page.locator('.tab-bar [data-panel="places"]').click();
+  await page.getByTestId("open-city-board").click();
+  await page.getByTestId(`destination-${shop}`).click();
+  await page.getByTestId("start-drive").click();
+  await driveCurrentRoute("arrived");
+  await page.getByTestId("enter-shop").click();
+  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().sceneId))
+    .toBe(`shop:${shop}`);
+  await page.locator(`.shop-catalog [data-shop-item="${itemId}"]`).click();
+  await page.locator('[data-shop-action="buy"]').click();
+  await expect.poll(async () =>
+    page.evaluate((id) => window.__gooby.snapshot()?.inventory[id] ?? 0, itemId)).toBe(1);
+  await page.getByRole("button", { name: "Return to Town" }).click();
+  await expect(page.getByTestId("quick-return")).toBeHidden();
+  await page.getByTestId("drive-home").click();
+  await driveCurrentRoute("destination-board");
+  await page.locator(".scene-chip").click();
+  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().sceneId))
+    .toBe("home:living-room");
+}
+
 try {
   await page.goto(baseUrl);
   await page.evaluate(() => localStorage.clear());
@@ -68,7 +146,18 @@ try {
   await expect(page.locator('[data-minigame="carrot-catch"]')).toBeVisible();
   const startCatch = page.getByRole("button", { name: /CATCH/u });
   if (await startCatch.isVisible()) await startCatch.click();
-  await page.evaluate(() => window.__gooby.test?.advanceMinigameTime(76_000));
+  const game = page.locator('[data-minigame="carrot-catch"]');
+  const gameBox = await game.boundingBox();
+  if (!gameBox) throw new Error("Carrot Catch has no layout box");
+  for (let step = 0; step < 24; step += 1) {
+    await page.mouse.move(
+      gameBox.x + gameBox.width * (0.2 + (step % 5) * 0.15),
+      gameBox.y + gameBox.height * 0.76,
+      { steps: 4 },
+    );
+    await page.waitForTimeout(120);
+  }
+  await page.getByRole("button", { name: "Quit", exact: true }).click();
   await page.getByRole("button", { name: "COLLECT REWARDS" }).click();
   await expect(page.getByRole("heading", { name: /Lovely run|New best/u })).toBeVisible();
   await page.locator('[data-ui-action="results-done"]').click();
@@ -85,38 +174,8 @@ try {
   const wakeCelebration = page.locator('[data-ui-action="wake-celebration"]');
   if (await wakeCelebration.isVisible()) await wakeCelebration.click();
 
-  await page.locator('.tab-bar [data-panel="places"]').click();
-  await page.getByTestId("open-city-board").click();
-  await page.getByTestId("destination-fluff-salon").click();
-  await page.getByTestId("start-drive").click();
-  const brake = page.getByRole("button", { name: "Hold brake" });
-  await expect(brake).toBeVisible();
-  const brakeBox = await brake.boundingBox();
-  if (!brakeBox) throw new Error("Brake control has no layout box");
-  await page.mouse.move(brakeBox.x + brakeBox.width / 2, brakeBox.y + brakeBox.height / 2);
-  await page.mouse.down();
-  await page.waitForTimeout(500);
-  await page.mouse.up();
-  await page.evaluate(() => window.__gooby.test?.completeCityLeg());
-  await page.getByTestId("enter-shop").click();
-  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().sceneId))
-    .toBe("shop:fluff-salon");
-
-  const inspected = await page.evaluate(
-    () => window.__gooby.test?.inspectShopItem("sunny-bucket-hat"),
-  );
-  if (!inspected) throw new Error("Sunny Bucket Hat was not inspectable in Fluff Salon");
-  await page.locator('[data-shop-action="buy"]').click();
-  await expect.poll(async () =>
-    page.evaluate(() => window.__gooby.snapshot()?.inventory["sunny-bucket-hat"] ?? 0))
-    .toBe(1);
-  await page.getByRole("button", { name: "Return to Town" }).click();
-  await expect(page.getByTestId("quick-return")).toBeHidden();
-  await page.getByTestId("drive-home").click();
-  await page.evaluate(() => window.__gooby.test?.completeCityLeg());
-  await page.locator(".scene-chip").click();
-  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().sceneId))
-    .toBe("home:living-room");
+  await purchaseThroughNormalRoute("cloud-boutique", "apricot-floor-cushion");
+  await purchaseThroughNormalRoute("fluff-salon", "sunny-bucket-hat");
 
   await page.locator('.tab-bar [data-panel="wardrobe"]').click();
   await page.locator(
@@ -128,8 +187,25 @@ try {
     if (!raw) return null;
     return JSON.parse(raw).equipped?.head ?? null;
   })).toBe("sunny-bucket-hat");
+  await page.locator(".sheet").getByRole("button", { name: "Close" }).click();
+  await page.locator('.tab-bar [data-panel="items"]').click();
+  await page.getByRole("tab", { name: "Furniture" }).click();
+  await page.locator('[data-ui-action="place-item"][data-item="apricot-floor-cushion"]').click();
+  await expect.poll(async () => page.evaluate(() =>
+    Object.keys(window.__gooby.snapshot()?.inventory ?? {}).some((key) =>
+      key.startsWith("__home.catalog.v1|") && key.includes("apricot-floor-cushion")))).toBe(true);
+  await page.waitForTimeout(500);
+  await page.reload();
+  await expect(page.locator("#app")).toHaveAttribute("data-ready", "true");
+  await expect.poll(async () => page.evaluate(() =>
+    Object.keys(window.__gooby.snapshot()?.inventory ?? {}).some((key) =>
+      key.startsWith("__home.catalog.v1|") && key.includes("apricot-floor-cushion")))).toBe(true);
+  await page.locator('.tab-bar [data-panel="wardrobe"]').click();
+  await expect(page.locator(
+    '[data-ui-action="wardrobe-preview"][data-item="sunny-bucket-hat"]',
+  )).toHaveClass(/selected/u);
   await page.screenshot({
-    path: `${artifactRoot}/gooby_full_integration_equipped_390x844_v3.png`,
+    path: `${artifactRoot}/gooby_release_candidate_equipped_390x844.png`,
     animations: "disabled",
   });
 
@@ -140,7 +216,7 @@ try {
   await page.close();
   await context.close();
   if (!video) throw new Error("Playwright did not create a walkthrough video");
-  await video.saveAs(`${artifactRoot}/gooby_full_integration_walkthrough_390x844_v3.webm`);
+  await video.saveAs(`${artifactRoot}/gooby_release_candidate_walkthrough_390x844.webm`);
   console.log(JSON.stringify({
     viewport: "390x844",
     flow: [
@@ -154,6 +230,8 @@ try {
       "shop-purchase",
       "required-return",
       "equip",
+      "place",
+      "reload",
     ],
     consoleErrors: 0,
     pageErrors: 0,

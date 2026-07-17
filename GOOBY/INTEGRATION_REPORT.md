@@ -30,6 +30,9 @@ No frozen contract or ID change was required. `HOME_ZONE_IDS`, `SHOP_IDS`, `MINI
 - Expanded root unit discovery and added Node specialist suites without running duplicate framework copies.
 - Removed the bubble-bath trailing whitespace and verified all development harnesses stay outside the production bundle.
 - Updated the wardrobe preview to render every current cosmetic slot and catalog ID.
+- Wired Capacitor App lifecycle save/catch-up, Preferences, notifications, haptics, splash, and status-bar adapters through the production app while retaining web fallbacks.
+- Wired adaptive renderer quality, particle density, resource sampling, and ten-transition leak detection into the live renderer/scenes.
+- Added a normal-UI catalog strip so every shop item remains selectable in a narrow portrait camera without removing 3D raycast browsing.
 
 ## Verification
 
@@ -38,19 +41,24 @@ No frozen contract or ID change was required. `HOME_ZONE_IDS`, `SHOP_IDS`, `MINI
 | `git diff --check` | Pass; no output |
 | `npm run lint` | Pass; 0 warnings |
 | `npm run typecheck` | Pass; 0 diagnostics |
-| `npm run test` | Pass; 23 Vitest files / 120 tests plus 16 Node specialist tests = 136 tests, 0 skipped |
+| `npm run test` | Pass; 27 Vitest files / 152 tests plus 16 Node specialist tests = 168 tests, 0 skipped |
 | `npm run assets:audit` | Pass; 33 keys, 15/15 packs, 40 curated files, 1,493,043 bytes, offline runtime enforced |
-| `npm run build` | Pass; 202 modules transformed |
-| `npm run test:e2e` | Pass; 10/10 across phone 390×844 and iPad 820×1180, 0 skipped |
-| Bubble/Sort/Says focused browser suite | Pass; 1/1 full payout/disposal flow |
-| City focused browser suite | Pass; 2/2 including real pointer-held outbound and required return driving |
-| Responsive UI focused browser suite | Pass; 4/4 across 375×667, 390×844, and 820×1180 |
-| Full portrait walkthrough | Pass; onboarding → pet/feed → bathe → game payout → sleep completion → city → shop → buy → required return → equip; 0 console errors, 0 page errors, 0 external requests |
+| `npm run audit:asset-size` | Pass; 1.37 MiB runtime assets against 150 MiB |
+| `npm run audit:no-network` | Pass; 120 runtime files, 39 test/dev exclusions, no production network references |
+| `npm run build` | Pass; 206 modules transformed, no warnings |
+| `npm run audit:bundle` | Pass; 330.0 KiB gzip / 1.18 MiB raw against 5 MiB gzip |
+| `npm run audit:production` | Pass; 4 bundles, no harness/debug/perf-control markers |
+| `npm run test:e2e` | Pass; 24/24 across phone 390×844 and iPad 820×1180, 0 skipped |
+| `npm run audit:perf` | Pass; all quality settings applied, governor high → mid, 10 transitions with no likely leak, 0 external requests/page errors |
+| `npx cap sync ios` | Pass on Linux for copy/plugin sync; expected CocoaPods/Xcode warnings |
+| `npm run ci:native-check` | Pass; Capacitor 8, portrait devices, privacy, assets, bundle ID, plugins, and generated-artifact exclusions |
+| `npm run ci:workflow-check` | Pass; workflow structure and actionlint |
+| Full portrait walkthrough | Pass; 390×844 normal UI onboarding → pet/feed → bathe → game payout → sleep completion → held-steering/brake city routes → shop purchases → required returns → equip/place/reload; 0 console errors, 0 page errors, 0 external requests |
 
-The full portrait evidence is `gooby_full_integration_walkthrough_390x844_v3.webm` with final equipped state in `gooby_full_integration_equipped_390x844_v3.png`.
+Release evidence is `/opt/cursor/artifacts/gooby_release_candidate_walkthrough_390x844.webm`, `/opt/cursor/artifacts/gooby_release_candidate_equipped_390x844.png`, and `/opt/cursor/artifacts/gooby_perf_report_release_candidate_final.json`.
 
 ## Honest limitations
 
-- The production build passes but reports one large main chunk: 1,219.04 kB minified / 334.84 kB gzip. Code splitting is a future performance improvement, not an integration blocker.
-- Long timers and route distance are accelerated only after the corresponding normal UI path is asserted. Real hold steering/braking and a complete outbound/return route are separately exercised by the focused city browser suite.
+- Linux validates every committed iOS input but cannot run CocoaPods/Xcode or claim archive/IPA success; the always-running unsigned macOS Actions job is the archive authority.
+- The unsigned `Gooby-unsigned.ipa` is a build artifact only and must be re-signed with a valid matching Apple certificate/profile before installation or distribution. Signed and TestFlight jobs require the exact secret sets documented in `ios/README.md`.
 - E2E mounts all 12 games on both target viewports and completes one persisted payout; it does not play all 12 games to their natural ending. Their deterministic gameplay/lifecycle behavior remains covered by specialist unit and focused browser suites.
