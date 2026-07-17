@@ -1,8 +1,14 @@
-# Gooby
+# Gooby’s Cozy Burrow
 
-Gooby is an original portrait-first virtual-pet game for iOS and the web. Its star is a very chubby cream-and-apricot rabbit rendered in a cozy, procedural low-poly world. The web game is the product; Capacitor is deliberately a thin native shell.
+Gooby’s Cozy Burrow is an original portrait-first virtual-pet game for iOS and the web. Its star is Gooby, a very chubby cream-and-apricot rabbit rendered in a cozy, procedural low-poly world. The web game is the product; Capacitor is deliberately a thin native shell.
 
-The foundation is fully offline. Three.js geometry, furniture, icons, particles, and WebAudio effects all have procedural implementations, so runtime code never needs the network.
+The foundation is fully offline. Three.js geometry, furniture, icons, particles, and WebAudio effects all have procedural implementations, so runtime code never needs the network. The final curated runtime asset set is 3/3 locally available Kenney packs, 7 files, and 535,869 source bytes (509.1 KiB runtime payload), with truthful CC0 attribution in the in-game credits and manifest.
+
+## Final integration status
+
+The 2026-07-17 release candidate passed clean install, lint, type-check, 232 unit tests, 34 specialist tests, all four independent Playwright suites, asset/offline/bundle/production/performance audits, idempotent Capacitor sync, 11 native-checker regression tests, native validation, workflow validation, and direct `actionlint`.
+
+The exact `390×844` normal-UI walkthrough also passed keyboard and pointer onboarding, every home zone and care interaction, real bathroom scrubbing, all City/shop return legs and reloads, inventory ownership, furniture editing/persistence, all 12 unpaid tutorial exits, 17 natural real-input Carrot Catch runs, and focused Bubble/Veggie/Delivery/Cannon/Rhythm behavior with zero external requests or runtime errors. See `INTEGRATION_REPORT.md` and `/opt/cursor/artifacts/gooby_final_integration_verification_20260717.log` for exact evidence.
 
 ## Quick start
 
@@ -57,8 +63,12 @@ All simulation is pure and clock-injected. `Date.now()` is lint-banned outside `
 
 ## Native shell
 
-The checked-in Capacitor 8 shell targets portrait iPhone and iPad with bundle identifier `com.gooby.pet`. The web fallback uses local storage, Web Notifications, vibration, and procedural audio; iOS uses Preferences, Local Notifications, Haptics, App lifecycle events, Splash Screen, and Status Bar adapters. Refresh copied web assets and plugin metadata with `npm run build && npx cap sync ios`.
+The checked-in Capacitor 8 shell targets portrait iPhone and iPad with display name `Gooby’s Cozy Burrow` and bundle identifier `com.gooby.pet`. The web fallback uses local storage, Web Notifications, vibration, and procedural audio; iOS uses Preferences, Local Notifications, Haptics, App lifecycle events, Splash Screen, and Status Bar adapters. Refresh copied web assets and plugin metadata with `npm run build && npx cap sync ios`.
 
-`npm run ci:web` runs lint, type-checking, all unit/specialist tests, asset/license and size audits, static no-network scanning, production build and bundle/debug scans, both Playwright portrait projects, the adaptive-quality/10-transition audit, native input checks, and workflow/actionlint checks. CocoaPods, Xcode archive, and IPA validation require macOS; see `ios/README.md`.
+`npm run ci:web` runs hygiene, lint, type-checking, all unit/specialist tests, skipped-test enforcement, all root/UI/City/Bubble Playwright projects, asset/license and size audits, static no-network scanning, production build and bundle/debug scans, the adaptive-quality/32-transition leak audit, native input checks, and workflow/actionlint checks. CocoaPods, Xcode archive, and IPA validation require macOS; see `ios/README.md`.
 
 The iOS workflow always builds and uploads `Gooby-unsigned.ipa` with signing disabled. That artifact is not device-installable or distributable until it is re-signed with a matching Apple certificate and provisioning profile. Optional signed and TestFlight jobs run only when their complete documented secret sets and event gates are satisfied.
+
+## Naming and legal review
+
+The distinctive full product title `Gooby’s Cozy Burrow`, together with the rabbit character and `com.gooby.pet` bundle identifier, mitigates similarity with shorter names. This is a product-positioning observation, not a legal conclusion; formal trademark clearance remains a separate release-owner responsibility.

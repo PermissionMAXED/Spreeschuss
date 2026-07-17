@@ -278,6 +278,158 @@ test("supports keyboard onboarding, trapped modals, semantic tabs, and reduced m
   expect(cspConnectErrors).toEqual([]);
 });
 
+test("persists accessible quiet hours and defers the actual sleep notification timer", async ({ page }) => {
+  const fixedNow = new Date(2026, 0, 2, 21, 30, 0, 0).getTime();
+  await page.addInitScript(({ now, longDelay }) => {
+    Object.defineProperty(Date, "now", {
+      configurable: true,
+      value: () => now,
+    });
+    const probe = { delays: [] as number[] };
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      if ((timeout ?? 0) >= longDelay) probe.delays.push(timeout ?? 0);
+      return nativeSetTimeout(handler, timeout, ...args);
+    }) as typeof window.setTimeout;
+    Object.defineProperty(window, "__quietHoursProbe", { configurable: true, value: probe });
+    class NotificationProbe {
+      static permission: NotificationPermission = "granted";
+      static requestPermission(): Promise<NotificationPermission> {
+        return Promise.resolve("granted");
+      }
+    }
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: NotificationProbe,
+    });
+  }, { now: fixedNow, longDelay: 60 * 60 * 1_000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await freshStart(page);
+  await completeOnboarding(page);
+
+  await page.getByRole("tab", { name: "Settings" }).click();
+  const toggle = page.getByRole("checkbox", { name: /Quiet hours/u });
+  const start = page.getByRole("combobox", { name: "Quiet hours start time" });
+  const end = page.getByRole("combobox", { name: "Quiet hours end time" });
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await expect(start).toBeDisabled();
+  await expect(start).toHaveValue("21:00");
+  await expect(end).toHaveValue("08:00");
+
+  await toggle.focus();
+  await page.keyboard.press("Space");
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await expect(start).toBeDisabled();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await start.selectOption("22:00");
+  await end.selectOption("07:00");
+  await expect.poll(async () => page.evaluate(() =>
+    window.__gooby.snapshot()?.notificationPolicy?.quietHours)).toEqual({
+    startHour: 22,
+    endHour: 7,
+  });
+  await page.evaluate(() => window.__gooby.test?.flushSave());
+  await page.reload();
+  await expect(page.locator("#app")).toHaveAttribute("data-ready", "true");
+
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await expect(page.getByRole("checkbox", { name: /Quiet hours/u }))
+    .toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("combobox", { name: "Quiet hours start time" }))
+    .toHaveValue("22:00");
+  await expect(page.getByRole("combobox", { name: "Quiet hours end time" }))
+    .toHaveValue("07:00");
+  await page.getByRole("combobox", { name: "Quiet hours start time" }).selectOption("21:00");
+  await page.getByRole("combobox", { name: "Quiet hours end time" }).selectOption("08:00");
+  await expect(page.locator("#quiet-hours-status")).toContainText("Quiet now");
+  await expect(page.getByText(/Runs overnight from 21:00 to 08:00/u)).toBeVisible();
+  await page.waitForTimeout(2_500);
+  await page.screenshot({ path: "/opt/cursor/artifacts/gooby_quiet_hours_settings_390_final.png" });
+
+  const controlBounds = await page.locator(".quiet-hours-times select").evaluateAll((controls) =>
+    controls.map((control) => {
+      const rect = control.getBoundingClientRect();
+      return {
+        height: rect.height,
+        left: rect.left,
+        right: rect.right,
+        viewportWidth: window.innerWidth,
+      };
+    }));
+  expect(controlBounds.every(({ height, left, right, viewportWidth }) =>
+    height >= 44 && left >= 0 && right <= viewportWidth)).toBe(true);
+
+  await closePanel(page);
+  await page.getByTestId("sleep").click();
+  await page.getByRole("button", { name: "Start sleep" }).click();
+  await expect(page.locator(".sleep-overlay")).toBeVisible();
+  await expect.poll(async () => page.evaluate(() =>
+    (window as unknown as { __quietHoursProbe: { delays: number[] } })
+      .__quietHoursProbe.delays.length)).toBe(1);
+
+  const scheduled = await page.evaluate(() => {
+    const state = window.__gooby.snapshot();
+    const sleep = state?.simulation.sleep;
+    const delay = (window as unknown as { __quietHoursProbe: { delays: number[] } })
+      .__quietHoursProbe.delays[0] ?? -1;
+    if (!sleep) throw new Error("Expected active sleep");
+    const expectedDelivery = new Date(sleep.completesAt);
+    expectedDelivery.setHours(8, 0, 0, 0);
+    if (expectedDelivery.getTime() <= sleep.completesAt) {
+      expectedDelivery.setDate(expectedDelivery.getDate() + 1);
+    }
+    return {
+      sleepDuration: sleep.completesAt - sleep.startedAt,
+      policy: state?.notificationPolicy,
+      delay,
+      expectedDelay: expectedDelivery.getTime() - sleep.startedAt,
+    };
+  });
+  expect(scheduled.sleepDuration).toBe(30 * 60 * 1_000);
+  expect(scheduled.policy).toEqual({
+    quietHours: { startHour: 21, endHour: 8 },
+    suppressWhenForeground: true,
+  });
+  expect(Math.abs(scheduled.delay - scheduled.expectedDelay)).toBeLessThan(1_000);
+});
+
+test("records the quiet-hours controls walkthrough", async ({ browser }) => {
+  const setupContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const setupPage = await setupContext.newPage();
+  await freshStart(setupPage);
+  await completeOnboarding(setupPage);
+  await setupPage.evaluate(() => window.__gooby.test?.flushSave());
+  const storageState = await setupContext.storageState();
+  await setupContext.close();
+
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    storageState,
+    recordVideo: { dir: "/tmp/gooby-quiet-hours-video", size: { width: 390, height: 844 } },
+  });
+  await context.addInitScript((now) => {
+    Object.defineProperty(Date, "now", {
+      configurable: true,
+      value: () => now,
+    });
+  }, new Date(2026, 0, 2, 21, 30, 0, 0).getTime());
+  const page = await context.newPage();
+  await page.goto("/");
+  await expect(page.locator("#app")).toHaveAttribute("data-ready", "true");
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await page.getByRole("checkbox", { name: /Quiet hours/u }).click();
+  await page.getByRole("combobox", { name: "Quiet hours start time" }).selectOption("21:00");
+  await page.getByRole("combobox", { name: "Quiet hours end time" }).selectOption("08:00");
+  await expect(page.locator("#quiet-hours-status")).toContainText("Quiet now");
+  await page.waitForTimeout(2_700);
+  const video = page.video();
+  await context.close();
+  await video?.saveAs("/opt/cursor/artifacts/gooby_quiet_hours_controls_walkthrough.webm");
+});
+
 test("consumes catalog food and exposes selected decor place, move, rotate, and remove controls", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await freshStart(page);

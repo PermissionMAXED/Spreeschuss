@@ -7,6 +7,7 @@ import {
   type CanonicalSaveState,
   type SaveState,
 } from "../core/contracts/save";
+import type { QuietHours } from "../core/contracts/platform";
 import type { MinigameId } from "../core/contracts/scenes";
 import { CATALOG_BY_ID, COSMETIC_SLOTS } from "../data/catalog";
 import type { UiPersistedState } from "../ui/model";
@@ -60,6 +61,12 @@ export function migrateLegacyUiReducer(legacy: UiPersistedState): ReplayableSave
         reducedMotion: legacy.preferences.reducedMotion,
         notifications: legacy.preferences.notifications,
       },
+      notificationPolicy: legacy.quietHours === undefined
+        ? state.notificationPolicy
+        : {
+            ...state.notificationPolicy,
+            quietHours: legacy.quietHours,
+          },
       ui: {
         equipped: ownedEquipped(state, legacy.equipped),
         highScores,
@@ -67,6 +74,16 @@ export function migrateLegacyUiReducer(legacy: UiPersistedState): ReplayableSave
       },
     });
   };
+}
+
+export function setQuietHoursReducer(quietHours: QuietHours | null): ReplayableSaveReducer {
+  return (state) => SaveStateSchema.parse({
+    ...state,
+    notificationPolicy: {
+      ...state.notificationPolicy,
+      quietHours,
+    },
+  });
 }
 
 export function settleMinigameReducer(

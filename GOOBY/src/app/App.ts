@@ -69,6 +69,10 @@ import {
   type PreferenceKey,
 } from "../ui/model";
 import { MinigameScene } from "./minigame-scene";
+import {
+  createSleepCompletionNotification,
+  SLEEP_NOTIFICATION_ID,
+} from "./notification-policy";
 import { ReplayableSaveCoordinator, type ReplayableSaveReducer } from "./save-coordinator";
 import {
   consumeFoodReducer,
@@ -76,6 +80,7 @@ import {
   reconcileExternalState,
   sanitizeCanonicalUi,
   savedTravelSnapshot,
+  setQuietHoursReducer,
   settlementReceiptForRun,
   settleMinigameReducer,
   withTravelSnapshotReducer,
@@ -133,7 +138,6 @@ declare global {
   }
 }
 
-const SLEEP_NOTIFICATION_ID = 301;
 const CITY_VISIT_PREFIX = "__city.visited.v1|";
 
 function cityVisitKey(shop: ShopId): string {
@@ -225,6 +229,7 @@ export class GoobyApp {
       rotateDecor: () => this.rotateDecor(),
       removeDecor: () => this.removeDecor(),
       preferenceChanged: (key, enabled) => this.preferenceChanged(key, enabled),
+      quietHoursChanged: (quietHours) => this.quietHoursChanged(quietHours),
       onboardingComplete: () => this.completeOnboarding(),
       clearLocalData: () => {
         void this.clearLocalData();
@@ -267,7 +272,7 @@ export class GoobyApp {
       loaded.revision,
       (state, reason) => this.installState(state, reason === "optimistic"),
     );
-    this.ui.syncCanonical(loaded.state);
+    this.ui.syncCanonical(loaded.state, this.clock.now());
     const setupCommits: Promise<void>[] = [];
     const caughtUp = catchUpOffline(loaded.state.simulation, this.clock.now());
     if (caughtUp !== loaded.state.simulation) {
@@ -617,18 +622,7 @@ export class GoobyApp {
     this.emitGooby("sleep");
     this.audio.sounds.setZone("lullaby");
     const sleep = simulation.sleep;
-    if (sleep && this.requireState().settings.notifications) {
-      void this.platform.notifications.requestPermission().then((allowed) => {
-        if (!allowed) return undefined;
-        return this.platform.notifications.schedule({
-          id: SLEEP_NOTIFICATION_ID,
-          title: "Gooby is rested!",
-          body: "Your fluffy friend is awake and ready to play.",
-          at: sleep.completesAt,
-          policy: this.requireState().notificationPolicy,
-        });
-      }).catch(() => undefined);
-    }
+    if (sleep) this.scheduleSleepCompletionNotification(sleep.completesAt);
     this.updateSleepUi();
   }
 
@@ -889,8 +883,21 @@ export class GoobyApp {
       this.audioEvents.emit("audio:ui", { action: "confirm" });
     } else if (key === "notifications") {
       if (!enabled) this.cancelSleepNotification();
+      else if (this.state.simulation.sleep) {
+        this.scheduleSleepCompletionNotification(this.state.simulation.sleep.completesAt);
+      }
       this.audioEvents.emit("audio:ui", { action: "confirm" });
     }
+  }
+
+  private quietHoursChanged(quietHours: Parameters<typeof setQuietHoursReducer>[0]): void {
+    if (!this.state) return;
+    const completesAt = this.state.simulation.sleep?.completesAt;
+    void this.applyReducer(setQuietHoursReducer(quietHours));
+    if (completesAt && this.requireState().settings.notifications) {
+      this.scheduleSleepCompletionNotification(completesAt);
+    }
+    this.audioEvents.emit("audio:ui", { action: "confirm" });
   }
 
   private handleHomeEvent(event: HomeEvent): void {
@@ -927,7 +934,7 @@ export class GoobyApp {
   private installState(state: CanonicalSaveState, emitFeedback: boolean): void {
     const previous = this.state;
     this.state = state;
-    this.ui.syncCanonical(state);
+    this.ui.syncCanonical(state, this.clock.now());
     this.activeHome?.gooby.updateNeeds(state.simulation.needs);
     if (previous && JSON.stringify(previous.ui.equipped) !== JSON.stringify(state.ui.equipped)) {
       this.activeHome?.equipCatalogCosmetics(state.ui.equipped);
@@ -952,6 +959,7 @@ export class GoobyApp {
       this.state.economy,
       this.state.inventory,
       this.state.ui.equipped,
+      this.clock.now(),
     );
   }
 
@@ -1154,6 +1162,17 @@ export class GoobyApp {
 
   private cancelSleepNotification(): void {
     void this.platform.notifications.cancel(SLEEP_NOTIFICATION_ID).catch(() => undefined);
+  }
+
+  private scheduleSleepCompletionNotification(completesAt: number): void {
+    if (!this.requireState().settings.notifications) return;
+    void this.platform.notifications.requestPermission().then((allowed) => {
+      if (!allowed || this.state?.simulation.sleep?.completesAt !== completesAt) return undefined;
+      return this.platform.notifications.schedule(createSleepCompletionNotification(
+        completesAt,
+        this.requireState().notificationPolicy,
+      ));
+    }).catch(() => undefined);
   }
 
   private readonly unlockFromRoot = (): void => {

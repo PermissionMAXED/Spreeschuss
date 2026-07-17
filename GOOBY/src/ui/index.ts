@@ -1,4 +1,5 @@
 import type { Economy } from "../core/contracts/economy";
+import type { QuietHours } from "../core/contracts/platform";
 import type { MinigamePayout } from "../core/contracts/minigame";
 import type { CanonicalSaveState } from "../core/contracts/save";
 import type { HomeZoneId, MinigameId, ShopId } from "../core/contracts/scenes";
@@ -18,10 +19,14 @@ import {
 } from "../data/strings";
 import {
   MINIGAME_CARDS,
+  DEFAULT_UI_QUIET_HOURS,
   OnboardingProgress,
   UiModel,
   formatCountdown,
+  formatQuietHour,
   getLevelProgress,
+  parseQuietHourValue,
+  quietHoursPresentation,
   type PanelId,
   type PreferenceKey,
 } from "./model";
@@ -47,6 +52,7 @@ export interface UiActions {
   rotateDecor(): boolean;
   removeDecor(): boolean;
   preferenceChanged(key: PreferenceKey, enabled: boolean): void;
+  quietHoursChanged(quietHours: QuietHours | null): void;
   onboardingComplete(): void;
   clearLocalData(): void;
 }
@@ -63,6 +69,11 @@ const NAV_ITEMS = [
   { id: "items", label: STRINGS.nav.Items, icon: "▣" },
   { id: "settings", label: STRINGS.nav.Settings, icon: "⚙" },
 ] as const satisfies readonly { readonly id: PanelId; readonly label: string; readonly icon: string }[];
+
+const QUIET_HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => {
+  const value = formatQuietHour(hour);
+  return { hour, value };
+});
 
 function panelHeader(title: string, subtitle: string): string {
   return `
@@ -118,6 +129,7 @@ export class GameUI {
   private lastNeeds: Needs | null = null;
   private lastEconomy: Economy = { coins: 0, xp: 0, level: 1 };
   private lastCarrots = 0;
+  private lastNow = 0;
   private wasSleeping: boolean | null = null;
   private lastSleepSecond = -1;
   private selectedDecor: string | null = null;
@@ -247,16 +259,19 @@ export class GameUI {
     this.modalBody = root.querySelector<HTMLElement>("[data-modal-body]") as HTMLElement;
     this.onboarding = root.querySelector<HTMLElement>(".onboarding") as HTMLElement;
     this.root.addEventListener("click", this.handleClick);
+    this.root.addEventListener("change", this.handleChange);
     this.root.addEventListener("keydown", this.handleKeyDown);
     this.applyPreferences();
   }
 
-  syncCanonical(state: CanonicalSaveState): void {
+  syncCanonical(state: CanonicalSaveState, now = this.lastNow): void {
+    this.lastNow = now;
     this.model.replacePersisted({
       version: 1,
       equipped: state.ui.equipped,
       highScores: state.ui.highScores,
       sleepRationaleSeen: state.ui.sleepRationaleSeen,
+      quietHours: state.notificationPolicy.quietHours,
       preferences: {
         audio: !state.settings.muted,
         haptics: state.settings.haptics,
@@ -274,7 +289,9 @@ export class GameUI {
     economy: Economy,
     inventory: Readonly<Record<string, number>>,
     equipped: Readonly<Partial<Record<CosmeticSlot, string>>> = {},
+    now = this.lastNow,
   ): void {
+    this.lastNow = now;
     const carrots = inventory.carrot ?? 0;
     const previousNeeds = this.lastNeeds;
     const previousEconomy = this.lastEconomy;
@@ -313,6 +330,7 @@ export class GameUI {
     if ((this.currentPanel === "play" && levelChanged) || (this.currentPanel === "items" && carrotsChanged)) {
       this.renderPanel();
     }
+    if (this.currentPanel === "settings") this.refreshQuietHoursStatus();
   }
 
   showOnboarding(): void {
@@ -425,6 +443,7 @@ export class GameUI {
   dispose(): void {
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.root.removeEventListener("click", this.handleClick);
+    this.root.removeEventListener("change", this.handleChange);
     this.root.removeEventListener("keydown", this.handleKeyDown);
     this.root.replaceChildren();
   }
@@ -543,6 +562,13 @@ export class GameUI {
       this.applyPreferences();
       this.renderPanel();
       this.toast(STRINGS.toasts.settingSaved);
+    } else if (action === "toggle-quiet-hours") {
+      const quietHours = this.model.persisted.quietHours
+        ? null
+        : { ...DEFAULT_UI_QUIET_HOURS };
+      this.actions.quietHoursChanged(quietHours);
+      this.renderPanel();
+      this.toast("Quiet hours saved");
     } else if (action === "sleep-confirm") {
       this.closeModal();
       this.actions.confirmSleep();
@@ -576,6 +602,24 @@ export class GameUI {
     } else if (action === "clear-data-confirm") {
       this.actions.clearLocalData();
     }
+  };
+
+  private readonly handleChange = (event: Event): void => {
+    const select = (event.target as Element).closest<HTMLSelectElement>("select[data-quiet-hour]");
+    if (!select) return;
+    const hour = parseQuietHourValue(select.value);
+    if (hour === null) {
+      this.actions.feedback("denied");
+      this.renderPanel();
+      return;
+    }
+    const current = this.model.persisted.quietHours ?? DEFAULT_UI_QUIET_HOURS;
+    const next: QuietHours = select.dataset.quietHour === "start"
+      ? { ...current, startHour: hour }
+      : { ...current, endHour: hour };
+    this.actions.quietHoursChanged(next);
+    this.renderPanel();
+    this.toast("Quiet hours saved");
   };
 
   private openPanel(panel: PanelId): void {
@@ -887,6 +931,10 @@ export class GameUI {
 
   private renderSettings(): void {
     const preferences = this.model.persisted.preferences;
+    const quietHours = quietHoursPresentation(
+      this.model.persisted.quietHours ?? null,
+      this.lastNow,
+    );
     const rows: readonly [PreferenceKey, string, string, string][] = [
       ["audio", "♪", STRINGS.settings.audio, STRINGS.settings.audioBody],
       ["haptics", "⌁", STRINGS.settings.haptics, STRINGS.settings.hapticsBody],
@@ -905,6 +953,34 @@ export class GameUI {
             </button>
           `).join("")}
         </div>
+        <section class="quiet-hours-card" aria-labelledby="quiet-hours-heading">
+          <button class="quiet-hours-switch" data-ui-action="toggle-quiet-hours" role="checkbox"
+            aria-checked="${quietHours.enabled}" aria-describedby="quiet-hours-explanation quiet-hours-status">
+            <span class="setting-icon">☾</span>
+            <span><b id="quiet-hours-heading">Quiet hours</b><small>Delay non-urgent sleep reminders</small></span>
+            <i class="toggle ${quietHours.enabled ? "on" : ""}"><em></em></i>
+          </button>
+          <div class="quiet-hours-times" aria-label="Quiet hours schedule">
+            <label>
+              <span>Start time</span>
+              <select data-quiet-hour="start" aria-label="Quiet hours start time" ${quietHours.enabled ? "" : "disabled"}>
+                ${QUIET_HOUR_OPTIONS.map(({ hour, value }) =>
+                  `<option value="${value}" ${hour === quietHours.bounds.startHour ? "selected" : ""}>${value}</option>`).join("")}
+              </select>
+            </label>
+            <span aria-hidden="true">→</span>
+            <label>
+              <span>End time</span>
+              <select data-quiet-hour="end" aria-label="Quiet hours end time" ${quietHours.enabled ? "" : "disabled"}>
+                ${QUIET_HOUR_OPTIONS.map(({ hour, value }) =>
+                  `<option value="${value}" ${hour === quietHours.bounds.endHour ? "selected" : ""}>${value}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <p id="quiet-hours-explanation">${quietHours.explanation}</p>
+          <p class="quiet-hours-semantics">Overnight intervals continue into the next morning. Matching start and end means no quiet interval.</p>
+          <strong id="quiet-hours-status" class="quiet-hours-status ${quietHours.quietNow ? "is-quiet" : ""}" role="status" aria-live="polite">${quietHours.status}</strong>
+        </section>
         <article class="info-card">
           <span>♡</span><div><h3>${STRINGS.settings.privacy}</h3><p>${STRINGS.settings.privacyBody}</p></div>
         </article>
@@ -914,6 +990,17 @@ export class GameUI {
         <button class="parental-action" data-ui-action="clear-data">${STRINGS.settings.clearData}</button>
       </div>
     `;
+  }
+
+  private refreshQuietHoursStatus(): void {
+    const presentation = quietHoursPresentation(
+      this.model.persisted.quietHours ?? null,
+      this.lastNow,
+    );
+    const status = this.sheetBody.querySelector<HTMLElement>("#quiet-hours-status");
+    if (!status) return;
+    status.textContent = presentation.status;
+    status.classList.toggle("is-quiet", presentation.quietNow);
   }
 
   private renderOnboarding(): void {

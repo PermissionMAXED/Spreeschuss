@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MINIGAME_IDS, SHOP_IDS } from "../core/contracts/scenes";
 import type { Needs } from "../core/contracts/simulation";
 import {
+  DEFAULT_UI_QUIET_HOURS,
   MINIGAME_CARDS,
   OnboardingProgress,
   UI_STORAGE_KEY,
@@ -9,8 +10,11 @@ import {
   readLegacyUiState,
   removeLegacyUiState,
   formatCountdown,
+  formatQuietHour,
   getLevelProgress,
+  parseQuietHourValue,
   parseUiState,
+  quietHoursPresentation,
   shopNavigationIntent,
   type StorageLike,
 } from "./model";
@@ -106,6 +110,39 @@ describe("portrait UI model", () => {
     removeLegacyUiState(storage);
     expect(storage.values.has(UI_STORAGE_KEY)).toBe(false);
     expect(parseUiState("{not json")).toMatchObject({ version: 1, highScores: {} });
+  });
+
+  it("parses safe whole-hour quiet settings and defaults controls to 21:00–08:00", () => {
+    const parsed = parseUiState(JSON.stringify({
+      version: 1,
+      quietHours: { startHour: 22, endHour: 7 },
+    }));
+    expect(parsed.quietHours).toEqual({ startHour: 22, endHour: 7 });
+    expect(parseUiState(JSON.stringify({
+      version: 1,
+      quietHours: { startHour: 24, endHour: -1 },
+    })).quietHours).toBeUndefined();
+    expect(quietHoursPresentation(null, 0).bounds).toEqual(DEFAULT_UI_QUIET_HOURS);
+    expect(formatQuietHour(8)).toBe("08:00");
+    expect(parseQuietHourValue("23:00")).toBe(23);
+    expect(parseQuietHourValue("23:30")).toBeNull();
+  });
+
+  it("reports 21:00–08:00 boundaries and equal-time semantics deterministically", () => {
+    const at = (hour: number, minute = 0): number =>
+      new Date(2026, 0, 2, hour, minute, 0, 0).getTime();
+    const overnight = { startHour: 21, endHour: 8 };
+
+    expect(quietHoursPresentation(overnight, at(20, 59)).quietNow).toBe(false);
+    expect(quietHoursPresentation(overnight, at(21)).quietNow).toBe(true);
+    expect(quietHoursPresentation(overnight, at(7, 59)).quietNow).toBe(true);
+    expect(quietHoursPresentation(overnight, at(8)).quietNow).toBe(false);
+    expect(quietHoursPresentation(overnight, at(22)).explanation)
+      .toBe("Runs overnight from 21:00 to 08:00. Reminders due then wait until 08:00.");
+
+    const equal = quietHoursPresentation({ startHour: 8, endHour: 8 }, at(8));
+    expect(equal.quietNow).toBe(false);
+    expect(equal.status).toContain("matching times create no quiet interval");
   });
 
   it("formats sleep and level progress for compact HUD presentation", () => {

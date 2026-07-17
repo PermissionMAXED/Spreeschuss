@@ -52,7 +52,8 @@ button:disabled {
   pointer-events: none;
 }
 
-button:focus-visible {
+button:focus-visible,
+select:focus-visible {
   outline: 3px solid #4f4591;
   outline-offset: 2px;
 }
@@ -1813,6 +1814,114 @@ button:focus-visible {
 
 .toggle.on em {
   transform: translateX(18px);
+}
+
+.quiet-hours-card {
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid #dcd2e5;
+  border-radius: 19px;
+  background: #f9f5fc;
+}
+
+.quiet-hours-switch {
+  display: grid;
+  width: 100%;
+  min-height: 65px;
+  grid-template-columns: 38px minmax(0, 1fr) 46px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 12px;
+  background: transparent;
+  text-align: left;
+}
+
+.quiet-hours-switch > span:nth-child(2) {
+  display: grid;
+}
+
+.quiet-hours-switch b {
+  font-size: 11px;
+}
+
+.quiet-hours-switch small {
+  margin-top: 2px;
+  color: #604f68;
+  font-size: 8px;
+}
+
+.quiet-hours-times {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  align-items: end;
+  gap: 7px;
+  padding: 0 12px 10px;
+}
+
+.quiet-hours-times > span {
+  display: grid;
+  min-height: 44px;
+  place-items: center;
+  color: #665574;
+  font-weight: 900;
+}
+
+.quiet-hours-times label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: #54445f;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.quiet-hours-times select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid #9b8aa8;
+  border-radius: 12px;
+  color: #43364d;
+  background: white;
+  font: 800 13px/1 Inter, ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+.quiet-hours-times select:disabled {
+  border-color: #d8cfdc;
+  color: #756c79;
+  background: #eee9f0;
+  opacity: 1;
+}
+
+#quiet-hours-explanation,
+.quiet-hours-semantics {
+  margin: 0;
+  padding: 0 12px;
+  color: #594c61;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.quiet-hours-semantics {
+  margin-top: 4px;
+  color: #6b5c70;
+}
+
+.quiet-hours-status {
+  display: block;
+  min-height: 32px;
+  margin: 10px 12px 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: #4e4058;
+  background: #e8e0ee;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.quiet-hours-status.is-quiet {
+  color: #315047;
+  background: #dcece4;
 }
 
 .info-card {

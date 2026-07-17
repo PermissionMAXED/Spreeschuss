@@ -27,6 +27,12 @@ Always open/build `App.xcworkspace` after `pod install`, not `App.xcodeproj`.
 
 The `unsigned` job in `.github/workflows/gooby-ios.yml` always disables code signing, archives `App.app`, and packages `Payload/App.app` as `Gooby-unsigned.ipa`. This is a build artifact only. It cannot be installed on normal devices or distributed until it is re-signed with a valid Apple certificate and matching provisioning profile.
 
+### Re-signing an unsigned IPA
+
+Re-signing is a macOS release operation, not a rename or zip-only operation. Use an Apple distribution/development certificate whose team matches a provisioning profile for `com.gooby.pet`; install the profile, replace `Payload/App.app/embedded.mobileprovision`, sign embedded frameworks/extensions first, sign `App.app` last with the profile’s entitlements, verify with `codesign --verify --deep --strict --verbose=2`, then repackage the `Payload` directory. An Xcode archive/export or a vetted release tool is preferred because it performs the same nested-signature and entitlement work consistently.
+
+Never reuse the unsigned artifact as if it were signed. Confirm the final application identifier is exactly `${APPLE_TEAM_ID}.com.gooby.pet`, the profile team identifier matches the certificate, and the distribution method matches the intended device/ad hoc/App Store channel before installation or upload.
+
 The equivalent macOS archive command, after the setup commands above and from `GOOBY/`, is:
 
 ```sh
@@ -70,3 +76,5 @@ The signing identity/profile must be valid for App Store distribution and pass t
 ## Linux verification boundary
 
 Linux can run `npm run ci:native-check` to parse and validate the Capacitor config, plists, privacy manifest, Xcode project, asset slots, and artifact exclusions. Linux cannot run CocoaPods/Xcode or produce a verified IPA; archive success is established only by the macOS workflow.
+
+The 2026-07-17 final Linux verification passed the 11 semantic native-checker regression tests, `npm run ci:native-check`, `npm run ci:workflow-check`, and direct `actionlint`. Two consecutive `npx cap sync ios` runs produced the identical generated-tree SHA-256 `6e5bce2a911f2ca754c63db5eb8b414a6bdce6a34f87470560371b5adeeeb6a7`. These results establish deterministic checked-in inputs only; they do not replace the protected macOS archive/sign/export gates.

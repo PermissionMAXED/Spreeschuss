@@ -193,6 +193,365 @@ function parseCapacitorConfig(source) {
   throw new Error("capacitor.config.ts: config literal was not found");
 }
 
+function parseTypeScript(source, fileName) {
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  invariant(file.parseDiagnostics.length === 0, `${fileName}: TypeScript source must parse`);
+  return file;
+}
+
+function visit(node, callback) {
+  callback(node);
+  ts.forEachChild(node, (child) => visit(child, callback));
+}
+
+function unwrapExpression(node) {
+  let current = node;
+  while (
+    ts.isParenthesizedExpression(current)
+    || ts.isAsExpression(current)
+    || ts.isNonNullExpression(current)
+    || ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function expressionPath(node) {
+  const current = unwrapExpression(node);
+  if (ts.isIdentifier(current)) return [current.text];
+  if (current.kind === ts.SyntaxKind.ThisKeyword) return ["this"];
+  if (!ts.isPropertyAccessExpression(current)) return null;
+  const parent = expressionPath(current.expression);
+  return parent ? [...parent, current.name.text] : null;
+}
+
+function hasPath(node, expected) {
+  const actual = expressionPath(node);
+  return actual !== null && actual.length === expected.length
+    && actual.every((part, index) => part === expected[index]);
+}
+
+function objectProperties(node, label) {
+  const current = unwrapExpression(node);
+  invariant(ts.isObjectLiteralExpression(current), `${label} must be an object literal`);
+  const result = new Map();
+  for (const property of current.properties) {
+    invariant(
+      ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property),
+      `${label} must contain only explicit properties`,
+    );
+    const name = propertyName(property.name);
+    invariant(!result.has(name), `${label} contains duplicate property ${name}`);
+    result.set(name, ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer);
+  }
+  return result;
+}
+
+function assertExactKeys(properties, expected, label) {
+  const actual = [...properties.keys()].sort();
+  const sortedExpected = [...expected].sort();
+  invariant(
+    JSON.stringify(actual) === JSON.stringify(sortedExpected),
+    `${label} must contain exactly: ${sortedExpected.join(", ")}`,
+  );
+}
+
+function findClassMethod(file, className, methodName, label) {
+  const classDeclaration = file.statements.find(
+    (statement) => ts.isClassDeclaration(statement) && statement.name?.text === className,
+  );
+  invariant(classDeclaration, `${label}: class ${className} was not found`);
+  const method = classDeclaration.members.find(
+    (member) => ts.isMethodDeclaration(member)
+      && (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))
+      && member.name.text === methodName,
+  );
+  invariant(method?.body, `${label}: ${className}.${methodName} was not found`);
+  return method;
+}
+
+function importedBinding(file, importedName, moduleName) {
+  for (const statement of file.statements) {
+    if (
+      !ts.isImportDeclaration(statement)
+      || !ts.isStringLiteral(statement.moduleSpecifier)
+      || statement.moduleSpecifier.text !== moduleName
+    ) {
+      continue;
+    }
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    const specifier = bindings.elements.find(
+      (element) => (element.propertyName?.text ?? element.name.text) === importedName,
+    );
+    if (specifier) return specifier.name.text;
+  }
+  return null;
+}
+
+function isPropertyReference(node, root, property) {
+  const current = unwrapExpression(node);
+  return ts.isPropertyAccessExpression(current)
+    && current.name.text === property
+    && hasPath(current.expression, [root]);
+}
+
+function isCanonicalNotificationPolicy(node) {
+  const current = unwrapExpression(node);
+  if (!ts.isPropertyAccessExpression(current) || current.name.text !== "notificationPolicy") return false;
+  const stateCall = unwrapExpression(current.expression);
+  return ts.isCallExpression(stateCall)
+    && stateCall.arguments.length === 0
+    && hasPath(stateCall.expression, ["this", "requireState"]);
+}
+
+function notificationRequestFields(file) {
+  const declaration = file.statements.find(
+    (statement) => ts.isInterfaceDeclaration(statement) && statement.name.text === "NotificationRequest",
+  );
+  invariant(declaration, "platform contract: NotificationRequest was not found");
+  return declaration.members.map((member) => {
+    invariant(ts.isPropertySignature(member) && member.name, "NotificationRequest must use property signatures");
+    return propertyName(member.name);
+  });
+}
+
+function assertNotificationFactory(file, expectedFields) {
+  const factory = file.statements.find(
+    (statement) => ts.isFunctionDeclaration(statement)
+      && statement.name?.text === "createSleepCompletionNotification",
+  );
+  invariant(factory?.body, "Sleep notification factory was not found");
+  invariant(
+    factory.type && ts.isTypeReferenceNode(factory.type)
+      && ts.isIdentifier(factory.type.typeName)
+      && factory.type.typeName.text === "NotificationRequest",
+    "Sleep notification factory must return NotificationRequest",
+  );
+  invariant(factory.parameters.length === 2, "Sleep notification factory must accept completion and policy");
+  const [completionParameter, policyParameter] = factory.parameters;
+  invariant(
+    ts.isIdentifier(completionParameter.name) && ts.isIdentifier(policyParameter.name),
+    "Sleep notification factory parameters must be identifiers",
+  );
+  const returns = factory.body.statements.filter(ts.isReturnStatement);
+  invariant(
+    returns.length === 1 && returns[0].expression,
+    "Sleep notification factory must directly return one request",
+  );
+  const request = objectProperties(returns[0].expression, "Sleep notification request");
+  assertExactKeys(request, expectedFields, "Sleep notification request");
+  invariant(
+    ts.isIdentifier(unwrapExpression(request.get("at")))
+      && unwrapExpression(request.get("at")).text === completionParameter.name.text,
+    "Sleep notification factory must preserve the exact completion timestamp as request.at",
+  );
+  invariant(
+    ts.isIdentifier(unwrapExpression(request.get("policy")))
+      && unwrapExpression(request.get("policy")).text === policyParameter.name.text,
+    "Sleep notification factory must preserve the canonical notification policy",
+  );
+}
+
+function assertAppNotificationIntegration(file) {
+  const factoryBinding = importedBinding(
+    file,
+    "createSleepCompletionNotification",
+    "./notification-policy",
+  );
+  invariant(factoryBinding, "App must import createSleepCompletionNotification");
+  const method = findClassMethod(
+    file,
+    "GoobyApp",
+    "scheduleSleepCompletionNotification",
+    "App notification integration",
+  );
+  invariant(
+    method.parameters.length === 1 && ts.isIdentifier(method.parameters[0].name),
+    "App sleep notification scheduler must accept one completion timestamp",
+  );
+  const completionParameter = method.parameters[0].name.text;
+  let integratedFactoryCall = null;
+  visit(method.body, (node) => {
+    if (
+      !ts.isCallExpression(node)
+      || !hasPath(node.expression, ["this", "platform", "notifications", "schedule"])
+      || node.arguments.length !== 1
+    ) {
+      return;
+    }
+    const request = unwrapExpression(node.arguments[0]);
+    if (
+      ts.isCallExpression(request)
+      && ts.isIdentifier(unwrapExpression(request.expression))
+      && unwrapExpression(request.expression).text === factoryBinding
+    ) {
+      integratedFactoryCall = request;
+    }
+  });
+  invariant(
+    integratedFactoryCall,
+    "App must schedule sleep completion through createSleepCompletionNotification",
+  );
+  invariant(
+    integratedFactoryCall.arguments.length === 2
+      && ts.isIdentifier(unwrapExpression(integratedFactoryCall.arguments[0]))
+      && unwrapExpression(integratedFactoryCall.arguments[0]).text === completionParameter,
+    "App must pass the scheduler completion timestamp to createSleepCompletionNotification",
+  );
+  invariant(
+    isCanonicalNotificationPolicy(integratedFactoryCall.arguments[1]),
+    "App must pass requireState().notificationPolicy to createSleepCompletionNotification",
+  );
+
+  const schedulingCalls = [];
+  const completionAliases = new Set();
+  visit(file, (node) => {
+    if (
+      ts.isVariableDeclaration(node)
+      && ts.isIdentifier(node.name)
+      && node.initializer
+    ) {
+      const initializer = unwrapExpression(node.initializer);
+      if (ts.isPropertyAccessExpression(initializer) && initializer.name.text === "completesAt") {
+        completionAliases.add(node.name.text);
+      }
+    }
+    if (
+      ts.isCallExpression(node)
+      && hasPath(node.expression, ["this", "scheduleSleepCompletionNotification"])
+    ) {
+      schedulingCalls.push(node);
+    }
+  });
+  invariant(schedulingCalls.length > 0, "App must schedule a sleep completion notification");
+  invariant(
+    schedulingCalls.every((call) => {
+      const completion = call.arguments.length === 1
+        ? unwrapExpression(call.arguments[0])
+        : null;
+      return completion !== null
+        && (
+          (ts.isPropertyAccessExpression(completion) && completion.name.text === "completesAt")
+          || (ts.isIdentifier(completion) && completionAliases.has(completion.text))
+        );
+    }),
+    "App sleep notification scheduling must use the sleep completesAt timestamp",
+  );
+}
+
+function assertNativeNotificationAdapter(file) {
+  const method = findClassMethod(
+    file,
+    "NativeNotificationsAdapter",
+    "schedule",
+    "Native notification adapter",
+  );
+  invariant(
+    method.parameters.length === 1 && ts.isIdentifier(method.parameters[0].name),
+    "Native notification schedule must accept one request",
+  );
+  const request = method.parameters[0].name.text;
+  let suppressesForeground = false;
+  let deliveryVariable = null;
+  let pluginSchedule = null;
+  visit(method.body, (node) => {
+    if (ts.isCallExpression(node) && hasPath(node.expression, ["shouldSuppressNotification"])) {
+      suppressesForeground ||= node.arguments.length === 2
+        && isPropertyReference(node.arguments[0], request, "policy")
+        && hasPath(node.arguments[1], ["this", "isForeground"]);
+    }
+    if (
+      ts.isVariableDeclaration(node)
+      && ts.isIdentifier(node.name)
+      && node.initializer
+    ) {
+      const initializer = unwrapExpression(node.initializer);
+      if (
+        ts.isCallExpression(initializer)
+        && hasPath(initializer.expression, ["nextAllowedNotificationTime"])
+        && initializer.arguments.length === 2
+        && isPropertyReference(initializer.arguments[0], request, "at")
+      ) {
+        const quietHours = unwrapExpression(initializer.arguments[1]);
+        if (
+          ts.isBinaryExpression(quietHours)
+          && quietHours.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+          && quietHours.right.kind === ts.SyntaxKind.NullKeyword
+        ) {
+          const policyQuietHours = unwrapExpression(quietHours.left);
+          if (
+            ts.isPropertyAccessExpression(policyQuietHours)
+            && policyQuietHours.name.text === "quietHours"
+            && isPropertyReference(policyQuietHours.expression, request, "policy")
+          ) {
+            deliveryVariable = node.name.text;
+          }
+        }
+      }
+    }
+    if (
+      ts.isCallExpression(node)
+      && hasPath(node.expression, ["this", "notifications", "schedule"])
+      && node.arguments.length === 1
+    ) {
+      pluginSchedule = node.arguments[0];
+    }
+  });
+  invariant(
+    suppressesForeground,
+    "Native notification adapter must apply foreground suppression from request.policy",
+  );
+  invariant(
+    deliveryVariable,
+    "Native notification adapter must apply request.policy quiet hours to request.at",
+  );
+  invariant(pluginSchedule, "Native notification adapter must invoke the notification plugin");
+
+  const pluginOptions = objectProperties(pluginSchedule, "Native notification plugin options");
+  assertExactKeys(pluginOptions, ["notifications"], "Native notification plugin options");
+  const notifications = unwrapExpression(pluginOptions.get("notifications"));
+  invariant(
+    ts.isArrayLiteralExpression(notifications) && notifications.elements.length === 1,
+    "Native notification plugin must receive one notification",
+  );
+  const payload = objectProperties(notifications.elements[0], "Native notification plugin payload");
+  assertExactKeys(payload, ["id", "title", "body", "schedule"], "Native notification plugin payload");
+  for (const field of ["id", "title", "body"]) {
+    invariant(
+      isPropertyReference(payload.get(field), request, field),
+      `Native notification plugin must consume request.${field}`,
+    );
+  }
+  const schedule = objectProperties(payload.get("schedule"), "Native notification plugin schedule");
+  assertExactKeys(schedule, ["at"], "Native notification plugin schedule");
+  const at = unwrapExpression(schedule.get("at"));
+  invariant(
+    ts.isNewExpression(at)
+      && hasPath(at.expression, ["Date"])
+      && at.arguments?.length === 1
+      && ts.isIdentifier(unwrapExpression(at.arguments[0]))
+      && unwrapExpression(at.arguments[0]).text === deliveryVariable,
+    "Native notification plugin must schedule the policy-adjusted delivery timestamp",
+  );
+}
+
+export function assertSleepNotificationIntegration({
+  app,
+  notificationPolicy,
+  nativeAdapter,
+  platformContract,
+}) {
+  const contractFile = parseTypeScript(platformContract, "src/core/contracts/platform.ts");
+  assertNotificationFactory(
+    parseTypeScript(notificationPolicy, "src/app/notification-policy.ts"),
+    notificationRequestFields(contractFile),
+  );
+  assertAppNotificationIntegration(parseTypeScript(app, "src/app/App.ts"));
+  assertNativeNotificationAdapter(parseTypeScript(nativeAdapter, "src/platform/native/index.ts"));
+}
+
 async function pngMetadata(path) {
   const data = await readFile(resolve(root, path));
   invariant(data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), `${path}: not a PNG`);
@@ -408,7 +767,6 @@ const nativeAdapter = await text("src/platform/native/index.ts");
 for (const contract of [
   "this.preferences.migrate()",
   "this.preferences.removeOld()",
-  "schedule: { at: new Date(at) }",
   "this.permissionVersion !== version",
   "this.cancellationVersion += 1",
   "HapticsPort",
@@ -419,7 +777,12 @@ for (const contract of [
   invariant(nativeAdapter.includes(contract), `Native adapter contract is missing: ${contract}`);
 }
 const app = await text("src/app/App.ts");
-invariant(app.includes("at: sleep.completesAt"), "Sleep notification must use the exact completion timestamp");
+assertSleepNotificationIntegration({
+  app,
+  notificationPolicy: await text("src/app/notification-policy.ts"),
+  nativeAdapter,
+  platformContract: await text("src/core/contracts/platform.ts"),
+});
 invariant(
   app.match(/this\.cancelSleepNotification\(\)/gu)?.length === 3,
   "Sleep completion, early wake, and notification opt-out must cancel notifications",

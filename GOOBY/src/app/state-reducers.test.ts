@@ -15,6 +15,7 @@ import {
   migrateLegacyUiReducer,
   savedTravelSnapshot,
   sanitizeCanonicalUi,
+  setQuietHoursReducer,
   settlementReceiptForRun,
   settleMinigameReducer,
   withTravelSnapshotReducer,
@@ -164,6 +165,7 @@ describe("replayable canonical save integration", () => {
       version: 1,
       equipped: { head: "sunny-bucket-hat" },
       preferences: { audio: false, haptics: false, reducedMotion: true, notifications: false },
+      quietHours: { startHour: 21, endHour: 8 },
       highScores: { "carrot-catch": 99 },
       sleepRationaleSeen: true,
     };
@@ -179,6 +181,10 @@ describe("replayable canonical save integration", () => {
       highScores: { "carrot-catch": 99 },
       sleepRationaleSeen: true,
     });
+    expect(withoutOwnership.notificationPolicy.quietHours).toEqual({
+      startHour: 21,
+      endHour: 8,
+    });
 
     const owned = SaveStateSchema.parse({
       ...canonical(),
@@ -186,6 +192,33 @@ describe("replayable canonical save integration", () => {
       ui: { equipped: { head: "sunny-bucket-hat", neck: "not-a-real-item" }, highScores: {}, sleepRationaleSeen: false },
     });
     expect(sanitizeCanonicalUi(owned).ui.equipped).toEqual({ head: "sunny-bucket-hat" });
+  });
+
+  it("round-trips quiet-hour edits and the disabled toggle through a canonical save adapter", async () => {
+    const initial = canonical();
+    const port = new ConflictSave(initial, null);
+    const coordinator = new ReplayableSaveCoordinator(
+      port,
+      () => 1_000,
+      initial,
+      0,
+      () => undefined,
+    );
+
+    await coordinator.apply(setQuietHoursReducer({ startHour: 21, endHour: 8 }));
+    expect((await loadSave(port, 1_000)).state.notificationPolicy.quietHours).toEqual({
+      startHour: 21,
+      endHour: 8,
+    });
+
+    await coordinator.apply(setQuietHoursReducer({ startHour: 22, endHour: 7 }));
+    expect((await loadSave(port, 1_000)).state.notificationPolicy.quietHours).toEqual({
+      startHour: 22,
+      endHour: 7,
+    });
+
+    await coordinator.apply(setQuietHoursReducer(null));
+    expect((await loadSave(port, 1_000)).state.notificationPolicy.quietHours).toBeNull();
   });
 
   it("round-trips an active city snapshot through the canonical save port", async () => {

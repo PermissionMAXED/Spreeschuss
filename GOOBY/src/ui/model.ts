@@ -1,4 +1,5 @@
 import { xpRequiredForLevel, type Economy } from "../core/contracts/economy";
+import { isDuringQuietHours, type QuietHours } from "../core/contracts/platform";
 import {
   MINIGAME_IDS,
   type MinigameId,
@@ -24,6 +25,7 @@ export interface UiPersistedState {
   readonly version: 1;
   readonly equipped: Readonly<Partial<Record<WardrobeSlot, string>>>;
   readonly preferences: UiPreferences;
+  readonly quietHours?: QuietHours | null;
   readonly highScores: Readonly<Partial<Record<MinigameId, number>>>;
   readonly sleepRationaleSeen: boolean;
 }
@@ -58,6 +60,10 @@ export type CityUiPhase =
   | "driving-home";
 
 export const UI_STORAGE_KEY = "gooby.ui.v1";
+export const DEFAULT_UI_QUIET_HOURS: Readonly<QuietHours> = Object.freeze({
+  startHour: 21,
+  endHour: 8,
+});
 
 const DEFAULT_STATE: UiPersistedState = {
   version: 1,
@@ -128,16 +134,37 @@ function parseHighScores(value: unknown): Partial<Record<MinigameId, number>> {
   return result;
 }
 
+function parseQuietHours(value: unknown): QuietHours | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "object" || value === null) return undefined;
+  const candidate = value as Partial<Record<keyof QuietHours, unknown>>;
+  return typeof candidate.startHour === "number"
+      && Number.isInteger(candidate.startHour)
+      && candidate.startHour >= 0
+      && candidate.startHour <= 23
+      && typeof candidate.endHour === "number"
+      && Number.isInteger(candidate.endHour)
+      && candidate.endHour >= 0
+      && candidate.endHour <= 23
+    ? {
+        startHour: candidate.startHour,
+        endHour: candidate.endHour,
+      }
+    : undefined;
+}
+
 export function parseUiState(raw: string | null): UiPersistedState {
   if (!raw) return structuredClone(DEFAULT_STATE);
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return structuredClone(DEFAULT_STATE);
     const candidate = parsed as Partial<Record<keyof UiPersistedState, unknown>>;
+    const quietHours = parseQuietHours(candidate.quietHours);
     return {
       version: 1,
       equipped: parseEquipped(candidate.equipped),
       preferences: parsePreferences(candidate.preferences),
+      ...(quietHours !== undefined ? { quietHours } : {}),
       highScores: parseHighScores(candidate.highScores),
       sleepRationaleSeen: isBoolean(candidate.sleepRationaleSeen)
         ? candidate.sleepRationaleSeen
@@ -159,6 +186,60 @@ export function removeLegacyUiState(storage?: StorageLike): void {
   } catch {
     // Canonical save remains authoritative if legacy storage is unavailable.
   }
+}
+
+export function formatQuietHour(hour: number): string {
+  return `${hour.toString().padStart(2, "0")}:00`;
+}
+
+export function parseQuietHourValue(value: string): number | null {
+  const match = /^([01]\d|2[0-3]):00$/u.exec(value);
+  return match?.[1] === undefined ? null : Number(match[1]);
+}
+
+export function quietHoursPresentation(
+  quietHours: QuietHours | null,
+  at: number,
+): {
+  readonly bounds: Readonly<QuietHours>;
+  readonly enabled: boolean;
+  readonly quietNow: boolean;
+  readonly explanation: string;
+  readonly status: string;
+} {
+  const bounds = quietHours ?? DEFAULT_UI_QUIET_HOURS;
+  if (!quietHours) {
+    return {
+      bounds,
+      enabled: false,
+      quietNow: false,
+      explanation: "Enable quiet hours to defer reminders during your chosen daily interval.",
+      status: "Off — reminders may arrive at any time.",
+    };
+  }
+  if (bounds.startHour === bounds.endHour) {
+    return {
+      bounds,
+      enabled: true,
+      quietNow: false,
+      explanation: "Start and end match, so no reminders are deferred.",
+      status: "On, but inactive — matching times create no quiet interval.",
+    };
+  }
+  const start = formatQuietHour(bounds.startHour);
+  const end = formatQuietHour(bounds.endHour);
+  const quietNow = isDuringQuietHours(at, bounds);
+  return {
+    bounds,
+    enabled: true,
+    quietNow,
+    explanation: bounds.startHour > bounds.endHour
+      ? `Runs overnight from ${start} to ${end}. Reminders due then wait until ${end}.`
+      : `Runs daily from ${start} to ${end}. Reminders due then wait until ${end}.`,
+    status: quietNow
+      ? `Quiet now — reminders wait until ${end}.`
+      : `Not quiet now — the next quiet interval starts at ${start}.`,
+  };
 }
 
 export function formatCountdown(remainingMs: number): string {
