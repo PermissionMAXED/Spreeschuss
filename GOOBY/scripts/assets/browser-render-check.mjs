@@ -17,7 +17,13 @@ const context = await browser.newContext({
 const page = await context.newPage();
 const browserErrors = [];
 page.on("console", (message) => {
-  if (message.type() === "error") browserErrors.push(message.text());
+  const value = message.text();
+  if (
+    message.type() === "error"
+    && !value.includes("frame-ancestors' is ignored when delivered via a <meta> element")
+  ) {
+    browserErrors.push(value);
+  }
 });
 page.on("pageerror", (error) => browserErrors.push(error.message));
 page.on("requestfailed", (request) => browserErrors.push(`${request.url()}: ${request.failure()?.errorText ?? "failed"}`));
@@ -43,7 +49,7 @@ const result = await page.evaluate(async () => {
         <div class="labels top"></div>
         <div class="labels bottom"></div>
       </section>
-      <footer><b>33/33 AssetKeys mapped</b><span>15 genuine pack licenses</span><span>No runtime network</span><span>WAV audio only</span></footer>
+      <footer><b>33/33 AssetKeys mapped</b><span>3 genuine pack licenses</span><span>7 consumer-complete files</span><span>No runtime network</span></footer>
     </main>`;
   const style = document.createElement("style");
   style.textContent = `
@@ -54,7 +60,7 @@ const result = await page.evaluate(async () => {
     .stage{position:relative;min-height:0;margin:0 28px 10px;border:2px solid #fff9;border-radius:26px;overflow:hidden;background:#fff6e0a8;box-shadow:0 18px 45px #8d593532,inset 0 1px #fff}
     canvas{display:block;width:100%;height:100%}.row-label{position:absolute;left:13px;padding:5px 8px;border-radius:8px;color:#fff;font-size:9px;font-weight:950;letter-spacing:.1em;writing-mode:vertical-rl;transform:rotate(180deg)}
     .row-label.proc{top:15% ;background:#d96f63}.row-label.vendor{top:59%;background:#649b8a}
-    .labels{position:absolute;left:4.8%;right:1.8%;display:grid;grid-template-columns:repeat(6,1fr);text-align:center;pointer-events:none}.labels.top{top:43.5%}.labels.bottom{top:91%}
+    .labels{position:absolute;left:4.8%;right:1.8%;display:grid;grid-template-columns:repeat(4,1fr);text-align:center;pointer-events:none}.labels.top{top:43.5%}.labels.bottom{top:91%}
     .labels span{font-size:10px;font-weight:900;letter-spacing:.03em;color:#654b42;text-shadow:0 1px #fff}.labels small{display:block;color:#a26c5b;font-size:8px;font-weight:800;text-transform:uppercase}
     footer{display:flex;align-items:center;justify-content:center;gap:11px;padding-bottom:10px}footer>*{padding:7px 13px;border-radius:99px;background:#fff8e9;color:#76564a;font-size:11px;box-shadow:0 3px 10px #96623a24}footer b{background:#6fae93;color:#fff}
   `;
@@ -79,7 +85,7 @@ const result = await page.evaluate(async () => {
   sun.castShadow = true;
   scene.add(sun);
 
-  const columns = [-5.25, -3.15, -1.05, 1.05, 3.15, 5.25];
+  const columns = [-4.65, -1.55, 1.55, 4.65];
   const cards = [];
   for (const y of [1.65, -1.65]) {
     for (const x of columns) {
@@ -112,22 +118,18 @@ const result = await page.evaluate(async () => {
   }
 
   const procedural = [
-    ["gooby.body", "Gooby", "cosmetic-ready"],
-    ["food.pancake", "Pancakes", "food"],
-    ["furniture.sofa", "Sofa", "furniture"],
     ["city.car", "Gooby car", "traffic"],
     ["building.carrot-market", "Carrot Market", "shop facade"],
-    ["icon.heart", "Heart", "icon / particle"],
+    ["building.cloud-boutique", "Cloud Boutique", "shop facade"],
+    ["building.fluff-salon", "Fluff Salon", "shop facade"],
   ];
   procedural.forEach(([key], index) => normalize(createProceduralAsset(key), columns[index], 1.65));
 
   const vendored = [
-    ["assets/vendor/food-kit/carrot.glb", "Carrot", "Food Kit"],
-    ["assets/vendor/furniture-kit/sofa.glb", "Sofa", "Furniture Kit"],
     ["assets/vendor/car-kit/gooby-car.glb", "Sedan", "Car Kit"],
-    ["assets/vendor/city-kit-commercial/carrot-market.glb", "Building", "Commercial"],
-    ["assets/vendor/nature-kit/tree.glb", "Tree", "Nature Kit"],
-    ["assets/vendor/minigolf-kit/ball.glb", "Toy ball", "Minigolf Kit"],
+    ["assets/vendor/city-kit-commercial/carrot-market.glb", "Market", "Commercial"],
+    ["assets/vendor/city-kit-suburban/cloud-boutique.glb", "Boutique", "Suburban"],
+    ["assets/vendor/city-kit-commercial/fluff-salon.glb", "Salon", "Commercial"],
   ];
   const loader = new GLTFLoader();
   await Promise.all(vendored.map(async ([path], index) => {
@@ -159,7 +161,7 @@ const result = await page.evaluate(async () => {
   return { procedural: procedural.length, vendored: vendored.length };
 });
 
-if (result.procedural !== 6 || result.vendored !== 6) throw new Error("Asset showcase did not render both rows");
+if (result.procedural !== 4 || result.vendored !== 4) throw new Error("Asset showcase did not render both rows");
 await page.waitForTimeout(2400);
 await page.screenshot({ path: screenshotPath });
 await page.evaluate(() => window.__stopAssetShowcase?.());

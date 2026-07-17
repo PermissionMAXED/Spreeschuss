@@ -22,17 +22,17 @@ concurrency:
 
 jobs:
   web:
-    name: Lint, test, build, and browser E2E
+    name: Lint, test, build, and every browser suite
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: GOOBY
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - name: Use repository Node version
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
         with:
           node-version-file: GOOBY/.nvmrc
           cache: npm
@@ -41,12 +41,26 @@ jobs:
         run: npm ci
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+      - name: Check diff and whitespace hygiene
+        run: npm run ci:diff-check
       - name: Lint
         run: npm run lint
       - name: Type-check
         run: npm run typecheck
-      - name: Unit and specialist tests
-        run: npm run test
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Specialist tests
+        run: npm run test:specialists
+      - name: Reject skipped or focused tests
+        run: npm run ci:no-skipped-tests
+      - name: Run root browser acceptance
+        run: npm run test:e2e:root
+      - name: Run UI specialist browser suite
+        run: npm run test:e2e:ui
+      - name: Run City specialist browser suite
+        run: npm run test:e2e:city
+      - name: Run Bubble specialist browser suite
+        run: npm run test:e2e:bubble
       - name: Audit offline assets
         run: npm run assets:audit
       - name: Check runtime asset budget
@@ -59,23 +73,40 @@ jobs:
         run: npm run audit:bundle
       - name: Scan production bundle
         run: npm run audit:production
-      - name: Run Chromium E2E
-        run: npm run test:e2e
       - name: Audit adaptive quality and scene disposal
         run: npm run audit:perf
         env:
           GOOBY_ARTIFACTS: playwright-report/perf-artifacts
       - name: Check native project inputs
         run: npm run ci:native-check
+      - name: Install pinned actionlint
+        shell: bash
+        env:
+          ACTIONLINT_VERSION: 1.7.7
+          ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 \
+            --output "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/actionlint-bin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint-bin" actionlint
+          test -x "$RUNNER_TEMP/actionlint-bin/actionlint"
+          echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
       - name: Check Gooby workflow structure
-        run: npm run ci:workflow-check
+        run: |
+          command -v actionlint >/dev/null
+          npm run ci:workflow-check
       - name: Upload web bundle and Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@615b319bd27bb32c3d64dca6b6ed6974d5fbe653 # v6.0.0
         with:
           name: gooby-web-dist-and-report
           path: |
             GOOBY/dist
             GOOBY/playwright-report
+            GOOBY/test-results
           if-no-files-found: warn
           retention-days: 14

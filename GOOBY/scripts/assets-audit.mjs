@@ -2,9 +2,11 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
 import { ASSET_KEY_MAP, MAX_FILE_BYTES, MAX_TOTAL_BYTES, PACKS } from "./assets/catalog.mjs";
 import {
+  buildAssetConsumerAudit,
   compareExactKeys,
   extractAssetKeys,
   extractManifestKeys,
+  extractRuntimeAssetRequests,
   fileSizeViolations,
   glbResourceUris,
   isAllowedRuntimeAudio,
@@ -148,6 +150,7 @@ async function main() {
         || fileRecord.kind !== expected.kind
         || fileRecord.purpose !== expected.purpose
         || (fileRecord.transform ?? null) !== (expected.transform ?? null)
+        || !sameJson(fileRecord.consumers ?? [], expected.consumers ?? [])
       ) {
         violations.push(`${fileRecord.path}: metadata differs from curated catalog`);
       }
@@ -262,16 +265,38 @@ async function main() {
     }
   }
 
+  const sourceRuntimeFiles = await filesBelow(join(ROOT, "src"));
   const runtimeFiles = [
-    ...await filesBelow(join(ROOT, "src")),
+    ...sourceRuntimeFiles,
     ...publicFiles,
   ];
+  const sourceFiles = new Map();
   for (const file of runtimeFiles) {
     if (file.symbolicLink || !RUNTIME_TEXT_EXTENSIONS.has(extname(file.path).toLowerCase())) continue;
     const source = await readFile(file.path, "utf8");
     const displayPath = relative(ROOT, file.path).replaceAll("\\", "/");
+    if (displayPath.startsWith("src/")) sourceFiles.set(displayPath, source);
     violations.push(...runtimeReferenceViolations(displayPath, source));
   }
+
+  const declaredAssetKeys = new Map();
+  for (const [key, mapping] of Object.entries(manifest.keys ?? {})) {
+    for (const reference of mapping.vendored ?? []) {
+      const keys = declaredAssetKeys.get(reference.path) ?? new Set();
+      keys.add(key);
+      declaredAssetKeys.set(reference.path, keys);
+    }
+  }
+  const runtimeRequests = extractRuntimeAssetRequests(sourceFiles, contractKeys);
+  const consumerAudit = buildAssetConsumerAudit({
+    files: (manifest.packs ?? []).flatMap((pack) => pack.files ?? []),
+    availablePaths: actualPublicVendor,
+    modelDependencies,
+    runtimeRequests,
+    sourceFiles,
+    declaredAssetKeys,
+  });
+  violations.push(...consumerAudit.violations);
 
   if (violations.length > 0) {
     console.error(`Asset audit failed with ${violations.length} violation(s):\n${violations.map((item) => `- ${item}`).join("\n")}`);
@@ -279,6 +304,23 @@ async function main() {
     return;
   }
 
+  console.log("Asset consumer audit:");
+  for (const entry of consumerAudit.entries) {
+    const dependency = entry.dependenciesOf.length > 0
+      ? `transitive GLB dependency of ${entry.dependenciesOf.join(", ")}`
+      : "not transitive";
+    const request = entry.runtimeRequests.length > 0
+      ? entry.runtimeRequests
+        .map(({ assetKey, paths }) => `${assetKey} from ${paths.join(", ")}`)
+        .join("; ")
+      : "none (resolved through a parent GLB)";
+    const consumer = entry.sourceConsumers.length > 0
+      ? entry.sourceConsumers
+        .map(({ path, marker }) => `${path} :: ${marker}`)
+        .join("; ")
+      : "none (parent model is the source consumer)";
+    console.log(`- ${entry.path}: declaration=yes; ${dependency}; runtime request=${request}; source consumer=${consumer}`);
+  }
   const vendoredCount = (manifest.packs ?? []).filter(({ status }) => status !== "failed").length;
   console.log(
     `Asset audit passed: ${contractKeys.length} keys mapped, ${vendoredCount}/${PACKS.length} packs available, `

@@ -210,6 +210,34 @@ export function distance2d(a: CityPoint, b: CityPoint): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);
 }
 
+export function didReachCityTrigger(
+  from: CityPoint,
+  to: CityPoint,
+  target: CityPoint,
+  radius: number,
+): boolean {
+  if (!Number.isFinite(radius) || radius < 0) {
+    throw new RangeError("A city trigger radius must be finite and non-negative");
+  }
+  const dx = to[0] - from[0];
+  const dz = to[1] - from[1];
+  const squaredLength = dx * dx + dz * dz;
+  const projection = squaredLength === 0
+    ? 0
+    : Math.max(
+        0,
+        Math.min(
+          1,
+          ((target[0] - from[0]) * dx + (target[1] - from[1]) * dz) / squaredLength,
+        ),
+      );
+  const closest: CityPoint = [
+    from[0] + dx * projection,
+    from[1] + dz * projection,
+  ];
+  return distance2d(closest, target) <= radius;
+}
+
 export function cityRoute(shop: ShopId, direction: "outbound" | "home" = "outbound"): readonly CityPoint[] {
   const route = CITY_DESTINATIONS[shop].route;
   return direction === "outbound" ? route : [...route].reverse();

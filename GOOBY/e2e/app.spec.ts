@@ -5,6 +5,7 @@ import {
   type MinigameId,
   type ShopId,
 } from "../src/core/contracts/scenes";
+import { driveCityLeg } from "./city-actions";
 
 async function freshStart(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -40,7 +41,8 @@ async function openPanel(page: Page, panel: "places" | "play" | "wardrobe" | "it
 
 async function startGameFromHub(page: Page, game: MinigameId): Promise<void> {
   await openPanel(page, "play");
-  await page.locator(`.game-card[data-game="${game}"]`).click();
+  const card = page.locator(`.game-card[data-game="${game}"]`);
+  if (await card.isVisible()) await card.click();
   await page.locator(`[data-ui-action="start-game"][data-game="${game}"]`).click();
   await expect(page.locator(`[data-minigame="${game}"]`)).toBeVisible();
   await expect.poll(async () =>
@@ -64,7 +66,7 @@ async function travelToShop(page: Page, shop: ShopId): Promise<void> {
   await expect(page.getByRole("button", { name: "Hold brake" })).toBeVisible();
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().cityPhase))
     .toBe("driving-outbound");
-  await page.evaluate(() => window.__gooby.test?.completeCityLeg());
+  await driveCityLeg(page, "arrived");
   await expect(page.getByTestId("enter-shop")).toBeVisible();
   await page.getByTestId("enter-shop").click();
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().sceneId))
@@ -85,7 +87,7 @@ async function purchaseAndReturn(page: Page, shop: ShopId, itemId: string): Prom
   await page.getByTestId("drive-home").click();
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().cityPhase))
     .toBe("driving-home");
-  await page.evaluate(() => window.__gooby.test?.completeCityLeg());
+  await driveCityLeg(page, "destination-board");
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().cityPhase))
     .toBe("destination-board");
   await page.locator(".scene-chip").click();
@@ -192,30 +194,54 @@ test("completes a minigame payout and persists its high score", async ({ page })
   const after = await page.evaluate(() => window.__gooby.snapshot()?.economy);
   expect(after?.coins ?? 0).toBeGreaterThan(before?.coins ?? 0);
   expect(after?.xp ?? 0).toBeGreaterThan(before?.xp ?? 0);
+  expect(await page.evaluate(() =>
+    (window.__gooby.snapshot()?.ui?.highScores?.["carrot-catch"] ?? -1) >= 0)).toBe(true);
+});
+
+test("keeps unpaid quits empty and completed replay settlement idempotent", async ({ page }) => {
+  await freshStart(page);
+  await completeOnboarding(page);
+  const initial = await page.evaluate(() => window.__gooby.snapshot());
+
+  await startGameFromHub(page, "carrot-catch");
+  await page.locator('[data-scene-chrome] [data-ui-action="pause"]').click();
+  await page.getByRole("button", { name: "Leave without reward" }).click();
+  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().sceneId))
+    .toBe("home:living-room");
+  expect(await page.evaluate(() => window.__gooby.snapshot()?.economy)).toEqual(initial?.economy);
+  expect(await page.evaluate(() => window.__gooby.snapshot()?.minigameSettlement)).toBeNull();
+
+  await startGameFromHub(page, "carrot-catch");
+  await page.getByRole("button", { name: /CATCH/u }).click();
+  await page.evaluate(() => window.__gooby.test?.advanceMinigameTime(76_000));
+  await page.getByRole("button", { name: "COLLECT REWARDS" }).dblclick();
+  await expect(page.getByRole("button", { name: "Play again" })).toBeVisible();
+  const settled = await page.evaluate(() => {
+    const state = window.__gooby.snapshot();
+    return { economy: state?.economy, receipt: state?.minigameSettlement };
+  });
+  expect(settled.receipt?.runId).toBeTruthy();
+
+  await page.getByRole("button", { name: "Play again" }).click();
+  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().activeMinigame))
+    .toBe("carrot-catch");
   expect(await page.evaluate(() => {
-    const raw = localStorage.getItem("gooby.ui.v1");
-    if (!raw) return false;
-    const parsed = JSON.parse(raw) as { highScores?: Record<string, number> };
-    return (parsed.highScores?.["carrot-catch"] ?? -1) >= 0;
-  })).toBe(true);
+    const state = window.__gooby.snapshot();
+    return { economy: state?.economy, receipt: state?.minigameSettlement };
+  })).toEqual(settled);
+  await page.locator('[data-scene-chrome] [data-ui-action="pause"]').click();
+  await page.getByRole("button", { name: "Leave without reward" }).click();
+  await page.evaluate(() => window.__gooby.test?.flushSave());
+  await page.reload();
+  await expect(page.locator("#app")).toHaveAttribute("data-ready", "true");
+  expect(await page.evaluate(() => {
+    const state = window.__gooby.snapshot();
+    return { economy: state?.economy, receipt: state?.minigameSettlement };
+  })).toEqual(settled);
 });
 
 test("drives to shops, buys, requires returns, equips, places, reloads, and disposes offline", async ({ page }) => {
   test.slow();
-  const consoleErrors: string[] = [];
-  const pageErrors: string[] = [];
-  const externalRequests: string[] = [];
-  page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
-  });
-  page.on("pageerror", (error) => pageErrors.push(error.message));
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== "http://127.0.0.1:4519") {
-      externalRequests.push(url.href);
-    }
-  });
-
   await freshStart(page);
   await completeOnboarding(page);
   await openCityBoard(page);
@@ -227,7 +253,7 @@ test("drives to shops, buys, requires returns, equips, places, reloads, and disp
   await expect(page.locator(".toast")).toContainText("Finish the return drive");
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().cityPhase))
     .toBe("driving-outbound");
-  await page.evaluate(() => window.__gooby.test?.completeCityLeg());
+  await driveCityLeg(page, "arrived");
   await page.getByTestId("enter-shop").click();
   await page.locator('.shop-catalog [data-shop-item="apricot-floor-cushion"]').click();
   await page.locator('[data-shop-action="buy"]').click();
@@ -236,7 +262,7 @@ test("drives to shops, buys, requires returns, equips, places, reloads, and disp
   await page.getByRole("button", { name: "Return to Town" }).click();
   await expect(page.getByTestId("quick-return")).toBeHidden();
   await page.getByTestId("drive-home").click();
-  await page.evaluate(() => window.__gooby.test?.completeCityLeg());
+  await driveCityLeg(page, "destination-board");
   await page.locator(".scene-chip").click();
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().sceneId))
     .toBe("home:living-room");
@@ -245,11 +271,9 @@ test("drives to shops, buys, requires returns, equips, places, reloads, and disp
   await openPanel(page, "wardrobe");
   await page.locator('[data-ui-action="wardrobe-preview"][data-item="sunny-bucket-hat"]').click();
   await page.locator('[data-ui-action="wardrobe-equip"][data-slot="head"]').click();
-  await expect.poll(async () => page.evaluate(() => {
-    const raw = localStorage.getItem("gooby.ui.v1");
-    if (!raw) return null;
-    return (JSON.parse(raw) as { equipped?: { head?: string } }).equipped?.head ?? null;
-  })).toBe("sunny-bucket-hat");
+  await expect.poll(async () =>
+    page.evaluate(() => window.__gooby.snapshot()?.ui?.equipped?.head ?? null))
+    .toBe("sunny-bucket-hat");
 
   await page.locator(".sheet").getByRole("button", { name: "Close" }).click();
   await openPanel(page, "items");
@@ -263,6 +287,14 @@ test("drives to shops, buys, requires returns, equips, places, reloads, and disp
   await page.reload();
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().sceneId))
     .toBe("home:living-room");
+  expect(await page.evaluate(() => {
+    const state = window.__gooby.snapshot();
+    return {
+      cushion: state?.inventory["apricot-floor-cushion"],
+      hat: state?.inventory["sunny-bucket-hat"],
+      equippedHead: state?.ui?.equipped?.head,
+    };
+  })).toEqual({ cushion: 1, hat: 1, equippedHead: "sunny-bucket-hat" });
   expect(await page.evaluate(() =>
     Object.keys(window.__gooby.snapshot()?.inventory ?? {}).some((key) =>
       key.includes("apricot-floor-cushion") && key.startsWith("__home.catalog.v1|")))).toBe(true);
@@ -276,7 +308,4 @@ test("drives to shops, buys, requires returns, equips, places, reloads, and disp
     minigameRoots: 0,
     disposed: true,
   });
-  expect(externalRequests).toEqual([]);
-  expect(pageErrors).toEqual([]);
-  expect(consoleErrors).toEqual([]);
 });

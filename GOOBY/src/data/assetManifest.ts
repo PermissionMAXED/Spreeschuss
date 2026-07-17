@@ -1,6 +1,6 @@
 import type { AssetKey } from "../core/contracts/assets";
 
-export type VendoredAssetRole = "primary" | "variant" | "accent" | "backplate";
+export type VendoredAssetRole = "primary";
 
 export interface VendoredAssetReference {
   readonly path: `assets/vendor/${string}`;
@@ -12,6 +12,14 @@ export interface RuntimeAssetManifestEntry {
   readonly vendored: readonly VendoredAssetReference[];
 }
 
+export interface AssetCredit {
+  readonly packId: string;
+  readonly title: string;
+  readonly creator: "Kenney";
+  readonly license: "Creative Commons Zero (CC0)";
+  readonly source: string;
+}
+
 const file = (
   path: VendoredAssetReference["path"],
   role: VendoredAssetRole = "primary",
@@ -20,27 +28,24 @@ const file = (
 export const ASSET_MANIFEST = {
   "gooby.body": { fallback: "gooby-body", vendored: [] },
   "gooby.eye": { fallback: "gooby-eye", vendored: [] },
-  "food.carrot": { fallback: "carrot", vendored: [file("assets/vendor/food-kit/carrot.glb")] },
-  "food.apple": { fallback: "apple", vendored: [file("assets/vendor/food-kit/apple.glb")] },
-  "food.pancake": { fallback: "pancake", vendored: [file("assets/vendor/food-kit/pancake.glb")] },
-  "furniture.sofa": { fallback: "sofa", vendored: [file("assets/vendor/furniture-kit/sofa.glb")] },
-  "furniture.armchair": { fallback: "armchair", vendored: [file("assets/vendor/furniture-kit/armchair.glb")] },
-  "furniture.coffee-table": { fallback: "coffee-table", vendored: [file("assets/vendor/furniture-kit/coffee-table.glb")] },
-  "furniture.rug": { fallback: "rug", vendored: [file("assets/vendor/furniture-kit/rug.glb")] },
-  "furniture.lamp": { fallback: "floor-lamp", vendored: [file("assets/vendor/furniture-kit/lamp.glb")] },
-  "furniture.bookshelf": { fallback: "bookshelf", vendored: [file("assets/vendor/furniture-kit/bookshelf.glb")] },
-  "furniture.bed": { fallback: "bed", vendored: [file("assets/vendor/furniture-kit/bed.glb")] },
-  "furniture.bathtub": { fallback: "bathtub", vendored: [file("assets/vendor/furniture-kit/bathtub.glb")] },
-  "furniture.kitchen-counter": { fallback: "kitchen-counter", vendored: [file("assets/vendor/furniture-kit/kitchen-counter.glb")] },
-  "city.road": { fallback: "toy-road", vendored: [file("assets/vendor/city-kit-roads/road.glb")] },
-  "city.tree": { fallback: "flowering-tree", vendored: [file("assets/vendor/nature-kit/tree.glb")] },
-  "city.lamp": { fallback: "street-lamp", vendored: [file("assets/vendor/city-kit-roads/street-lamp.glb")] },
+  "food.carrot": { fallback: "carrot", vendored: [] },
+  "food.apple": { fallback: "apple", vendored: [] },
+  "food.pancake": { fallback: "pancake", vendored: [] },
+  "furniture.sofa": { fallback: "sofa", vendored: [] },
+  "furniture.armchair": { fallback: "armchair", vendored: [] },
+  "furniture.coffee-table": { fallback: "coffee-table", vendored: [] },
+  "furniture.rug": { fallback: "rug", vendored: [] },
+  "furniture.lamp": { fallback: "floor-lamp", vendored: [] },
+  "furniture.bookshelf": { fallback: "bookshelf", vendored: [] },
+  "furniture.bed": { fallback: "bed", vendored: [] },
+  "furniture.bathtub": { fallback: "bathtub", vendored: [] },
+  "furniture.kitchen-counter": { fallback: "kitchen-counter", vendored: [] },
+  "city.road": { fallback: "toy-road", vendored: [] },
+  "city.tree": { fallback: "flowering-tree", vendored: [] },
+  "city.lamp": { fallback: "street-lamp", vendored: [] },
   "city.car": {
     fallback: "gooby-car",
-    vendored: [
-      file("assets/vendor/car-kit/gooby-car.glb"),
-      file("assets/vendor/car-kit/traffic-car.glb", "variant"),
-    ],
+    vendored: [file("assets/vendor/car-kit/gooby-car.glb")],
   },
   "building.carrot-market": {
     fallback: "carrot-market",
@@ -54,37 +59,43 @@ export const ASSET_MANIFEST = {
     fallback: "fluff-salon",
     vendored: [file("assets/vendor/city-kit-commercial/fluff-salon.glb")],
   },
-  "icon.heart": {
-    fallback: "heart-icon",
-    vendored: [file("assets/vendor/ui-pack/round-button.png", "backplate")],
-  },
-  "icon.carrot": { fallback: "carrot-icon", vendored: [file("assets/vendor/food-kit/carrot.glb")] },
+  "icon.heart": { fallback: "heart-icon", vendored: [] },
+  "icon.carrot": { fallback: "carrot-icon", vendored: [] },
   "icon.coin": { fallback: "coin-icon", vendored: [] },
-  "icon.sleep": {
-    fallback: "sleep-icon",
-    vendored: [file("assets/vendor/game-icons/star.png", "accent")],
-  },
+  "icon.sleep": { fallback: "sleep-icon", vendored: [] },
   "particle.heart": { fallback: "heart-particle", vendored: [] },
-  "particle.sparkle": {
-    fallback: "sparkle-particle",
-    vendored: [file("assets/vendor/particle-pack/sparkle.png")],
-  },
-  "particle.bubble": {
-    fallback: "bubble-particle",
-    vendored: [file("assets/vendor/particle-pack/bubble.png")],
-  },
-  "audio.happy": {
-    fallback: "happy-chime",
-    vendored: [file("assets/vendor/music-jingles/happy.wav")],
-  },
+  "particle.sparkle": { fallback: "sparkle-particle", vendored: [] },
+  "particle.bubble": { fallback: "bubble-particle", vendored: [] },
+  "audio.happy": { fallback: "happy-chime", vendored: [] },
   "audio.munch": { fallback: "munch-crunch", vendored: [] },
   "audio.sleep": { fallback: "sleep-chime", vendored: [] },
   "audio.wake": { fallback: "wake-chime", vendored: [] },
-  "audio.tap": {
-    fallback: "tap-pop",
-    vendored: [file("assets/vendor/interface-sounds/tap.wav")],
-  },
+  "audio.tap": { fallback: "tap-pop", vendored: [] },
 } as const satisfies Readonly<Record<AssetKey, RuntimeAssetManifestEntry>>;
+
+export const ASSET_CREDITS = [
+  {
+    packId: "city-kit-commercial",
+    title: "City Kit (Commercial)",
+    creator: "Kenney",
+    license: "Creative Commons Zero (CC0)",
+    source: "kenney.nl/assets/city-kit-commercial",
+  },
+  {
+    packId: "city-kit-suburban",
+    title: "City Kit (Suburban)",
+    creator: "Kenney",
+    license: "Creative Commons Zero (CC0)",
+    source: "kenney.nl/assets/city-kit-suburban",
+  },
+  {
+    packId: "car-kit",
+    title: "Car Kit",
+    creator: "Kenney",
+    license: "Creative Commons Zero (CC0)",
+    source: "kenney.nl/assets/car-kit",
+  },
+] as const satisfies readonly AssetCredit[];
 
 export function assetManifestEntry(key: AssetKey): RuntimeAssetManifestEntry {
   return ASSET_MANIFEST[key];

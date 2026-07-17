@@ -18,7 +18,7 @@ import {
   CITY_GARAGE_POSITION,
   GARAGE_TRIGGER_RADIUS,
   cityRoute,
-  distance2d,
+  didReachCityTrigger,
   districtAt,
   nearestRouteSample,
   pointAlongRoute,
@@ -168,6 +168,7 @@ export class CityDriveScene implements GameScene {
     let car: CityCarSnapshot;
 
     if (state.phase === "driving-outbound" || state.phase === "driving-home") {
+      const previousPosition = this.physics.snapshot.position;
       const step = this.physics.step(deltaSeconds, this.controls);
       car = step.snapshot;
       if (step.collectedCoinIds.length > 0) {
@@ -185,14 +186,19 @@ export class CityDriveScene implements GameScene {
       );
 
       if (state.phase === "driving-outbound") {
-        const arrived = this.controller.tryArriveAt(step.snapshot.position);
+        const arrived = this.controller.tryArriveAlong(previousPosition, step.snapshot.position);
         if (arrived) {
           this.physics.park(true);
           this.world.showDestination(null);
           this.overlay.releaseControls();
           this.emitState(car);
         }
-      } else if (distance2d(step.snapshot.position, CITY_GARAGE_POSITION) <= GARAGE_TRIGGER_RADIUS) {
+      } else if (didReachCityTrigger(
+        previousPosition,
+        step.snapshot.position,
+        CITY_GARAGE_POSITION,
+        GARAGE_TRIGGER_RADIUS,
+      )) {
         this.controller.arriveHome();
         this.physics.setRoute(cityRoute("carrot-market"), {
           position: CITY_GARAGE_POSITION,

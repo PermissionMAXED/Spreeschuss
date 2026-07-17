@@ -6,6 +6,9 @@ import {
 } from "@playwright/test";
 
 const APP_ORIGIN = "http://127.0.0.1:4519";
+const IGNORED_BROWSER_CONSOLE_ERRORS = [
+  "The Content Security Policy directive 'frame-ancestors' is ignored when delivered via a <meta> element.",
+] as const;
 
 export interface AppDiagnostics {
   readonly consoleErrors: string[];
@@ -21,7 +24,12 @@ export const test = base.extend<{ appDiagnostics: AppDiagnostics }>({
       externalRequests: [],
     };
     const onConsole = (message: ConsoleMessage): void => {
-      if (message.type() === "error") diagnostics.consoleErrors.push(message.text());
+      if (
+        message.type() === "error"
+        && !IGNORED_BROWSER_CONSOLE_ERRORS.includes(message.text() as typeof IGNORED_BROWSER_CONSOLE_ERRORS[number])
+      ) {
+        diagnostics.consoleErrors.push(message.text());
+      }
     };
     const onPageError = (error: Error): void => {
       diagnostics.pageErrors.push(error.stack ?? error.message);

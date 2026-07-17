@@ -7,7 +7,7 @@ async function snapshot(page: Page): Promise<CityDriveDebugSnapshot> {
 }
 
 async function holdFor(page: Page, control: Locator, durationMs: number): Promise<boolean> {
-  const box = await control.boundingBox();
+  const box = await control.boundingBox({ timeout: 750 }).catch(() => null);
   if (!box) return false;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -34,9 +34,15 @@ async function steerToward(
 ): Promise<void> {
   const left = page.getByRole("button", { name: "Hold to steer left" });
   const right = page.getByRole("button", { name: "Hold to steer right" });
+  const drivingPhase = (await snapshot(page)).state.phase;
   for (let attempt = 0; attempt < 260; attempt += 1) {
     const current = await snapshot(page);
     if (stopPhase && current.state.phase === stopPhase) return;
+    if (current.state.phase !== drivingPhase) {
+      throw new Error(
+        `Pointer steering changed from ${drivingPhase} to unexpected ${current.state.phase}: ${JSON.stringify(current)}`,
+      );
+    }
     const dx = target[0] - current.car.position[0];
     const dz = target[1] - current.car.position[1];
     if (Math.hypot(dx, dz) <= radius) return;
@@ -50,7 +56,13 @@ async function steerToward(
         error > 0 ? left : right,
         Math.min(650, Math.max(100, Math.abs(error) * 420)),
       );
-      if (!held && stopPhase && (await snapshot(page)).state.phase === stopPhase) return;
+      if (!held) {
+        const after = await snapshot(page);
+        if (stopPhase && after.state.phase === stopPhase) return;
+        throw new Error(
+          `Steering control disappeared before ${stopPhase ?? target.join(", ")}: ${JSON.stringify(after)}`,
+        );
+      }
     }
   }
   throw new Error(`Pointer steering did not reach ${target.join(", ")}: ${JSON.stringify(await snapshot(page))}`);

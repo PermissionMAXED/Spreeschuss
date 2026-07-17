@@ -30,6 +30,7 @@ export interface CityOverlayHandlers {
 }
 
 const SHOP_ORDER: readonly ShopId[] = ["carrot-market", "fluff-salon", "cloud-boutique"];
+const DESTINATION_REARM_DELAY_MS = 250;
 
 export function computeEdgePointer(
   width: number,
@@ -91,6 +92,9 @@ export class CityDriveOverlay {
   private readonly recoveryValue: HTMLElement;
   private readonly edgePointer: HTMLElement;
   private readonly pointerControls: CityPointerControls;
+  private readonly destinationPointerStarts = new Map<number, HTMLButtonElement>();
+  private destinationSelectionEnabledAt = 0;
+  private wasDriving = false;
 
   constructor(
     mount: HTMLElement,
@@ -253,7 +257,22 @@ export class CityDriveOverlay {
     this.edgePointer = requiredElement(this.root, ".city-edge-pointer");
 
     for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-shop]")) {
-      button.addEventListener("click", () => {
+      button.addEventListener("pointerdown", (event) => {
+        if (
+          !this.destinationBoard.hidden
+          && performance.now() >= this.destinationSelectionEnabledAt
+        ) {
+          this.destinationPointerStarts.set(event.pointerId, button);
+        }
+      });
+      button.addEventListener("pointercancel", (event) => {
+        this.destinationPointerStarts.delete(event.pointerId);
+      });
+      button.addEventListener("click", (event) => {
+        const pointerId = event.pointerId;
+        const startedOnButton = this.destinationPointerStarts.get(pointerId) === button;
+        this.destinationPointerStarts.delete(pointerId);
+        if (event.detail !== 0 && !startedOnButton) return;
         const shop = button.dataset.shop as ShopId;
         handlers.select(shop);
       });
@@ -280,6 +299,12 @@ export class CityDriveOverlay {
 
   render(state: CityDriveState, metrics: CityOverlayMetrics): void {
     const driving = state.phase === "driving-outbound" || state.phase === "driving-home";
+    if (this.wasDriving && state.phase === "destination-board") {
+      this.destinationSelectionEnabledAt = performance.now() + DESTINATION_REARM_DELAY_MS;
+      this.destinationPointerStarts.clear();
+    }
+    this.wasDriving = driving;
+    if (driving) this.destinationPointerStarts.clear();
     this.pointerControls.setEnabled(driving);
     this.destinationBoard.hidden = state.phase !== "destination-board" && state.phase !== "depart-ready";
     this.arrivedBoard.hidden = state.phase !== "arrived";

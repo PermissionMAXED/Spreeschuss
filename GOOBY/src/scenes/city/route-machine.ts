@@ -10,6 +10,7 @@ import {
   CITY_GARAGE_HEADING,
   CITY_GARAGE_POSITION,
   PARKING_TRIGGER_RADIUS,
+  didReachCityTrigger,
   distance2d,
   type CityPoint,
 } from "../../data/city";
@@ -160,6 +161,17 @@ export class CityRouteMachine implements CityRouteController {
     if (this.current.phase !== "driving-outbound") return null;
     const selected = this.current.selected;
     if (!this.canTriggerArrival(selected, position)) return null;
+    this.arrive(selected);
+    return selected;
+  }
+
+  tryArriveAlong(from: CityPoint, to: CityPoint): ShopId | null {
+    if (this.current.phase !== "driving-outbound") return null;
+    const selected = this.current.selected;
+    const marker = CITY_DESTINATIONS[selected].markerPosition;
+    if (!didReachCityTrigger(from, to, [marker[0], marker[2]], PARKING_TRIGGER_RADIUS)) {
+      return null;
+    }
     this.arrive(selected);
     return selected;
   }

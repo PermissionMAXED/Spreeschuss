@@ -1,6 +1,6 @@
-# Gooby iOS shell
+# Gooby’s Cozy Burrow iOS shell
 
-This is the generated Capacitor 8 CocoaPods shell for the offline web build. The bundle identifier is `com.gooby.pet`, the display name is Gooby, and `dist` is copied into the app only by `npx cap sync ios`. `Pods/`, Xcode build output, and `App/App/public/` are generated and must remain uncommitted.
+This is the generated Capacitor 8 CocoaPods shell for the offline web build. The bundle identifier is `com.gooby.pet`, the display name is Gooby’s Cozy Burrow, and the rabbit remains named Gooby. `dist` is copied into the app only by `npx cap sync ios`. `Pods/`, Xcode build output, and `App/App/public/` are generated and must remain uncommitted.
 
 ## macOS prerequisites
 

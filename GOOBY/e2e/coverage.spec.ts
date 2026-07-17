@@ -1,5 +1,6 @@
 import { HOME_ZONE_IDS, type HomeZoneId } from "../src/core/contracts/scenes";
 import { SLEEP_DURATION_MS } from "../src/core/contracts/simulation";
+import { driveCityLeg } from "./city-actions";
 import { expect, test, type Page } from "./fixtures";
 
 async function waitForApp(page: Page): Promise<void> {
@@ -246,7 +247,7 @@ test("opens every UI panel and keeps fixed controls inside phone and iPad safe b
   }
 });
 
-test("uses real held steering and brake before completing a normal outbound shop route", async ({ page }) => {
+test("uses real held pointer and keyboard controls across a normal shop route", async ({ page }) => {
   await freshStart(page);
   await completeOnboarding(page);
   await openPanel(page, "places");
@@ -292,7 +293,18 @@ test("uses real held steering and brake before completing a normal outbound shop
   await page.mouse.up();
   await expect(brake).not.toHaveClass(/is-held/u);
 
-  await page.evaluate(() => window.__gooby.test?.completeCityLeg());
+  await page.evaluate(() => window.__gooby.test?.flushSave());
+  await page.reload();
+  await waitForApp(page);
+  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().cityPhase))
+    .toBe("driving-outbound");
+
+  await page.keyboard.down("a");
+  await expect(steer).toHaveClass(/is-held/u);
+  await page.keyboard.up("a");
+  await expect(steer).not.toHaveClass(/is-held/u);
+
+  await driveCityLeg(page, "arrived");
   await expect(page.getByTestId("enter-shop")).toBeVisible();
   await page.getByTestId("enter-shop").click();
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().sceneId))
@@ -306,7 +318,15 @@ test("uses real held steering and brake before completing a normal outbound shop
   await expect(page.getByTestId("quick-return")).toBeHidden();
   await expect(page.getByText(/first visit makes the return journey/u)).toBeVisible();
   await page.getByTestId("drive-home").click();
-  await page.evaluate(() => window.__gooby.test?.completeCityLeg());
+  await page.keyboard.down("d");
+  await page.waitForTimeout(650);
+  await page.keyboard.up("d");
+  await page.evaluate(() => window.__gooby.test?.flushSave());
+  await page.reload();
+  await waitForApp(page);
+  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().cityPhase))
+    .toBe("driving-home");
+  await driveCityLeg(page, "destination-board");
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().cityPhase))
     .toBe("destination-board");
 });

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -209,14 +210,70 @@ function asObject(value, label) {
   return value;
 }
 
+function documentedNativeMetadata(source) {
+  const match = /bundle identifier is\s+`([^`\r\n]+)`\s*,\s*the display name is\s+(?:`([^`\r\n]+)`|([^,\r\n]+))/iu.exec(source);
+  invariant(match, "ios/README.md must document the native bundle identifier and display name");
+  return {
+    appId: match[1],
+    appName: (match[2] ?? match[3]).trim(),
+  };
+}
+
+export function assertCanonicalProductMetadata({
+  config,
+  info,
+  target,
+  configurations,
+  nativeDocumentation,
+}) {
+  invariant(
+    typeof config.appName === "string"
+      && config.appName.length > 0
+      && config.appName === config.appName.trim()
+      && config.appName === config.appName.normalize("NFC")
+      && !/[\p{Cc}\p{Cf}]/u.test(config.appName),
+    "Capacitor appName must be a non-empty, trimmed NFC product title without control characters",
+  );
+  const productTitle = config.appName;
+  invariant(
+    info.CFBundleDisplayName === productTitle,
+    `Info.plist CFBundleDisplayName must match Capacitor appName "${productTitle}"`,
+  );
+  invariant(
+    info.CFBundleName === productTitle,
+    `Info.plist CFBundleName must match Capacitor appName "${productTitle}"`,
+  );
+  invariant(target.productType === "com.apple.product-type.application", "App target must produce an application bundle");
+  invariant(target.productName === "App", "App target product name must remain App");
+  for (const { name, settings } of configurations) {
+    invariant(settings.INFOPLIST_FILE === "App/Info.plist", `${name} must use App/Info.plist`);
+    invariant(settings.GENERATE_INFOPLIST_FILE !== "YES", `${name} must not generate a competing Info.plist`);
+    for (const key of ["INFOPLIST_KEY_CFBundleDisplayName", "INFOPLIST_KEY_CFBundleName"]) {
+      invariant(
+        !(key in settings) || settings[key] === productTitle,
+        `${name} ${key} must not override the canonical product title`,
+      );
+    }
+  }
+  const documented = documentedNativeMetadata(nativeDocumentation);
+  invariant(
+    documented.appId === config.appId,
+    `ios/README.md bundle identifier "${documented.appId}" must match Capacitor appId "${config.appId}"`,
+  );
+  invariant(
+    documented.appName === productTitle,
+    `ios/README.md display name "${documented.appName}" must match Capacitor appName "${productTitle}"`,
+  );
+  return productTitle;
+}
+
+export async function runNativeCheck() {
 const config = parseCapacitorConfig(await text("capacitor.config.ts"));
 invariant(config.appId === "com.gooby.pet", "Capacitor appId must be com.gooby.pet");
-invariant(config.appName === "Gooby", "Capacitor appName must be Gooby");
 invariant(config.webDir === "dist", "Capacitor webDir must be dist");
 invariant(!("server" in config), "Capacitor config must not contain a server URL");
 
 const info = asObject(parsePlist(await text("ios/App/App/Info.plist"), "Info.plist"), "Info.plist");
-invariant(info.CFBundleDisplayName === "Gooby", "Info.plist display name must be Gooby");
 invariant(info.CFBundleIdentifier === "$(PRODUCT_BUNDLE_IDENTIFIER)", "Info.plist must use the Xcode bundle setting");
 invariant(info.ITSAppUsesNonExemptEncryption === false, "Export-compliance encryption declaration must be false");
 invariant(info.UIRequiresFullScreen === true, "Portrait-only iPad support requires full-screen mode");
@@ -250,9 +307,11 @@ invariant(targetEntry, "App native target was not found");
 const target = asObject(targetEntry[1], "App target");
 const configurationList = asObject(objects[target.buildConfigurationList], "target configuration list");
 invariant(Array.isArray(configurationList.buildConfigurations), "Target build configurations are missing");
+const targetConfigurations = [];
 for (const id of configurationList.buildConfigurations) {
   const configuration = asObject(objects[id], `build configuration ${id}`);
   const settings = asObject(configuration.buildSettings, `${configuration.name} build settings`);
+  targetConfigurations.push({ name: configuration.name, settings });
   invariant(settings.PRODUCT_BUNDLE_IDENTIFIER === config.appId, `${configuration.name} bundle ID does not match Capacitor`);
   invariant(settings.TARGETED_DEVICE_FAMILY === "1,2", `${configuration.name} must target iPhone and iPad`);
 }
@@ -349,7 +408,7 @@ const nativeAdapter = await text("src/platform/native/index.ts");
 for (const contract of [
   "this.preferences.migrate()",
   "this.preferences.removeOld()",
-  "schedule: { at: new Date(request.at) }",
+  "schedule: { at: new Date(at) }",
   "this.permissionVersion !== version",
   "this.cancellationVersion += 1",
   "HapticsPort",
@@ -361,8 +420,14 @@ for (const contract of [
 }
 const app = await text("src/app/App.ts");
 invariant(app.includes("at: sleep.completesAt"), "Sleep notification must use the exact completion timestamp");
-invariant(app.match(/this\.cancelSleepNotification\(\)/gu)?.length === 2, "Sleep completion and early wake must both cancel notifications");
-invariant(app.includes("onForeground: () => this.resumeSimulation()"), "Native foregrounding must run simulation catch-up");
+invariant(
+  app.match(/this\.cancelSleepNotification\(\)/gu)?.length === 3,
+  "Sleep completion, early wake, and notification opt-out must cancel notifications",
+);
+invariant(
+  /onForeground:\s*\(\)\s*=>\s*\{[^}]*this\.platform\.notifications\.setForeground\(true\);[^}]*this\.resumeSimulation\(\);[^}]*\}/u.test(app),
+  "Native foregrounding must restore notification policy and run simulation catch-up",
+);
 
 const trackedArtifacts = execFileSync(
   "git",
@@ -371,4 +436,17 @@ const trackedArtifacts = execFileSync(
 );
 invariant(trackedArtifacts.length === 0, "Pods, build output, and copied public assets must not be committed");
 
+assertCanonicalProductMetadata({
+  config,
+  info,
+  target,
+  configurations: targetConfigurations,
+  nativeDocumentation: await text("ios/README.md"),
+});
+
 console.log("Native check passed: Capacitor 8, CocoaPods, metadata, privacy, assets, adapters, and clean artifacts.");
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  await runNativeCheck();
+}

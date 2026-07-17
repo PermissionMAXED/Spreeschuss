@@ -163,6 +163,7 @@ async function vendorPack(pack, stageRoot, workRoot) {
       kind: file.kind,
       purpose: file.purpose,
       ...(file.transform ? { transform: file.transform } : {}),
+      ...(file.consumers ? { consumers: file.consumers } : {}),
     });
   }
 
@@ -193,11 +194,14 @@ async function pathExists(path) {
   }
 }
 
-async function validPreviousPack(previous) {
+async function validPreviousPack(pack, previous) {
   if (!previous || !["vendored", "retained"].includes(previous.status) || !previous.license) return false;
   const licensePath = join(ROOT, previous.license.path);
   if (!await pathExists(licensePath) || sha256(await readFile(licensePath)) !== previous.license.sha256) return false;
-  for (const record of previous.files ?? []) {
+  const previousFiles = new Map((previous.files ?? []).map((record) => [record.path, record]));
+  for (const file of pack.files) {
+    const record = previousFiles.get(file.output);
+    if (!record) return false;
     const path = join(PUBLIC_ROOT, record.path);
     if (!await pathExists(path) || sha256(await readFile(path)) !== record.sha256) return false;
   }
@@ -205,7 +209,7 @@ async function validPreviousPack(previous) {
 }
 
 async function retainPreviousPack(pack, previous, stageRoot, error) {
-  if (!await validPreviousPack(previous)) {
+  if (!await validPreviousPack(pack, previous)) {
     return {
       id: pack.id,
       title: pack.title,
@@ -220,12 +224,30 @@ async function retainPreviousPack(pack, previous, stageRoot, error) {
   await cp(join(ROOT, previous.license.path), licenseDestination, {
     recursive: false,
   });
-  for (const file of previous.files) {
-    const destination = join(stageRoot, "public", file.path);
+  const previousFiles = new Map(previous.files.map((record) => [record.path, record]));
+  const files = [];
+  for (const file of pack.files) {
+    const previousFile = previousFiles.get(file.output);
+    const destination = join(stageRoot, "public", file.output);
     await mkdir(dirname(destination), { recursive: true });
-    await cp(join(PUBLIC_ROOT, file.path), destination, { recursive: false });
+    await cp(join(PUBLIC_ROOT, file.output), destination, { recursive: false });
+    files.push({
+      ...previousFile,
+      sourceEntry: file.source,
+      kind: file.kind,
+      purpose: file.purpose,
+      ...(file.transform ? { transform: file.transform } : {}),
+      ...(file.consumers ? { consumers: file.consumers } : {}),
+    });
   }
-  return { ...previous, status: "retained", error };
+  return {
+    ...previous,
+    title: pack.title,
+    pageUrl: pack.pageUrl,
+    status: "retained",
+    error,
+    files,
+  };
 }
 
 function markdownLink(text, url) {

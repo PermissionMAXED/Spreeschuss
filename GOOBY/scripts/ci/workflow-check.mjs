@@ -14,7 +14,7 @@ async function loadWorkflow(name) {
 }
 
 function parseScalar(value) {
-  const trimmed = value.trim();
+  const trimmed = value.replace(/\s+#.*$/u, "").trim();
   if (
     (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
     (trimmed.startsWith("'") && trimmed.endsWith("'"))
@@ -172,32 +172,104 @@ function assertPathFilters(workflow, label) {
   invariant("workflow_dispatch" in triggers, `${label}: workflow_dispatch is missing`);
 }
 
+function assertCommandBefore(workflowJob, label, first, second) {
+  const commands = runScripts(workflowJob, label);
+  const firstIndex = commands.findIndex((run) => run.includes(first));
+  const secondIndex = commands.findIndex((run) => run.includes(second));
+  invariant(firstIndex >= 0, `${label}: missing command ${first}`);
+  invariant(secondIndex >= 0, `${label}: missing command ${second}`);
+  invariant(firstIndex < secondIndex, `${label}: ${first} must run before ${second}`);
+}
+
+function assertPinnedActions(source, label) {
+  const actionLines = source.split(/\r?\n/u)
+    .map((line, index) => ({ line: index + 1, match: /^\s*uses:\s*([^\s#]+)(?:\s+#\s*(\S+))?\s*$/u.exec(line) }))
+    .filter(({ match }) => match);
+  invariant(actionLines.length > 0, `${label}: no third-party actions found`);
+  for (const { line, match } of actionLines) {
+    const reference = match[1];
+    const version = match[2];
+    if (reference.startsWith("./")) continue;
+    invariant(/^[^@]+@[0-9a-f]{40}$/u.test(reference), `${label}:${line}: action must use a full commit SHA`);
+    invariant(/^v\d+\.\d+\.\d+$/u.test(version ?? ""), `${label}:${line}: pinned action needs an exact version comment`);
+  }
+}
+
+function assertActionlintInstall(workflowJob, label) {
+  const install = namedStep(workflowJob, label, "Install pinned actionlint");
+  const environment = mapping(install.env, `${label} actionlint environment`);
+  invariant(environment.ACTIONLINT_VERSION === "1.7.7", `${label}: actionlint version must be fixed at 1.7.7`);
+  invariant(
+    environment.ACTIONLINT_SHA256 === "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757",
+    `${label}: actionlint checksum is not the reviewed v1.7.7 linux_amd64 digest`,
+  );
+  invariant(
+    install.run.includes("actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz")
+      && install.run.includes("sha256sum --check --status")
+      && install.run.includes('test -x "$RUNNER_TEMP/actionlint-bin/actionlint"'),
+    `${label}: actionlint install must download, checksum, and verify the fixed binary`,
+  );
+  const workflowCheck = namedStep(workflowJob, label, "Check Gooby workflow structure");
+  invariant(workflowCheck.run.includes("command -v actionlint"), `${label}: missing fatal actionlint availability check`);
+}
+
+function assertProtectedReleaseJob(workflowJob, label) {
+  invariant(workflowJob.environment === "gooby-release", `${label}: must use the protected gooby-release environment`);
+  invariant(typeof workflowJob.if === "string", `${label}: trusted event gate is missing`);
+  invariant(workflowJob.if.includes("workflow_dispatch"), `${label}: protected manual release gate is missing`);
+  invariant(workflowJob.if.includes("gooby-v"), `${label}: release tag prefix gate is missing`);
+  invariant(workflowJob.if.includes("github.ref_protected"), `${label}: release tags must be protected`);
+}
+
 const webFile = await loadWorkflow("gooby-web-ci.yml");
 const iosFile = await loadWorkflow("gooby-ios.yml");
 const web = mapping(parseWorkflowYaml(webFile.source, "gooby-web-ci.yml"), "web workflow");
 const ios = mapping(parseWorkflowYaml(iosFile.source, "gooby-ios.yml"), "iOS workflow");
+const packageJson = JSON.parse(await readFile(resolve(repository, "GOOBY/package.json"), "utf8"));
 
 assertPathFilters(web, "web workflow");
 assertPathFilters(ios, "iOS workflow");
+assertPinnedActions(webFile.source, "gooby-web-ci.yml");
+assertPinnedActions(iosFile.source, "gooby-ios.yml");
+
+for (const script of ["root", "ui", "city", "bubble"]) {
+  invariant(
+    packageJson.scripts["test:e2e"].includes(`npm run test:e2e:${script}`),
+    `test:e2e must aggregate the ${script} browser suite`,
+  );
+  invariant(
+    packageJson.scripts[`test:e2e:${script}`]?.includes("--forbid-only"),
+    `test:e2e:${script} must reject focused tests`,
+  );
+}
+for (const script of ["ci:diff-check", "ci:no-skipped-tests"]) {
+  invariant(typeof packageJson.scripts[script] === "string", `${script} package script is missing`);
+}
 
 const webJob = job(web, "web");
 invariant(webJob["runs-on"] === "ubuntu-latest", "Web CI must run on Linux");
-const setupNode = steps(webJob, "web").find((step) => step.uses === "actions/setup-node@v4");
+const setupNode = steps(webJob, "web").find((step) => step.uses?.startsWith("actions/setup-node@"));
 invariant(setupNode, "Web CI must configure Node");
 invariant(mapping(setupNode.with, "web setup-node options")["node-version-file"] === "GOOBY/.nvmrc", "Web CI must read GOOBY/.nvmrc");
 for (const command of [
   "npm ci",
   "npx playwright install --with-deps chromium",
+  "npm run ci:diff-check",
   "npm run lint",
   "npm run typecheck",
-  "npm run test",
+  "npm run test:unit",
+  "npm run test:specialists",
+  "npm run ci:no-skipped-tests",
+  "npm run test:e2e:root",
+  "npm run test:e2e:ui",
+  "npm run test:e2e:city",
+  "npm run test:e2e:bubble",
   "npm run assets:audit",
   "npm run audit:asset-size",
   "npm run audit:no-network",
   "npm run build",
   "npm run audit:bundle",
   "npm run audit:production",
-  "npm run test:e2e",
   "npm run audit:perf",
   "npm run ci:native-check",
   "npm run ci:workflow-check",
@@ -209,17 +281,32 @@ invariant(
   mapping(perfAudit.env, "performance audit environment").GOOBY_ARTIFACTS === "playwright-report/perf-artifacts",
   "Performance audit artifacts must be included in the uploaded Playwright report",
 );
-const webUpload = steps(webJob, "web").find((step) => step.uses === "actions/upload-artifact@v4");
+assertActionlintInstall(webJob, "web");
+const webUpload = steps(webJob, "web").find((step) => step.uses?.startsWith("actions/upload-artifact@"));
 invariant(webUpload, "Web CI must upload an artifact");
 const webUploadPath = mapping(webUpload.with, "web artifact options").path;
 invariant(typeof webUploadPath === "string" && webUploadPath.includes("GOOBY/dist") && webUploadPath.includes("GOOBY/playwright-report"), "Web artifact must include dist and Playwright report");
 
-for (const name of ["preflight", "unsigned", "signed", "testflight"]) {
-  invariant(job(ios, name)["runs-on"] === "macos-15", `${name} must run on macos-15`);
-}
 const preflight = job(ios, "preflight");
-const gateStep = namedStep(preflight, "preflight", "Evaluate secret availability");
-const gateEnvironment = mapping(gateStep.env, "preflight environment");
+invariant(preflight["runs-on"] === "ubuntu-latest", "iOS validation must run on Linux without release secrets");
+invariant(!JSON.stringify(preflight).includes("secrets."), "iOS preflight must not map or probe secrets");
+for (const command of [
+  "npm ci",
+  "npm run ci:diff-check",
+  "npm run assets:audit",
+  "npm run audit:no-network",
+  "npm run ci:native-check",
+  "npm run ci:workflow-check",
+]) {
+  hasRun(preflight, "preflight", command);
+}
+assertActionlintInstall(preflight, "preflight");
+
+const releaseGates = job(ios, "release-gates");
+invariant(releaseGates["runs-on"] === "ubuntu-latest", "Protected release gates must not consume a macOS runner");
+assertProtectedReleaseJob(releaseGates, "release-gates");
+const gateStep = namedStep(releaseGates, "release-gates", "Evaluate protected secret availability");
+const gateEnvironment = mapping(gateStep.env, "release-gates environment");
 for (const secret of [
   "IOS_CERT_P12_BASE64",
   "IOS_CERT_PASSWORD",
@@ -229,16 +316,20 @@ for (const secret of [
   "ASC_API_ISSUER_ID",
   "ASC_API_KEY_P8_BASE64",
 ]) {
-  invariant(typeof gateEnvironment[secret] === "string" && gateEnvironment[secret].includes(`secrets.${secret}`), `Preflight is missing ${secret}`);
+  invariant(typeof gateEnvironment[secret] === "string" && gateEnvironment[secret].includes(`secrets.${secret}`), `Protected release gates are missing ${secret}`);
 }
-invariant(mapping(preflight.outputs, "preflight outputs").signed_ready?.includes("steps.gates.outputs.signed_ready"), "signed_ready preflight output is missing");
-invariant(mapping(preflight.outputs, "preflight outputs").testflight_ready?.includes("steps.gates.outputs.testflight_ready"), "testflight_ready preflight output is missing");
+invariant(mapping(releaseGates.outputs, "release-gates outputs").signed_ready?.includes("steps.gates.outputs.signed_ready"), "signed_ready protected output is missing");
+invariant(mapping(releaseGates.outputs, "release-gates outputs").testflight_ready?.includes("steps.gates.outputs.testflight_ready"), "testflight_ready protected output is missing");
 
 const unsigned = job(ios, "unsigned");
-invariant(!("needs" in unsigned) && !("if" in unsigned), "Unsigned job must run independently on every workflow invocation");
-for (const command of ["npm ci", "npm run build", "npx cap sync ios", "pod install", "xcodebuild archive"]) {
+invariant(unsigned["runs-on"] === "macos-15", "Unsigned archive must run on macos-15");
+invariant(unsigned.needs === "preflight" && !("if" in unsigned), "Unsigned job must run after validation on every workflow invocation");
+invariant(!JSON.stringify(unsigned).includes("secrets."), "Unsigned job must have zero secret mappings");
+for (const command of ["npm ci", "npm run assets:audit", "npm run audit:no-network", "npm run build", "npx cap sync ios", "pod install", "xcodebuild archive"]) {
   hasRun(unsigned, "unsigned", command);
 }
+assertCommandBefore(unsigned, "unsigned", "npm run assets:audit", "xcodebuild archive");
+assertCommandBefore(unsigned, "unsigned", "npm run audit:no-network", "xcodebuild archive");
 const unsignedArchive = namedStep(unsigned, "unsigned", "Archive without code signing").run;
 for (const setting of [
   "CODE_SIGNING_ALLOWED=NO",
@@ -254,11 +345,14 @@ const summary = namedStep(unsigned, "unsigned", "Explain unsigned artifact").run
 invariant(summary.includes("requires re-signing"), "Unsigned step summary must explicitly require re-signing");
 
 const signed = job(ios, "signed");
-invariant(signed.if.includes("needs.preflight.outputs.signed_ready == 'true'"), "Signed job must use signed_ready");
-invariant(signed.if.includes("github.event_name != 'pull_request'"), "Signed job must not expose secrets to pull requests");
-for (const command of ["npm ci", "npm run build", "npx cap sync ios", "pod install", "xcodebuild archive"]) {
+invariant(signed["runs-on"] === "macos-15", "Signed archive must run on macos-15");
+assertProtectedReleaseJob(signed, "signed");
+invariant(signed.if.includes("needs.release-gates.outputs.signed_ready == 'true'"), "Signed job must use protected signed_ready");
+for (const command of ["npm ci", "npm run assets:audit", "npm run audit:no-network", "npm run build", "npx cap sync ios", "pod install", "xcodebuild archive"]) {
   hasRun(signed, "signed", command);
 }
+assertCommandBefore(signed, "signed", "npm run assets:audit", "xcodebuild archive");
+assertCommandBefore(signed, "signed", "npm run audit:no-network", "xcodebuild archive");
 invariant(
   runScripts(signed, "signed").some((run) =>
     run.includes('PROFILE_APP_ID" == "$APPLE_TEAM_ID.com.gooby.pet"')
@@ -272,11 +366,16 @@ invariant(signedCleanup.run.includes("security delete-keychain") && signedCleanu
 const pushTags = sequence(mapping(mapping(ios.on, "iOS triggers").push, "iOS push trigger").tags, "iOS tags");
 invariant(pushTags.includes("gooby-v*"), "TestFlight tag trigger must be gooby-v*");
 const testflight = job(ios, "testflight");
-invariant(testflight.if.includes("refs/tags/gooby-v"), "TestFlight job must be tag-gated");
-invariant(testflight.if.includes("needs.preflight.outputs.testflight_ready == 'true'"), "TestFlight job must use testflight_ready");
-for (const command of ["npm ci", "npm run build", "npx cap sync ios", "pod install", "xcodebuild archive", "xcodebuild -exportArchive", "xcrun altool --upload-app"]) {
+invariant(testflight["runs-on"] === "macos-15", "TestFlight release must run on macos-15");
+assertProtectedReleaseJob(testflight, "testflight");
+invariant(testflight.if.includes("needs.release-gates.outputs.testflight_ready == 'true'"), "TestFlight job must use protected testflight_ready");
+invariant(testflight.if.includes("inputs.release_to_testflight == true"), "Manual TestFlight uploads must be explicit");
+invariant(testflight.if.includes("inputs.marketing_version != ''"), "Manual TestFlight uploads require a version");
+for (const command of ["npm ci", "npm run assets:audit", "npm run audit:no-network", "npm run build", "npx cap sync ios", "pod install", "xcodebuild archive", "xcodebuild -exportArchive", "xcrun altool --upload-app"]) {
   hasRun(testflight, "testflight", command);
 }
+assertCommandBefore(testflight, "testflight", "npm run assets:audit", "xcodebuild archive");
+assertCommandBefore(testflight, "testflight", "npm run audit:no-network", "xcodebuild archive");
 invariant(
   runScripts(testflight, "testflight").some((run) =>
     run.includes('PROFILE_APP_ID" == "$APPLE_TEAM_ID.com.gooby.pet"')
@@ -292,17 +391,14 @@ const testflightCleanup = namedStep(testflight, "testflight", "Clean signing and
 invariant(testflightCleanup.if === "always()", "TestFlight cleanup must always run");
 invariant(testflightCleanup.run.includes("security delete-keychain") && testflightCleanup.run.includes("gooby-asc-key-path"), "TestFlight cleanup must remove signing and API material");
 
-for (const workflowJobName of ["preflight", "unsigned", "signed", "testflight"]) {
+for (const workflowJobName of ["preflight", "release-gates", "unsigned", "signed", "testflight"]) {
   for (const run of runScripts(job(ios, workflowJobName), workflowJobName)) {
     invariant(!run.includes("${{ secrets."), `${workflowJobName}: secrets must enter scripts through masked environment variables`);
   }
 }
 
 const actionlint = spawnSync("actionlint", [webFile.path, iosFile.path], { encoding: "utf8" });
-if (actionlint.error?.code === "ENOENT") {
-  console.log("actionlint not installed; dependency-free workflow structure checks were used.");
-} else {
-  invariant(actionlint.status === 0, `actionlint failed:\n${actionlint.stdout}${actionlint.stderr}`);
-  console.log("actionlint passed.");
-}
-console.log("Workflow check passed: web, unsigned, optional signing, TestFlight gates, and cleanup.");
+invariant(actionlint.error?.code !== "ENOENT", "actionlint is required but was not found on PATH");
+invariant(actionlint.status === 0, `actionlint failed:\n${actionlint.stdout}${actionlint.stderr}`);
+console.log("actionlint passed.");
+console.log("Workflow check passed: pinned actions, complete web gates, zero-secret unsigned builds, protected releases, audits, and cleanup.");

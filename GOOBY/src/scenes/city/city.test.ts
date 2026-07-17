@@ -11,6 +11,7 @@ import {
   CITY_MARKER_VISUALS,
   CITY_RENDER_BUDGET,
   CITY_CONTROL_HIT_REGIONS,
+  GARAGE_TRIGGER_RADIUS,
   PARKING_TRIGGER_RADIUS,
   CityAssetDepot,
   CityDrivePhysics,
@@ -22,6 +23,7 @@ import {
   computeEdgePointer,
   createSafeBoardTravelSnapshot,
   detectCityPickups,
+  didReachCityTrigger,
   distance2d,
   hitRegionsOverlap,
   isPointInWorld,
@@ -125,6 +127,14 @@ describe("parked route phases and destination gating", () => {
     expect(city.state).toMatchObject({ phase: "arrived", car: "parked", selected: "carrot-market" });
   });
 
+  it("detects a selected destination crossed between coarse frame samples", () => {
+    const city = new CityRouteMachine();
+    city.selectDestination("carrot-market");
+    city.confirmDeparture();
+    expect(city.tryArriveAlong([-11, -44], [-25, -44])).toBe("carrot-market");
+    expect(city.state).toMatchObject({ phase: "arrived", selected: "carrot-market" });
+  });
+
   it("requires the first return drive and unlocks an optional later quick trip", () => {
     const city = new CityRouteMachine();
     city.selectDestination("cloud-boutique");
@@ -190,6 +200,42 @@ describe("real hold controls and drive responses", () => {
     const homePhysics = new CityDrivePhysics(home);
     expect(simulatePointerSteering(homePhysics, [0, -44], 3)).toBeLessThan(1_200);
     expect(simulatePointerSteering(homePhysics, CITY_GARAGE_POSITION, 3)).toBeLessThan(1_200);
+  });
+
+  it("detects return arrival across varied frame partitions and route approaches", () => {
+    const approaches: ReadonlyArray<readonly [CityPoint, CityPoint]> = [
+      [[0, 44], [0, 60]],
+      [[-3.5, 42], [3.5, 59]],
+      [[3.8, 43], [-2.5, 59]],
+    ];
+    const framePartitions: readonly (readonly number[])[] = [
+      [1],
+      [0.5, 0.5],
+      [0.05, 0.12, 0.33, 0.08, 0.42],
+    ];
+
+    for (const [from, to] of approaches) {
+      for (const partitions of framePartitions) {
+        let previous = from;
+        let progress = 0;
+        let arrived = false;
+        for (const partition of partitions) {
+          progress += partition;
+          const next: CityPoint = [
+            from[0] + (to[0] - from[0]) * progress,
+            from[1] + (to[1] - from[1]) * progress,
+          ];
+          arrived ||= didReachCityTrigger(
+            previous,
+            next,
+            CITY_GARAGE_POSITION,
+            GARAGE_TRIGGER_RADIUS,
+          );
+          previous = next;
+        }
+        expect(arrived, `${from.join(",")} -> ${to.join(",")} via ${partitions.join(",")}`).toBe(true);
+      }
+    }
   });
 });
 
