@@ -4,6 +4,7 @@ import { SeededRng } from "../../core/contracts/rng.ts";
 import {
   beginGarden,
   createGardenState,
+  finishGarden,
   spawnGardenActor,
   tapGardenSlot,
   updateGarden,
@@ -63,4 +64,21 @@ test("garden tempo ramps but always finishes at seventy-five seconds", () => {
   for (let second = 0; second < 75; second += 1) updateGarden(state, 1, rng);
   assert.equal(state.phase, "finished");
   assert.equal(state.remaining, 0);
+});
+
+test("ending an active garden run freezes its earned terminal score", () => {
+  const state = createGardenState("gentle");
+  const rng = new SeededRng(91);
+  beginGarden(state);
+  const mole = spawnGardenActor(state, rng, "mole", 2);
+  updateGarden(state, 0.25, rng);
+  assert.equal(tapGardenSlot(state, mole?.slot ?? -1), "mole");
+  const earned = state.score;
+
+  finishGarden(state, "Garden run wrapped up.");
+  updateGarden(state, 10, rng);
+
+  assert.equal(state.phase, "finished");
+  assert.equal(state.score, earned);
+  assert.equal(state.message, "Garden run wrapped up.");
 });

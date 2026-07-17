@@ -7,6 +7,7 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:4519",
+    viewport: { width: 390, height: 844 },
   },
   webServer: {
     command: "npm run dev -- --port 4519",

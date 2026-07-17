@@ -16,6 +16,7 @@ export interface CannonTarget {
   y: number;
   readonly baseX: number;
   readonly radius: number;
+  readonly maxHp: number;
   hp: number;
   active: boolean;
   wobble: number;
@@ -43,6 +44,10 @@ export interface CannonState {
   bestShot: number;
   currentShotScore: number;
   multiHit: number;
+  bestMultiHit: number;
+  totalHits: number;
+  targetsCleared: number;
+  totalBounceBonus: number;
   wind: number;
   readonly winds: number[];
   projectile: CarrotProjectile | null;
@@ -54,6 +59,12 @@ const CANNON = { x: 12, y: 55 } as const;
 const FLOOR_Y = 62;
 const GRAVITY = 18;
 const SHOT_COUNT = 10;
+
+/** A stable, switch-friendly Picnic solution used by model and accessibility tests. */
+export const PICNIC_CLEAR_SEQUENCE: readonly CannonPoint[] = [
+  { x: 16, y: -13 },
+  { x: 6, y: -18 },
+] as const;
 
 const TARGET_POINTS: Readonly<Record<CannonTargetKind, number>> = {
   hay: 80,
@@ -70,24 +81,24 @@ function windForDifficulty(difficulty: CannonDifficulty, rng: RandomSource): num
 }
 
 function makeTargets(difficulty: CannonDifficulty, rng: RandomSource): CannonTarget[] {
-  const jitter = (): number => (rng.next() - 0.5) * 2.8;
+  const jitter = (): number => difficulty === "picnic" ? 0 : (rng.next() - 0.5) * 2.8;
   const targets: CannonTarget[] = [
-    { id: "hay-a", kind: "hay", x: 43 + jitter(), y: 56, baseX: 43, radius: 4.2, hp: 1, active: true, wobble: 0 },
-    { id: "can-a", kind: "can", x: 57 + jitter(), y: 57.4, baseX: 57, radius: 2.1, hp: 1, active: true, wobble: 0 },
-    { id: "can-b", kind: "can", x: 62 + jitter(), y: 57.4, baseX: 62, radius: 2.1, hp: 1, active: true, wobble: 0 },
-    { id: "gopher-a", kind: "gopher", x: 72 + jitter(), y: 55.5, baseX: 72, radius: 3, hp: 1, active: true, wobble: 0 },
-    { id: "pinata-a", kind: "pinata", x: 86 + jitter(), y: 31, baseX: 86, radius: 4.3, hp: 2, active: true, wobble: 0 },
+    { id: "hay-a", kind: "hay", x: 43 + jitter(), y: 56, baseX: 43, radius: 4.2, maxHp: 1, hp: 1, active: true, wobble: 0 },
+    { id: "can-a", kind: "can", x: 57 + jitter(), y: 57.4, baseX: 57, radius: 2.1, maxHp: 1, hp: 1, active: true, wobble: 0 },
+    { id: "can-b", kind: "can", x: 62 + jitter(), y: 57.4, baseX: 62, radius: 2.1, maxHp: 1, hp: 1, active: true, wobble: 0 },
+    { id: "gopher-a", kind: "gopher", x: 72 + jitter(), y: 55.5, baseX: 72, radius: 3, maxHp: 1, hp: 1, active: true, wobble: 0 },
+    { id: "pinata-a", kind: "pinata", x: 78 + jitter(), y: 43, baseX: 78, radius: 5, maxHp: 2, hp: 2, active: true, wobble: 0 },
   ];
   if (difficulty !== "picnic") {
     targets.push(
-      { id: "hay-b", kind: "hay", x: 78 + jitter(), y: 56, baseX: 78, radius: 4.2, hp: 1, active: true, wobble: 0 },
-      { id: "can-c", kind: "can", x: 49 + jitter(), y: 49.5, baseX: 49, radius: 2.1, hp: 1, active: true, wobble: 0 },
+      { id: "hay-b", kind: "hay", x: 78 + jitter(), y: 56, baseX: 78, radius: 4.2, maxHp: 1, hp: 1, active: true, wobble: 0 },
+      { id: "can-c", kind: "can", x: 49 + jitter(), y: 49.5, baseX: 49, radius: 2.1, maxHp: 1, hp: 1, active: true, wobble: 0 },
     );
   }
   if (difficulty === "blustery") {
     targets.push(
-      { id: "gopher-b", kind: "gopher", x: 91 + jitter(), y: 55.5, baseX: 91, radius: 3, hp: 1, active: true, wobble: 1.7 },
-      { id: "can-d", kind: "can", x: 68 + jitter(), y: 44, baseX: 68, radius: 2.1, hp: 1, active: true, wobble: 0 },
+      { id: "gopher-b", kind: "gopher", x: 91 + jitter(), y: 55.5, baseX: 91, radius: 3, maxHp: 1, hp: 1, active: true, wobble: 1.7 },
+      { id: "can-d", kind: "can", x: 68 + jitter(), y: 44, baseX: 68, radius: 2.1, maxHp: 1, hp: 1, active: true, wobble: 0 },
     );
   }
   return targets;
@@ -105,11 +116,15 @@ export function createCannonState(difficulty: CannonDifficulty, rng: RandomSourc
     bestShot: 0,
     currentShotScore: 0,
     multiHit: 0,
+    bestMultiHit: 0,
+    totalHits: 0,
+    targetsCleared: 0,
+    totalBounceBonus: 0,
     wind: winds[0] ?? 0,
     winds,
     projectile: null,
     targets: makeTargets(difficulty, rng),
-    message: "Drag the carrot back, then let go!",
+    message: "Drag to aim, or use the arrow controls!",
   };
 }
 
@@ -194,17 +209,23 @@ export function scoreTargetHit(
   }
   projectile.hitIds.push(target.id);
   state.multiHit += 1;
+  state.bestMultiHit = Math.max(state.bestMultiHit, state.multiHit);
+  state.totalHits += 1;
   const multiplier = 1 + Math.max(0, state.multiHit - 1) * 0.5;
   const bounceBonus = projectile.bounces * 35;
   const points = Math.round(TARGET_POINTS[target.kind] * multiplier + bounceBonus);
   target.hp -= 1;
   target.active = target.hp > 0;
+  if (!target.active) state.targetsCleared += 1;
   target.wobble = 0.32;
   state.score += points;
   state.currentShotScore += points;
-  state.message = state.multiHit > 1
-    ? `${state.multiHit}× MULTI-HIT! +${points}`
-    : `${target.kind.toUpperCase()} +${points}`;
+  state.totalBounceBonus += bounceBonus;
+  state.message = target.kind === "pinata" && target.active
+    ? `PIÑATA DAMAGED · ${target.hp}/${target.maxHp} HP · +${points}`
+    : state.multiHit > 1
+      ? `${state.multiHit}× MULTI-HIT! +${points}`
+      : `${target.kind.toUpperCase()} +${points}`;
   return { points, multiplier, destroyed: !target.active };
 }
 
@@ -225,14 +246,15 @@ function collideTargets(state: CannonState, projectile: CarrotProjectile): void 
 function finishShot(state: CannonState): void {
   state.bestShot = Math.max(state.bestShot, state.currentShotScore);
   state.projectile = null;
-  if (state.shotsRemaining <= 0) {
+  const cleared = state.targets.every((target) => !target.active);
+  if (cleared || state.shotsRemaining <= 0) {
     state.phase = "finished";
-    state.message = "Picnic range cleared!";
+    state.message = cleared ? "Picnic range cleared!" : "Ten carrots fired!";
   } else {
     state.phase = "aiming";
     state.wind = state.winds[state.shotNumber] ?? 0;
     state.message = state.wind === 0
-      ? "Drag back for the next shot"
+      ? "Aim the next carrot"
       : `New wind: ${state.wind > 0 ? "→" : "←"} ${Math.abs(state.wind).toFixed(1)}`;
   }
 }

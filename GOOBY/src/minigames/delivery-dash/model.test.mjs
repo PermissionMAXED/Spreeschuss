@@ -34,6 +34,9 @@ test("on-time chains extend the shift clock and increase rewards", () => {
   const second = completeDelivery(state, rng);
   assert.equal(state.chain, 2);
   assert.equal(state.bestChain, 2);
+  assert.equal(state.totalBonusTime, first.timeAdded + second.timeAdded);
+  assert.equal(state.bestTimeBonus, second.timeAdded);
+  assert.equal(state.bestDeliveryPoints, second.points);
   assert.ok(first.timeAdded > 0);
   assert.ok(second.timeAdded > first.timeAdded);
   assert.ok(state.remaining > afterFirst);
@@ -65,4 +68,20 @@ test("traffic collisions are cozy, penalize time, and have cooldown", () => {
   assert.equal(state.bumpCount, 1);
   assert.equal(applyTrafficCollision(state, traffic), false);
   assert.equal(state.bumpCount, 1);
+});
+
+test("traffic never spawns on the player or either parcel stop", () => {
+  const state = createDeliveryState("express", new SeededRng(28));
+  const forbidden = [state.car, state.parcel.pickup, state.parcel.destination];
+  for (const traffic of state.traffic) {
+    assert.ok(forbidden.every((point) =>
+      Math.hypot(traffic.x - point.x, traffic.y - point.y) >= 7));
+  }
+
+  state.deliveries = 2;
+  completeDelivery(state, new SeededRng(91));
+  const added = state.traffic.at(-1);
+  assert.ok(added);
+  assert.ok([state.car, state.parcel.pickup, state.parcel.destination].every((point) =>
+    Math.hypot(added.x - point.x, added.y - point.y) >= 7));
 });

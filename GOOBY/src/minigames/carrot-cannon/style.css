@@ -2,12 +2,17 @@
   --ink: #40372e;
   --cream: #fff8df;
   --orange: #ec7c38;
+  --cc-safe-top: var(--safe-top, max(10px, env(safe-area-inset-top)));
+  --cc-safe-bottom: var(--safe-bottom, max(9px, env(safe-area-inset-bottom)));
+  --cc-top-reserve: calc(var(--cc-safe-top) + 50px);
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto auto;
+  box-sizing: border-box;
   width: 100%;
   height: 100%;
-  min-height: 520px;
+  min-height: 0;
+  padding: var(--cc-top-reserve) 0 var(--cc-safe-bottom);
   overflow: hidden;
   color: var(--ink);
   font-family: "Trebuchet MS", "Avenir Next", system-ui, sans-serif;
@@ -17,8 +22,16 @@
 }
 
 .cc-game button {
+  min-width: 44px;
+  min-height: 44px;
   font: inherit;
   -webkit-tap-highlight-color: transparent;
+}
+
+.cc-game button:focus-visible,
+.cc-canvas:focus-visible {
+  outline: 3px solid #fff59b;
+  outline-offset: 2px;
 }
 
 .cc-topbar {
@@ -26,7 +39,7 @@
   display: grid;
   grid-template-columns: 1fr 1.4fr 1fr;
   align-items: start;
-  padding: max(13px, env(safe-area-inset-top)) 17px 2px;
+  padding: 3px 17px 2px;
   background: linear-gradient(rgb(174 227 236 / 96%), rgb(174 227 236 / 70%), transparent);
 }
 
@@ -71,8 +84,8 @@
 
 .cc-icon-button {
   justify-self: end;
-  width: 41px;
-  height: 41px;
+  width: 44px;
+  height: 44px;
   border: 2px solid rgb(255 255 255 / 55%);
   border-radius: 50%;
   color: var(--ink);
@@ -153,16 +166,66 @@
   transition: width .04s linear;
 }
 
+.cc-aim-controls {
+  z-index: 3;
+  display: grid;
+  grid-template-columns: 48px 48px 64px 48px 48px;
+  justify-content: center;
+  gap: 6px;
+  padding: 3px 10px 7px;
+}
+
+.cc-aim-controls button {
+  border: 2px solid rgb(255 255 255 / 62%);
+  border-radius: 13px;
+  color: #fff8df;
+  background: #567c55;
+  box-shadow: 0 4px 0 #3f6142;
+  font-size: 17px;
+  font-weight: 1000;
+  cursor: pointer;
+}
+
+.cc-aim-controls button:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #3f6142;
+}
+
+.cc-aim-controls .cc-fire-button {
+  color: #fff;
+  background: linear-gradient(#f3954d, #df6833);
+  box-shadow: 0 4px 0 #a94c2b;
+  font-size: 12px;
+  letter-spacing: .08em;
+}
+
+.cc-control-help {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .cc-footer {
   z-index: 2;
   display: flex;
   justify-content: space-between;
-  padding: 5px 16px max(12px, env(safe-area-inset-bottom));
+  padding: 5px 16px;
   color: rgb(255 255 255 / 82%);
   font-size: 9px;
   font-weight: 900;
   letter-spacing: .12em;
   background: #659649;
+}
+
+.cc-game.is-hit .cc-canvas {
+  filter: saturate(1.28) brightness(1.08);
+}
+
+.cc-game.is-miss .cc-canvas {
+  animation: cc-miss .16s linear 2 alternate;
 }
 
 .cc-overlay {
@@ -383,10 +446,20 @@
   from { opacity: 0; }
 }
 
-@media (max-height: 610px) {
-  .cc-game { min-height: 430px; }
-  .cc-topbar { padding-top: 7px; }
-  .cc-canvas { min-height: 230px; }
+@keyframes cc-miss {
+  to { opacity: .72; }
+}
+
+@media (max-height: 700px) {
+  .cc-game {
+    --cc-top-reserve: calc(var(--cc-safe-top) + 46px);
+  }
+  .cc-topbar { padding-top: 2px; }
+  .cc-canvas { min-height: 190px; }
   .cc-footer { padding-bottom: 5px; }
   .cc-callout { padding-block: 3px; }
+  .cc-aim-controls {
+    grid-template-columns: 44px 44px 60px 44px 44px;
+    padding-bottom: 4px;
+  }
 }

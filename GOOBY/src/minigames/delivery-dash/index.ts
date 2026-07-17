@@ -10,7 +10,6 @@ import {
   beginDelivery,
   CITY_STOPS,
   createDeliveryState,
-  finishDelivery,
   pauseDelivery,
   resumeDelivery,
   setDeliveryInput,
@@ -21,6 +20,10 @@ import {
   type OneWay,
   type TrafficCar,
 } from "./model";
+import {
+  createDeliverySettlement,
+  type DeliverySettlement,
+} from "./settlement";
 import "./style.css";
 
 const TITLE = "Delivery Dash";
@@ -34,6 +37,15 @@ interface DashParticle {
   vy: number;
   life: number;
   readonly color: string;
+}
+
+interface SharedFeedbackContext extends MinigameContext {
+  readonly audio?: {
+    emit(action: "hit" | "miss" | "combo" | "countdown" | "go" | "win" | "lose" | "score", value?: number): void;
+  };
+  readonly haptics?: {
+    impact(pattern: "light" | "medium" | "success" | "warning"): void;
+  };
 }
 
 const DIFFICULTIES: Readonly<Record<DeliveryDifficulty, { readonly title: string; readonly note: string }>> = {
@@ -54,17 +66,20 @@ export class DeliveryDashMinigame implements MinigameModule {
   private difficulty: DeliveryDifficulty = "sunday";
   private tutorialPage = 0;
   private bestScore = 0;
-  private resultVisible = false;
   private finished = false;
+  private settlement: DeliverySettlement | null = null;
   private pressedKeys = new Set<string>();
   private touchDirection: { readonly pointerId: number; readonly direction: string } | null = null;
   private particles: DashParticle[] = [];
   private shakeRemaining = 0;
+  private deliveryFeedbackRemaining = 0;
   private cleanup: Array<() => void> = [];
 
   mount(context: MinigameContext): void {
     this.dispose();
     this.context = context;
+    this.settlement = createDeliverySettlement(context);
+    this.bestScore = this.settlement.persistedBest;
     this.finished = false;
     const host = context.mount.ownerDocument.createElement("section");
     host.className = "dd-game";
@@ -141,8 +156,19 @@ export class DeliveryDashMinigame implements MinigameModule {
     const wasFinished = this.state.phase === "finished";
     this.applyInput();
     updateDelivery(this.state, deltaSeconds, this.context.rng);
-    if (this.state.score > oldScore) this.deliveryBurst();
-    if (this.state.bumpCount > oldBumps) this.shakeRemaining = 0.32;
+    if (this.state.score > oldScore) {
+      this.deliveryBurst();
+      this.deliveryFeedbackRemaining = 0.28;
+      this.emitFeedback(
+        this.state.chain > 1 ? "combo" : "score",
+        "success",
+        this.state.score - oldScore,
+      );
+    }
+    if (this.state.bumpCount > oldBumps) {
+      this.shakeRemaining = 0.32;
+      this.emitFeedback("hit", "warning");
+    }
     this.updateEffects(deltaSeconds);
     if (!wasFinished && this.state.phase === "finished") this.completeRun();
     this.render();
@@ -160,11 +186,13 @@ export class DeliveryDashMinigame implements MinigameModule {
 
   dispose(): void {
     for (const remove of this.cleanup.splice(0)) remove();
+    this.settlement?.abandon();
     this.clearInput();
     this.host?.remove();
     this.host = null;
     this.canvas = null;
     this.context = null;
+    this.settlement = null;
     this.particles = [];
     this.finished = true;
   }
@@ -211,14 +239,8 @@ export class DeliveryDashMinigame implements MinigameModule {
         this.resume();
         break;
       case "restart":
-        this.startRound();
-        break;
       case "quit":
-        if (this.state) finishDelivery(this.state);
-        this.finishToContext();
-        break;
       case "collect":
-        this.finishToContext();
         break;
       default:
         break;
@@ -308,9 +330,9 @@ export class DeliveryDashMinigame implements MinigameModule {
     if (!this.context) return;
     this.state = createDeliveryState(this.difficulty, this.context.rng);
     beginDelivery(this.state);
-    this.resultVisible = false;
     this.particles = [];
     this.shakeRemaining = 0;
+    this.deliveryFeedbackRemaining = 0;
     this.clearInput();
     this.hideOverlay();
     this.render();
@@ -373,38 +395,17 @@ export class DeliveryDashMinigame implements MinigameModule {
         <h2>Parked safely</h2>
         <p>Parcel clocks and traffic are waiting too.</p>
         <button class="dd-primary dd-wide" data-action="resume">Continue shift</button>
-        <button class="dd-secondary dd-wide" data-action="restart">Restart shift</button>
-        <button class="dd-text-button" data-action="quit">Quit &amp; collect</button>
       </div>
     `;
   }
 
   private completeRun(): void {
-    if (!this.state || this.resultVisible) return;
-    this.resultVisible = true;
+    if (!this.state || this.settlement?.closed) return;
     this.clearInput();
     this.bestScore = Math.max(this.bestScore, this.state.score);
     const payout = this.payout();
-    const overlay = this.query("[data-dd='overlay']");
-    if (!overlay) return;
-    overlay.classList.add("is-visible");
-    overlay.innerHTML = `
-      <div class="dd-card dd-result-card">
-        <span class="dd-kicker">SHIFT COMPLETE!</span>
-        <div class="dd-result-stamp">✓</div>
-        <h2>${payout.score.toLocaleString()}</h2>
-        <p>${this.state.deliveries} parcels · Best chain <b>${this.state.bestChain}×</b><br>High score <b>${this.bestScore.toLocaleString()}</b></p>
-        <div class="dd-rewards"><span>🪙 ${payout.coins}</span><span>★ ${payout.xp} XP</span></div>
-        <button class="dd-primary dd-wide" data-action="collect">Collect rewards</button>
-        <button class="dd-secondary dd-wide" data-action="restart">Take another shift</button>
-      </div>
-    `;
-  }
-
-  private finishToContext(): void {
-    if (this.finished) return;
     this.finished = true;
-    this.context?.finish(this.payout());
+    this.settlement?.complete(payout);
   }
 
   private hideOverlay(): void {
@@ -433,6 +434,7 @@ export class DeliveryDashMinigame implements MinigameModule {
   private updateEffects(deltaSeconds: number): void {
     const step = Math.min(0.1, Math.max(0, deltaSeconds));
     this.shakeRemaining = Math.max(0, this.shakeRemaining - step);
+    this.deliveryFeedbackRemaining = Math.max(0, this.deliveryFeedbackRemaining - step);
     for (const particle of this.particles) {
       particle.life -= step;
       particle.x += particle.vx * step;
@@ -480,6 +482,17 @@ export class DeliveryDashMinigame implements MinigameModule {
     this.setText("[data-dd='parcel-icon']", state?.parcel.carrying ? "🐰📦" : "📦");
     this.query("[data-dd='wrong-way']")?.classList.toggle("is-visible", state?.wrongWay ?? false);
     this.host?.classList.toggle("is-bump", this.shakeRemaining > 0);
+    this.host?.classList.toggle("is-delivery", this.deliveryFeedbackRemaining > 0);
+  }
+
+  private emitFeedback(
+    action: "hit" | "combo" | "score",
+    pattern: "success" | "warning",
+    value?: number,
+  ): void {
+    const shared: SharedFeedbackContext | null = this.context;
+    shared?.audio?.emit(action, value);
+    shared?.haptics?.impact(pattern);
   }
 
   private resizeCanvas(canvas: HTMLCanvasElement): void {

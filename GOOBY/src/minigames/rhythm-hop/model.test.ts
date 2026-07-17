@@ -3,6 +3,7 @@ import { FakeClock } from "../../core/contracts/clock";
 import {
   JUDGMENT_WINDOWS,
   RHYTHM_BEATMAPS,
+  RhythmBeatCueTransport,
   RhythmSession,
   type RhythmBeatmap,
   type RhythmSongId,
@@ -20,7 +21,8 @@ describe("Rhythm Hop beatmaps and judgment", () => {
         expect(map.notes.every(({ lane }) => lane >= 0 && lane <= 2)).toBe(true);
         expect(map.notes.every((note, index) => index === 0 || note.timeMs >= (map.notes[index - 1]?.timeMs ?? 0))).toBe(true);
         expect(map.durationMs).toBeGreaterThan(map.notes.at(-1)?.timeMs ?? 0);
-        expect(map.audioOffsetMs).toBe(0);
+        expect(map.audioOffsetMs).toBe(1_800);
+        expect(map.notes[0]?.timeMs).toBe(map.audioOffsetMs);
       }
     }
   });
@@ -100,6 +102,63 @@ describe("Rhythm Hop beatmaps and judgment", () => {
     clock.advance((first?.timeMs ?? 0) - pausedAt);
     expect(session.input(first?.lane ?? 0).judgment).toBe("perfect");
     expect(session.combo).toBe(1);
+  });
+
+  it("emits procedural beat cues at the chart BPM and audio offset", () => {
+    const map: RhythmBeatmap = {
+      ...RHYTHM_BEATMAPS["puddle-pop"].easy,
+      bpm: 120,
+      audioOffsetMs: 375,
+      durationMs: 2_000,
+      notes: [],
+    };
+    const clock = new FakeClock(1_000);
+    const session = new RhythmSession(map, clock);
+    const transport = new RhythmBeatCueTransport(map);
+    session.start();
+
+    clock.advance(374);
+    expect(transport.drain(session)).toEqual([]);
+    clock.advance(1);
+    expect(transport.drain(session)).toEqual([
+      { beatIndex: 0, timeMs: 375, accent: true },
+    ]);
+    clock.advance(499);
+    expect(transport.drain(session)).toEqual([]);
+    clock.advance(1);
+    expect(transport.drain(session)).toEqual([
+      { beatIndex: 1, timeMs: 875, accent: false },
+    ]);
+  });
+
+  it("resumes beat transport from the exact frozen point without stale cues", () => {
+    const map = RHYTHM_BEATMAPS["carrot-bounce"].easy;
+    const clock = new FakeClock(0);
+    const session = new RhythmSession(map, clock);
+    const transport = new RhythmBeatCueTransport(map);
+    const beatDurationMs = 60_000 / map.bpm;
+    session.start();
+    clock.advance(map.audioOffsetMs);
+    expect(transport.drain(session).map(({ beatIndex }) => beatIndex)).toEqual([0]);
+
+    clock.advance(beatDurationMs - 10);
+    session.pause();
+    const frozenAt = session.songTimeMs;
+    clock.advance(30_000);
+    expect(session.songTimeMs).toBe(frozenAt);
+    expect(transport.drain(session)).toEqual([]);
+
+    session.resume();
+    expect(session.songTimeMs).toBe(frozenAt);
+    expect(transport.drain(session)).toEqual([]);
+    clock.advance(10);
+    expect(transport.drain(session)).toEqual([
+      {
+        beatIndex: 1,
+        timeMs: map.audioOffsetMs + beatDurationMs,
+        accent: false,
+      },
+    ]);
   });
 });
 

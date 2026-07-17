@@ -1,5 +1,13 @@
-import type { MinigameContext, MinigameModule, MinigamePayout } from "../../core/contracts/minigame";
+import type { MinigameSoundAction } from "../../audio/contracts";
+import type {
+  MinigameContext,
+  MinigameLifecycle,
+  MinigameModule,
+  MinigamePayout,
+} from "../../core/contracts/minigame";
+import { SeededRng } from "../../core/contracts/rng";
 import type { MinigameStubDefinition } from "../stub";
+import { MinigameRunSession } from "../carrot-catch/run-session";
 import {
   BUNNY_VIEW_HEIGHT,
   BUNNY_WORLD_WIDTH,
@@ -8,8 +16,13 @@ import {
   type BunnyHopEvent,
 } from "./logic";
 
-const HIGH_SCORE_KEY = "gooby.minigame.bunny-hop.high-score.v1";
-const TUTORIAL_KEY = "gooby.minigame.bunny-hop.tutorial.v1";
+interface InjectedMinigameContext extends MinigameContext {
+  readonly lifecycle: MinigameLifecycle;
+  readonly audio?: {
+    emit(action: MinigameSoundAction, value?: number): void;
+  };
+  readonly reducedMotion?: boolean;
+}
 
 function requiredElement<T extends Element>(root: ParentNode, selector: string): T {
   const element = root.querySelector<T>(selector);
@@ -17,53 +30,13 @@ function requiredElement<T extends Element>(root: ParentNode, selector: string):
   return element;
 }
 
-class HopFeedback {
-  private audio: AudioContext | null = null;
-
-  public constructor(private readonly view: Window) {}
-
-  public unlock(): void {
-    const audio = this.audio ?? new AudioContext();
-    this.audio = audio;
-    if (audio.state === "suspended") void audio.resume().catch(() => undefined);
+function seedFromRunId(runId: string): number {
+  let seed = 0x811c9dc5;
+  for (const character of runId) {
+    seed ^= character.charCodeAt(0);
+    seed = Math.imul(seed, 0x01000193);
   }
-
-  public play(kind: "hop" | "spring" | "pickup" | "band" | "fall"): void {
-    this.unlock();
-    const audio = this.audio;
-    if (!audio) return;
-    const notes = kind === "spring"
-      ? [420, 640, 920]
-      : kind === "pickup"
-        ? [784, 1047]
-        : kind === "band"
-          ? [392, 523, 659, 784]
-          : kind === "fall"
-            ? [260, 200, 145]
-            : [300, 460];
-    notes.forEach((frequency, index) => {
-      const oscillator = audio.createOscillator();
-      const gain = audio.createGain();
-      const at = audio.currentTime + index * 0.05;
-      oscillator.type = kind === "fall" ? "triangle" : "sine";
-      oscillator.frequency.setValueAtTime(frequency, at);
-      gain.gain.setValueAtTime(0.0001, at);
-      gain.gain.exponentialRampToValueAtTime(0.05, at + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.13);
-      oscillator.connect(gain).connect(audio.destination);
-      oscillator.start(at);
-      oscillator.stop(at + 0.14);
-    });
-  }
-
-  public haptic(pattern: "light" | "success" | "warning"): void {
-    this.view.navigator.vibrate?.(pattern === "light" ? 8 : pattern === "success" ? [9, 30, 14] : 28);
-  }
-
-  public dispose(): void {
-    if (this.audio) void this.audio.close().catch(() => undefined);
-    this.audio = null;
-  }
+  return seed >>> 0;
 }
 
 export class BunnyHopMinigame implements MinigameModule {
@@ -78,7 +51,9 @@ export class BunnyHopMinigame implements MinigameModule {
   private pickupLayer: HTMLElement | null = null;
   private effectLayer: HTMLElement | null = null;
   private simulation: BunnyHopSimulation | null = null;
-  private feedback: HopFeedback | null = null;
+  private session: MinigameRunSession | null = null;
+  private injected: InjectedMinigameContext | null = null;
+  private cosmeticRng = new SeededRng(0xb044);
   private listeners: AbortController | null = null;
   private running = false;
   private ended = false;
@@ -87,15 +62,16 @@ export class BunnyHopMinigame implements MinigameModule {
 
   public mount(context: MinigameContext): void {
     this.dispose();
+    if (!context.lifecycle) throw new Error("Bunny Hop requires the minigame lifecycle");
     this.context = context;
-    const view = context.mount.ownerDocument.defaultView;
-    if (!view) throw new Error("Bunny Hop requires a browser window");
-    this.feedback = new HopFeedback(view);
-    this.highScore = this.readNumber(HIGH_SCORE_KEY);
+    this.injected = context as InjectedMinigameContext;
+    this.session = new MinigameRunSession(context.lifecycle);
+    this.highScore = this.session.persistedBest;
     this.listeners = new AbortController();
 
     const root = context.mount.ownerDocument.createElement("section");
     root.className = "bh-game meadow";
+    root.classList.toggle("reduced-motion", this.injected.reducedMotion === true);
     root.dataset.minigame = this.id;
     root.innerHTML = `
       <style>
@@ -107,15 +83,15 @@ export class BunnyHopMinigame implements MinigameModule {
         .bh-bunny{--x:50;--bottom:25;position:absolute;z-index:6;left:calc(var(--x)*1%);bottom:calc(var(--bottom)*1%);width:49px;height:45px;transform:translate(-50%,0);border-radius:48% 48% 44% 44%;background:radial-gradient(circle at 34% 43%,#44342f 0 2px,transparent 3px),radial-gradient(circle at 66% 43%,#44342f 0 2px,transparent 3px),radial-gradient(ellipse at 50% 70%,#fff0d0 0 23%,transparent 25%),#f5d4a8;box-shadow:inset -7px -6px #eeb580,0 8px 10px #313a4644;transition:transform 80ms}.bh-bunny:before,.bh-bunny:after{content:"";position:absolute;z-index:-1;top:-28px;width:15px;height:38px;border-radius:60% 60% 35% 35%;background:#f4d1a4;box-shadow:inset 0 0 0 4px #eeb393}.bh-bunny:before{left:8px;transform:rotate(-12deg)}.bh-bunny:after{right:8px;transform:rotate(15deg)}.bh-bunny.falling{transform:translate(-50%,0) rotate(8deg)}.bh-tail{position:absolute;right:-8px;bottom:5px;width:16px;aspect-ratio:1;border-radius:50%;background:#fff2dc}
         .bh-pickup{--x:50;--bottom:20;position:absolute;left:calc(var(--x)*1%);bottom:calc(var(--bottom)*1%);transform:translateX(-50%);filter:drop-shadow(0 3px 5px #3b355477);animation:bh-float .8s ease-in-out infinite alternate}.bh-pickup.carrot{width:13px;height:29px;border-radius:55% 45% 55% 45%;background:#f28733}.bh-pickup.carrot:before{content:"";position:absolute;top:-8px;left:2px;width:9px;height:11px;border-radius:80% 10%;background:#64b657}.bh-pickup.star{width:28px;height:28px;background:#ffe56f;clip-path:polygon(50% 0,61% 35%,98% 35%,68% 56%,79% 93%,50% 71%,21% 93%,32% 56%,2% 35%,39% 35%)}
         .bh-hud{position:absolute;z-index:12;top:max(12px,env(safe-area-inset-top));left:12px;right:12px;display:grid;grid-template-columns:1fr auto 1fr;gap:7px;align-items:start}.bh-card{padding:8px 11px;border:1px solid #fff7;border-radius:15px;background:#263d56a6;box-shadow:0 8px 20px #1f2c4933;backdrop-filter:blur(9px)}.bh-card:last-child{text-align:right}.bh-label{display:block;color:#dcecff;font-size:8px;font-weight:900;letter-spacing:1.2px;text-transform:uppercase}.bh-value{font-size:19px;font-weight:950}.bh-band{text-align:center;min-width:91px;color:#fff}.bh-combo{position:absolute;z-index:11;top:12.5%;left:50%;padding:5px 13px;transform:translateX(-50%) scale(.9);border-radius:99px;color:#563c2d;background:#fff1bde8;font-size:12px;font-weight:950;opacity:0;transition:150ms}.bh-combo.show{opacity:1;transform:translateX(-50%) scale(1)}
-        .bh-controls{position:absolute;z-index:14;right:10px;bottom:max(10px,env(safe-area-inset-bottom));display:flex;gap:6px}.bh-icon-button{display:grid;width:42px;aspect-ratio:1;place-items:center;border:1px solid #fff8;border-radius:50%;color:white;background:#263d56ad;box-shadow:0 5px 14px #1e2f4633;font-size:17px;font-weight:900}.bh-steer-hint{position:absolute;z-index:7;right:0;bottom:4%;left:0;color:#fffbbb;font-size:10px;font-weight:900;text-align:center;text-shadow:0 2px 4px #273e55;pointer-events:none;opacity:.8}
+        .bh-controls{position:absolute;z-index:14;right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));display:flex;gap:6px}.bh-icon-button{display:grid;width:44px;min-height:44px;aspect-ratio:1;place-items:center;border:1px solid #fff8;border-radius:50%;color:white;background:#263d56ad;box-shadow:0 5px 14px #1e2f4633;font-size:17px;font-weight:900}.bh-steer-hint{position:absolute;z-index:7;right:0;bottom:4%;left:0;color:#fffbbb;font-size:10px;font-weight:900;text-align:center;text-shadow:0 2px 4px #273e55;pointer-events:none;opacity:.8}
         .bh-particle{--px:50%;--py:50%;--dx:0px;position:absolute;left:var(--px);bottom:var(--py);color:#fff4a0;font-size:18px;font-weight:950;text-shadow:0 2px 5px #263d56;animation:bh-pop .7s ease-out forwards}.bh-particle.dust{color:#e7dacb;font-size:12px}
-        .bh-overlay{position:absolute;z-index:30;inset:0;display:grid;place-items:center;padding:24px;background:#1e315099;backdrop-filter:blur(8px)}.bh-overlay[hidden]{display:none}.bh-panel{width:min(100%,340px);padding:27px 24px 22px;border:1px solid #fff8;border-radius:27px;color:#453a4f;background:linear-gradient(145deg,#fffdf3,#dff4f0);box-shadow:0 22px 65px #172b4566;text-align:center}.bh-hero{font-size:55px}.bh-panel h2{margin:7px 0 8px;font-size:27px;letter-spacing:-.7px}.bh-panel p{margin:0 0 18px;color:#675d70;font-size:13px;line-height:1.5}.bh-tips{display:grid;gap:7px;margin:0 0 18px;text-align:left}.bh-tip{padding:8px 10px;border-radius:11px;background:#cae8e4aa;font-size:11px;font-weight:750}.bh-main-button,.bh-quit-button{width:100%;min-height:49px;border:0;border-radius:16px;color:white;background:linear-gradient(#6abfc2,#477fa4);font:900 14px inherit;box-shadow:0 9px 20px #356c8644}.bh-quit-button{margin-top:8px;color:#61566a;background:#d8e4df;box-shadow:none}.bh-result{font-size:35px;font-weight:950}.bh-new-best{color:#ce862f;font-size:12px;font-weight:950}
-        @keyframes bh-float{to{transform:translateX(-50%) translateY(-7px) rotate(5deg)}}@keyframes bh-pop{from{opacity:1;transform:translate(-50%,0) scale(.7)}to{opacity:0;transform:translate(calc(-50% + var(--dx)),-85px) scale(1.3)}}@keyframes bh-crumble{to{opacity:0;transform:translateX(-50%) translateY(25px) rotate(5deg)}}@media(prefers-reduced-motion:reduce){.bh-game *{animation-duration:1ms!important;transition-duration:1ms!important}}
+        .bh-overlay{position:absolute;z-index:30;inset:0;display:grid;place-items:center;padding:max(24px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));background:#1e315099;backdrop-filter:blur(8px)}.bh-overlay[hidden]{display:none}.bh-panel{width:min(100%,340px);padding:27px 24px 22px;border:1px solid #fff8;border-radius:27px;color:#453a4f;background:linear-gradient(145deg,#fffdf3,#dff4f0);box-shadow:0 22px 65px #172b4566;text-align:center}.bh-hero{font-size:55px}.bh-panel h2{margin:7px 0 8px;font-size:27px;letter-spacing:-.7px}.bh-panel p{margin:0 0 18px;color:#675d70;font-size:13px;line-height:1.5}.bh-tips{display:grid;gap:7px;margin:0 0 18px;text-align:left}.bh-tip{padding:8px 10px;border-radius:11px;background:#cae8e4aa;font-size:11px;font-weight:750}.bh-main-button,.bh-quit-button{width:100%;min-height:49px;border:0;border-radius:16px;color:white;background:linear-gradient(#6abfc2,#477fa4);font:900 14px inherit;box-shadow:0 9px 20px #356c8644}.bh-quit-button{margin-top:8px;color:#61566a;background:#d8e4df;box-shadow:none}.bh-result{font-size:35px;font-weight:950}.bh-new-best{color:#ce862f;font-size:12px;font-weight:950}
+        @keyframes bh-float{to{transform:translateX(-50%) translateY(-7px) rotate(5deg)}}@keyframes bh-pop{from{opacity:1;transform:translate(-50%,0) scale(.7)}to{opacity:0;transform:translate(calc(-50% + var(--dx)),-85px) scale(1.3)}}@keyframes bh-crumble{to{opacity:0;transform:translateX(-50%) translateY(25px) rotate(5deg)}}.bh-game.reduced-motion *{animation-duration:1ms!important;transition-duration:1ms!important}@media(prefers-reduced-motion:reduce){.bh-game *{animation-duration:1ms!important;transition-duration:1ms!important}}
       </style>
       <div class="bh-field" aria-label="Bunny Hop play field"><div class="bh-haze"></div><div class="bh-platforms"></div><div class="bh-pickups"></div><div class="bh-bunny"><i class="bh-tail"></i></div><div class="bh-effects"></div><div class="bh-steer-hint">TOUCH LEFT OR RIGHT TO STEER · EDGES WRAP</div></div>
       <header class="bh-hud"><div class="bh-card"><span class="bh-label">Score</span><strong class="bh-value" data-score>0</strong></div><div class="bh-card bh-band"><span class="bh-label">Altitude</span><strong class="bh-value" data-height>0m</strong></div><div class="bh-card"><span class="bh-label">Best</span><strong class="bh-value" data-best>${this.highScore}</strong></div></header>
       <div class="bh-combo" data-combo>HOP ×0</div><nav class="bh-controls"><button class="bh-icon-button" data-pause aria-label="Pause">Ⅱ</button><button class="bh-icon-button" data-quit aria-label="Quit">×</button></nav>
-      <div class="bh-overlay" data-tutorial hidden><article class="bh-panel"><div class="bh-hero">🐰</div><span class="bh-label">Endless sky climb</span><h2>Bunny Hop</h2><p>Gooby bounces automatically. Steer in the air, wrap around either edge, and keep climbing.</p><div class="bh-tips"><div class="bh-tip">↔ Moving clouds drift underfoot</div><div class="bh-tip">⚡ Springs launch you extra high</div><div class="bh-tip">💥 Crumble platforms only last one hop</div><div class="bh-tip">🥕 Pickups add score and rewards</div></div><button class="bh-main-button" data-play>HOP TO IT!</button></article></div>
+      <div class="bh-overlay" data-tutorial hidden><article class="bh-panel"><div class="bh-hero">🐰</div><span class="bh-label">Endless sky climb</span><h2>Bunny Hop</h2><p>Gooby bounces automatically. Steer in the air, wrap around either edge, and keep climbing.</p><div class="bh-tips"><div class="bh-tip">↔ Moving clouds drift underfoot</div><div class="bh-tip">⚡ Springs launch you extra high</div><div class="bh-tip">💥 Crumble platforms only last one hop</div><div class="bh-tip">🥕 Pickups add score and rewards</div></div><button class="bh-main-button" data-play>HOP TO IT!</button><button class="bh-quit-button" data-tutorial-quit>QUIT TUTORIAL</button></article></div>
       <div class="bh-overlay" data-paused hidden><article class="bh-panel"><div class="bh-hero">☁️</div><h2>Floating break</h2><p>The whole sky is holding still for you.</p><button class="bh-main-button" data-resume>RESUME</button><button class="bh-quit-button" data-pause-quit>QUIT & COLLECT</button></article></div>
       <div class="bh-overlay" data-ended hidden><article class="bh-panel"><div class="bh-hero">🌙</div><span class="bh-label">Flight score</span><div class="bh-result" data-result>0</div><div class="bh-new-best" data-new-best hidden>NEW HIGH SCORE!</div><p data-summary></p><button class="bh-main-button" data-done>COLLECT REWARDS</button></article></div>
     `;
@@ -139,21 +115,23 @@ export class BunnyHopMinigame implements MinigameModule {
       this.simulation?.setSteering((event.clientX - rect.left) / rect.width);
     };
     field.addEventListener("pointerdown", (event) => {
-      this.feedback?.unlock();
+      this.session?.markAction();
       field.setPointerCapture(event.pointerId);
       steer(event);
     }, { signal });
     field.addEventListener("pointermove", steer, { signal });
     requiredElement<HTMLButtonElement>(root, "[data-play]").addEventListener("click", () => {
-      this.writeFlag(TUTORIAL_KEY);
       requiredElement<HTMLElement>(root, "[data-tutorial]").hidden = true;
+      const runId = this.session?.begin();
+      if (!runId) return;
+      this.cosmeticRng = new SeededRng(seedFromRunId(runId));
       this.running = true;
-      this.feedback?.play("hop");
+      this.emitFeedback("go");
     }, { signal });
     requiredElement<HTMLButtonElement>(root, "[data-pause]").addEventListener("click", () => this.pause(), { signal });
     requiredElement<HTMLButtonElement>(root, "[data-resume]").addEventListener("click", () => this.resume(), { signal });
-    for (const selector of ["[data-quit]", "[data-pause-quit]"]) {
-      requiredElement<HTMLButtonElement>(root, selector).addEventListener("click", () => this.finishRun(), { signal });
+    for (const selector of ["[data-quit]", "[data-pause-quit]", "[data-tutorial-quit]"]) {
+      requiredElement<HTMLButtonElement>(root, selector).addEventListener("click", () => this.finishRun("quit"), { signal });
     }
     requiredElement<HTMLButtonElement>(root, "[data-done]").addEventListener("click", () => this.notifyFinish(), { signal });
   }
@@ -166,9 +144,8 @@ export class BunnyHopMinigame implements MinigameModule {
     this.simulation = new BunnyHopSimulation(context.rng);
     this.ended = false;
     this.notified = false;
-    const firstPlay = !this.readFlag(TUTORIAL_KEY);
-    this.running = !firstPlay;
-    requiredElement<HTMLElement>(root, "[data-tutorial]").hidden = !firstPlay;
+    this.running = false;
+    requiredElement<HTMLElement>(root, "[data-tutorial]").hidden = false;
     requiredElement<HTMLElement>(root, "[data-paused]").hidden = true;
     requiredElement<HTMLElement>(root, "[data-ended]").hidden = true;
     this.render();
@@ -184,7 +161,7 @@ export class BunnyHopMinigame implements MinigameModule {
     if (this.ended || !this.simulation || !this.root) return;
     requiredElement<HTMLElement>(this.root, "[data-paused]").hidden = true;
     this.running = true;
-    this.feedback?.play("hop");
+    this.emitFeedback("go");
   }
 
   public update(deltaSeconds: number): void {
@@ -201,18 +178,15 @@ export class BunnyHopMinigame implements MinigameModule {
   private handleEvent(event: BunnyHopEvent): void {
     if (event.type === "land") {
       this.addParticle(event.x, event.y, event.kind === "spring" ? "BOING!" : "POOF", "dust");
-      this.feedback?.play(event.kind === "spring" ? "spring" : "hop");
-      this.feedback?.haptic(event.kind === "spring" ? "success" : "light");
+      this.emitFeedback(event.kind === "spring" ? "combo" : "hit", this.simulation?.snapshot().combo);
     } else if (event.type === "pickup") {
       this.addParticle(event.x, event.y, `+${event.points}`, "");
-      this.feedback?.play("pickup");
-      this.feedback?.haptic("success");
+      this.emitFeedback("hit");
     } else if (event.type === "band") {
       this.addParticle(BUNNY_WORLD_WIDTH / 2, this.simulation?.snapshot().bunnyY ?? event.band.length, event.band.toUpperCase(), "");
-      this.feedback?.play("band");
-      this.feedback?.haptic("success");
+      this.emitFeedback("combo", this.simulation?.snapshot().combo);
     } else {
-      this.finishRun();
+      this.finishRun("lose");
     }
   }
 
@@ -220,14 +194,14 @@ export class BunnyHopMinigame implements MinigameModule {
     const context = this.context;
     const effectLayer = this.effectLayer;
     const snapshot = this.simulation?.snapshot();
-    if (!context || !effectLayer || !snapshot) return;
+    if (!context || !effectLayer || !snapshot || this.injected?.reducedMotion === true) return;
     const particle = effectLayer.ownerDocument.createElement("span");
     particle.className = `bh-particle ${className}`;
     particle.textContent = label;
     particle.dataset.expires = String(context.clock.now() + 720);
     particle.style.setProperty("--px", `${worldX / BUNNY_WORLD_WIDTH * 100}%`);
     particle.style.setProperty("--py", `${(worldY - snapshot.cameraBottom) / BUNNY_VIEW_HEIGHT * 100}%`);
-    particle.style.setProperty("--dx", `${(context.rng.next() - 0.5) * 40}px`);
+    particle.style.setProperty("--dx", `${(this.cosmeticRng.next() - 0.5) * 40}px`);
     effectLayer.append(particle);
   }
 
@@ -268,25 +242,28 @@ export class BunnyHopMinigame implements MinigameModule {
     }).join("");
   }
 
-  private finishRun(): void {
+  private finishRun(outcome: "win" | "lose" | "quit"): void {
     if (this.ended || !this.root) return;
     this.running = false;
     this.ended = true;
     const payout = this.payout();
     const snapshot = this.simulation?.snapshot();
-    const isBest = payout.score > this.highScore;
-    if (isBest) {
-      this.highScore = payout.score;
-      this.writeNumber(HIGH_SCORE_KEY, payout.score);
-    }
+    const previousBest = this.session?.persistedBest ?? this.highScore;
+    const receipt = outcome === "quit"
+      ? this.session?.quit(payout) ?? null
+      : null;
+    const rewardPending = outcome !== "quit";
+    const isBest = (receipt !== null || rewardPending) && payout.score > previousBest;
+    this.highScore = receipt?.bestScore ?? Math.max(previousBest, rewardPending ? payout.score : 0);
     requiredElement<HTMLElement>(this.root, "[data-paused]").hidden = true;
     requiredElement<HTMLElement>(this.root, "[data-ended]").hidden = false;
     requiredElement<HTMLElement>(this.root, "[data-result]").textContent = payout.score.toLocaleString();
     requiredElement<HTMLElement>(this.root, "[data-new-best]").hidden = !isBest;
     requiredElement<HTMLElement>(this.root, "[data-summary]").textContent =
-      `${Math.floor((snapshot?.maxHeight ?? 0) / 10)}m high · ${payout.coins} coins · ${payout.xp} XP`;
-    this.feedback?.play("fall");
-    this.feedback?.haptic("warning");
+      receipt || rewardPending
+        ? `${Math.floor((snapshot?.maxHeight ?? 0) / 10)}m high · ${payout.coins} coins · ${payout.xp} XP`
+        : "Run left before steering · no reward";
+    if (receipt || rewardPending) this.emitFeedback(outcome === "lose" ? "lose" : "win");
   }
 
   public payout(): MinigamePayout {
@@ -295,47 +272,15 @@ export class BunnyHopMinigame implements MinigameModule {
   }
 
   private notifyFinish(): void {
-    if (this.notified || !this.context) return;
-    if (!this.ended) this.finishRun();
+    if (this.notified) return;
+    if (!this.ended) this.finishRun("win");
     this.notified = true;
-    this.context.finish(this.payout());
+    const receipt = this.session?.complete(this.payout());
+    if (receipt) this.highScore = receipt.bestScore;
   }
 
-  private storage(): Storage | null {
-    try {
-      return this.root?.ownerDocument.defaultView?.localStorage ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  private readNumber(key: string): number {
-    const value = Number(this.storage()?.getItem(key));
-    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
-  }
-
-  private writeNumber(key: string, value: number): void {
-    try {
-      this.storage()?.setItem(key, String(value));
-    } catch {
-      // Persistence is optional in privacy-restricted browser contexts.
-    }
-  }
-
-  private readFlag(key: string): boolean {
-    try {
-      return this.storage()?.getItem(key) === "seen";
-    } catch {
-      return false;
-    }
-  }
-
-  private writeFlag(key: string): void {
-    try {
-      this.storage()?.setItem(key, "seen");
-    } catch {
-      // The tutorial remains safe to repeat if storage is unavailable.
-    }
+  private emitFeedback(action: MinigameSoundAction, value?: number): void {
+    this.injected?.audio?.emit(action, value);
   }
 
   public dispose(): void {
@@ -343,8 +288,8 @@ export class BunnyHopMinigame implements MinigameModule {
     this.ended = true;
     this.listeners?.abort();
     this.listeners = null;
-    this.feedback?.dispose();
-    this.feedback = null;
+    this.session?.exit();
+    this.session = null;
     this.simulation?.dispose();
     this.simulation = null;
     this.root?.remove();
@@ -353,6 +298,7 @@ export class BunnyHopMinigame implements MinigameModule {
     this.platformLayer = null;
     this.pickupLayer = null;
     this.effectLayer = null;
+    this.injected = null;
     this.context = null;
   }
 }

@@ -7,6 +7,7 @@ export default defineConfig({
       "src/minigames/carrot-catch/**/*.test.ts",
       "src/minigames/bunny-hop/**/*.test.ts",
       "src/minigames/pancake-peak/**/*.test.ts",
+      "src/minigames/gooby-says/**/*.test.ts",
     ],
   },
 });

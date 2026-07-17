@@ -67,7 +67,7 @@ export interface FlipResult {
 }
 
 export interface MeadowResult {
-  readonly stars: 1 | 2 | 3;
+  readonly stars: 0 | 1 | 2 | 3;
   readonly score: number;
   readonly elapsedSeconds: number;
   readonly moves: number;
@@ -292,18 +292,25 @@ export class MemoryMeadowRound {
 
   result(): MeadowResult {
     const config = MEADOW_CONFIGS[this.difficulty];
+    if (!this.isComplete) {
+      return {
+        stars: 0,
+        score: 0,
+        elapsedSeconds: this.elapsed,
+        moves: this.moveCount,
+      };
+    }
     const withinGoldTime = this.elapsed <= config.timeLimitSeconds * 0.68;
     const withinSilverTime = this.elapsed <= config.timeLimitSeconds * 0.9;
     let stars: 1 | 2 | 3 = 1;
-    if (this.isComplete && withinGoldTime && this.moveCount <= config.parMoves) stars = 3;
-    else if (this.isComplete && withinSilverTime && this.moveCount <= Math.ceil(config.parMoves * 1.5)) {
+    if (withinGoldTime && this.moveCount <= config.parMoves) stars = 3;
+    else if (withinSilverTime && this.moveCount <= Math.ceil(config.parMoves * 1.5)) {
       stars = 2;
     }
 
     const speedBonus = Math.floor(this.remainingSeconds * 18);
     const moveBonus = Math.max(0, config.parMoves * 2 - this.moveCount) * 45;
-    const completionBonus = this.isComplete ? 500 : this.groupsMatched * 55;
-    const score = stars * 750 + speedBonus + moveBonus + completionBonus + this.difficulty * 250;
+    const score = stars * 750 + speedBonus + moveBonus + 500 + this.difficulty * 250;
     return { stars, score, elapsedSeconds: this.elapsed, moves: this.moveCount };
   }
 

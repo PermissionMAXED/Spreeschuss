@@ -2,10 +2,13 @@ import type {
   MinigameContext,
   MinigameModule,
   MinigamePayout,
+  MinigameRunId,
 } from "../../core/contracts/minigame";
+import type { HapticPattern } from "../../core/contracts/platform";
 import type { MinigameStubDefinition } from "../stub";
 import {
   RHYTHM_BEATMAPS,
+  RhythmBeatCueTransport,
   RhythmSession,
   type JudgmentEvent,
   type RhythmDifficulty,
@@ -22,6 +25,16 @@ export const definition = {
 } as const satisfies MinigameStubDefinition;
 
 type RhythmScreen = "tutorial" | "select" | "playing" | "results";
+type SharedAudioAction = "hit" | "miss" | "combo" | "countdown" | "go" | "win" | "lose" | "score";
+
+type RhythmContext = MinigameContext & {
+  readonly audio?: { emit(action: SharedAudioAction, value?: number): void };
+  readonly haptics?: { impact(pattern: HapticPattern): void };
+  readonly reducedMotion?: boolean;
+  readonly bestScore?: number;
+};
+
+const EMPTY_PAYOUT: MinigamePayout = { score: 0, coins: 0, xp: 0 };
 
 const SONG_ORDER: readonly RhythmSongId[] = [
   "carrot-bounce",
@@ -34,10 +47,12 @@ export class RhythmHop implements MinigameModule {
   readonly title = definition.title;
   readonly instructions = definition.instructions;
 
-  private context: MinigameContext | null = null;
+  private context: RhythmContext | null = null;
   private root: HTMLElement | null = null;
   private shadow: ShadowRoot | null = null;
   private session: RhythmSession | null = null;
+  private beatTransport: RhythmBeatCueTransport | null = null;
+  private runId: MinigameRunId | null = null;
   private screen: RhythmScreen = "tutorial";
   private songId: RhythmSongId = "carrot-bounce";
   private difficulty: RhythmDifficulty = "easy";
@@ -50,6 +65,9 @@ export class RhythmHop implements MinigameModule {
   private feedbackSeconds = 0;
   private wobbleUntilMs = 0;
   private highScore = 0;
+  private previousBest = 0;
+  private actionsTaken = 0;
+  private completedSong = false;
   private finalScore = 0;
   private finalPerfects = 0;
   private finalGoods = 0;
@@ -66,9 +84,14 @@ export class RhythmHop implements MinigameModule {
   mount(context: MinigameContext): void {
     this.dispose();
     this.context = context;
+    this.highScore = context.lifecycle?.persistedBest
+      ?? this.context.bestScore
+      ?? 0;
+    this.previousBest = this.highScore;
     const root = context.mount.ownerDocument.createElement("section");
     root.setAttribute("aria-label", "Rhythm Hop");
     root.setAttribute("tabindex", "0");
+    root.dataset.reducedMotion = String(this.context.reducedMotion === true);
     root.dataset.minigame = this.id;
     this.root = root;
     this.shadow = root.attachShadow({ mode: "open" });
@@ -110,10 +133,13 @@ export class RhythmHop implements MinigameModule {
       throw new RangeError("Rhythm Hop delta must be finite and non-negative");
     }
     if (!this.running || this.session === null) return;
+    for (const cue of this.beatTransport?.drain(this.session) ?? []) {
+      this.context?.audio?.emit("countdown", cue.beatIndex);
+    }
     const misses = this.session.update();
     for (const miss of misses) this.applyJudgment(miss);
     if (this.session.state === "ended") {
-      this.showResults();
+      this.showResults(true);
       return;
     }
     if (this.feedbackSeconds > 0) {
@@ -124,9 +150,9 @@ export class RhythmHop implements MinigameModule {
   }
 
   payout(): MinigamePayout {
-    const score = this.screen === "results" ? this.finalScore : (this.session?.score ?? 0);
-    const bestCombo =
-      this.screen === "results" ? this.finalBestCombo : (this.session?.bestCombo ?? 0);
+    if (this.screen !== "results") return EMPTY_PAYOUT;
+    const score = this.finalScore;
+    const bestCombo = this.finalBestCombo;
     return {
       score,
       coins: Math.floor(score / 3_500) + Math.floor(bestCombo / 8) + 3,
@@ -135,6 +161,7 @@ export class RhythmHop implements MinigameModule {
   }
 
   dispose(): void {
+    this.context?.lifecycle?.exit();
     this.shadow?.removeEventListener("click", this.handleClick);
     this.root?.removeEventListener("keydown", this.handleKeyDown);
     this.root?.remove();
@@ -142,6 +169,8 @@ export class RhythmHop implements MinigameModule {
     this.root = null;
     this.shadow = null;
     this.session = null;
+    this.beatTransport = null;
+    this.runId = null;
     this.running = false;
     this.paused = false;
     this.feedbackSeconds = 0;
@@ -193,7 +222,10 @@ export class RhythmHop implements MinigameModule {
       return;
     }
     if (action === "quit" || action === "done") {
-      this.finishOnce();
+      if (action === "quit") {
+        if (this.actionsTaken === 0) this.abandonRun();
+        else this.showResults(false);
+      }
       return;
     }
     if (action === "lane") {
@@ -220,6 +252,7 @@ export class RhythmHop implements MinigameModule {
 
   private hitLane(lane: RhythmLane): void {
     if (!this.running || this.session === null) return;
+    this.actionsTaken += 1;
     this.lane = lane;
     const event = this.session.input(lane);
     this.applyJudgment(event);
@@ -233,7 +266,15 @@ export class RhythmHop implements MinigameModule {
     this.feedbackSeconds = 0.55;
     if (event.judgment === "miss") {
       const context = this.requireMounted();
-      this.wobbleUntilMs = context.clock.now() + 360;
+      if (context.reducedMotion !== true) this.wobbleUntilMs = context.clock.now() + 360;
+      context.audio?.emit("miss");
+      context.haptics?.impact("warning");
+    } else {
+      this.context?.audio?.emit(
+        event.combo > 0 && event.combo % 5 === 0 ? "combo" : "hit",
+        event.combo,
+      );
+      this.context?.haptics?.impact(event.judgment === "perfect" ? "medium" : "light");
     }
     const judgment = this.shadow?.querySelector<HTMLElement>(".judgment");
     if (judgment !== null && judgment !== undefined) {
@@ -249,7 +290,11 @@ export class RhythmHop implements MinigameModule {
 
   private beginSong(): void {
     const context = this.requireMounted();
+    this.runId = context.lifecycle?.beginRun() ?? null;
+    this.previousBest = context.lifecycle?.persistedBest ?? context.bestScore ?? this.highScore;
+    this.highScore = this.previousBest;
     this.session = new RhythmSession(RHYTHM_BEATMAPS[this.songId][this.difficulty], context.clock);
+    this.beatTransport = new RhythmBeatCueTransport(this.session.beatmap);
     this.session.start();
     this.screen = "playing";
     this.running = true;
@@ -259,31 +304,57 @@ export class RhythmHop implements MinigameModule {
     this.feedback = "ready";
     this.feedbackSeconds = 0;
     this.wobbleUntilMs = 0;
+    this.actionsTaken = 0;
+    this.completedSong = false;
     this.render();
     this.root?.focus();
   }
 
-  private showResults(): void {
+  private showResults(completedSong: boolean): void {
     if (this.session === null || this.screen === "results") return;
     this.running = false;
+    this.session.pause();
+    this.completedSong = completedSong;
     this.finalScore = this.session.score;
     this.finalPerfects = this.session.perfects;
     this.finalGoods = this.session.goods;
     this.finalMisses = this.session.misses;
     this.finalBestCombo = this.session.bestCombo;
-    this.highScore = Math.max(this.highScore, this.finalScore);
     this.screen = "results";
+    this.settleTerminalResult();
     this.render();
   }
 
-  private finishOnce(): void {
+  private settleTerminalResult(): void {
     if (this.finished) return;
     this.finished = true;
     this.running = false;
-    this.context?.finish(this.payout());
+    const context = this.context;
+    if (context === null) return;
+    if (context.lifecycle !== undefined && this.runId !== null) {
+      const receipt = context.lifecycle.completeRun(this.runId, this.payout());
+      this.highScore = receipt.bestScore;
+      this.runId = null;
+      return;
+    }
+    this.highScore = Math.max(this.highScore, this.finalScore);
+    context.finish(this.payout());
   }
 
-  private requireMounted(): MinigameContext {
+  private abandonRun(): void {
+    this.running = false;
+    this.session?.pause();
+    this.context?.lifecycle?.exit();
+    this.runId = null;
+    this.session = null;
+    this.beatTransport = null;
+    this.paused = false;
+    this.finished = false;
+    this.screen = "select";
+    this.render();
+  }
+
+  private requireMounted(): RhythmContext {
     if (this.context === null) throw new Error("Rhythm Hop must be mounted before use");
     return this.context;
   }
@@ -292,6 +363,7 @@ export class RhythmHop implements MinigameModule {
     if (this.shadow === null) return;
     this.shadow.innerHTML = `<style>${RHYTHM_HOP_STYLES}</style>${this.renderGame()}`;
     if (this.screen === "playing" && !this.paused) this.updateTrack();
+    this.focusCurrentInteraction();
   }
 
   private renderGame(): string {
@@ -327,9 +399,9 @@ export class RhythmHop implements MinigameModule {
         <div class="judgment ${this.feedback}"></div><div class="combo-pop"></div>
         <div class="progress"><i data-stat="progress" style="--progress:${progress}%"></i></div>
         <section class="controls" aria-label="Lane controls">
-          <button class="lane-button" data-action="lane" data-lane="0">←<small>LEFT · A</small></button>
-          <button class="lane-button" data-action="lane" data-lane="1">↓<small>MIDDLE · S</small></button>
-          <button class="lane-button" data-action="lane" data-lane="2">→<small>RIGHT · D</small></button>
+          <button class="lane-button" data-action="lane" data-lane="0" aria-keyshortcuts="ArrowLeft A 1">←<small>LEFT · A</small></button>
+          <button class="lane-button" data-action="lane" data-lane="1" aria-keyshortcuts="ArrowDown S 2">↓<small>MIDDLE · S</small></button>
+          <button class="lane-button" data-action="lane" data-lane="2" aria-keyshortcuts="ArrowRight D 3">→<small>RIGHT · D</small></button>
         </section>
         ${this.renderOverlay()}
       </main>`;
@@ -344,7 +416,7 @@ export class RhythmHop implements MinigameModule {
         <div class="overlay"><section class="panel" role="dialog" aria-label="Song paused">
           <div class="mascot">🐰🎵</div><h2>Beat paused</h2><p>The audio clock and every note are frozen right on beat.</p>
           <button class="primary" data-action="resume">Resume the groove</button>
-          <button class="secondary" data-action="quit">Quit &amp; collect</button>
+          <button class="secondary" data-action="quit">${this.actionsTaken === 0 ? "Quit without reward" : "Finish &amp; collect"}</button>
         </section></div>`;
     }
     return "";
@@ -391,10 +463,10 @@ export class RhythmHop implements MinigameModule {
     const total = this.finalPerfects + this.finalGoods + this.finalMisses;
     const accuracy = total === 0 ? 0 : (this.finalPerfects + this.finalGoods * 0.65) / total;
     const grade = accuracy >= 0.95 ? "S" : accuracy >= 0.84 ? "A" : accuracy >= 0.7 ? "B" : accuracy >= 0.5 ? "C" : "D";
-    const isBest = this.finalScore >= this.highScore;
+    const isBest = this.finalScore > this.previousBest;
     return `
       <div class="overlay"><section class="panel">
-        <div class="mascot">🐰✨</div><h2>Song complete!</h2><div class="grade">${grade}</div>
+        <div class="mascot">🐰✨</div><h2>${this.completedSong ? "Song complete!" : "Song wrapped up"}</h2><div class="grade">${grade}</div>
         <div class="result-score">${this.finalScore.toLocaleString()} pts</div>
         <div class="result-grid">
           <div><b>${this.finalPerfects}</b><span>Perfect</span></div>
@@ -442,6 +514,23 @@ export class RhythmHop implements MinigameModule {
       "--progress",
       `${Math.min(100, (now / this.session.beatmap.durationMs) * 100)}%`,
     );
+  }
+
+  private focusCurrentInteraction(): void {
+    if (this.shadow === null) return;
+    if (this.screen === "playing" && !this.paused) {
+      this.root?.focus();
+      return;
+    }
+    const action =
+      this.paused
+        ? "resume"
+        : this.screen === "tutorial"
+          ? "tutorial-next"
+          : this.screen === "select"
+            ? "play"
+            : "done";
+    this.shadow.querySelector<HTMLButtonElement>(`button[data-action="${action}"]`)?.focus();
   }
 }
 

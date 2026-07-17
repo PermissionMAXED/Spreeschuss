@@ -10,9 +10,9 @@ import {
   CANNON_FLOOR_Y,
   CANNON_ORIGIN,
   createCannonState,
-  finishCannon,
   launchCarrot,
   pauseCannon,
+  PICNIC_CLEAR_SEQUENCE,
   predictTrajectory,
   resumeCannon,
   updateCannon,
@@ -21,10 +21,14 @@ import {
   type CannonState,
   type CannonTarget,
 } from "./model";
+import {
+  createCannonSettlement,
+  type CannonSettlement,
+} from "./settlement";
 import "./style.css";
 
 const TITLE = "Carrot Cannon";
-const INSTRUCTIONS = "Drag back and release to ricochet carrots through the picnic range.";
+const INSTRUCTIONS = "Drag back or use the aim buttons, then fire carrots through the picnic range.";
 const WORLD_WIDTH = 100;
 const WORLD_HEIGHT = 70;
 
@@ -35,6 +39,15 @@ interface CannonParticle {
   vy: number;
   life: number;
   readonly color: string;
+}
+
+interface SharedFeedbackContext extends MinigameContext {
+  readonly audio?: {
+    emit(action: "hit" | "miss" | "combo" | "countdown" | "go" | "win" | "lose" | "score", value?: number): void;
+  };
+  readonly haptics?: {
+    impact(pattern: "light" | "medium" | "success" | "warning"): void;
+  };
 }
 
 const DIFFICULTY_COPY: Readonly<Record<CannonDifficulty, { readonly label: string; readonly note: string }>> = {
@@ -55,17 +68,22 @@ export class CarrotCannonMinigame implements MinigameModule {
   private difficulty: CannonDifficulty = "picnic";
   private tutorialPage = 0;
   private bestScore = 0;
-  private resultVisible = false;
   private dragging = false;
   private dragPoint: CannonPoint = { ...CANNON_ORIGIN };
+  private aimPull: CannonPoint = { ...(PICNIC_CLEAR_SEQUENCE[0] ?? { x: 16, y: -13 }) };
   private pointerId: number | null = null;
   private particles: CannonParticle[] = [];
   private finished = false;
+  private settlement: CannonSettlement | null = null;
+  private hitFeedbackRemaining = 0;
+  private missFeedbackRemaining = 0;
   private cleanup: Array<() => void> = [];
 
   mount(context: MinigameContext): void {
     this.dispose();
     this.context = context;
+    this.settlement = createCannonSettlement(context);
+    this.bestScore = this.settlement.persistedBest;
     this.finished = false;
     const host = context.mount.ownerDocument.createElement("section");
     host.className = "cc-game";
@@ -77,9 +95,17 @@ export class CarrotCannonMinigame implements MinigameModule {
         <button class="cc-icon-button" data-action="pause" aria-label="Pause game">Ⅱ</button>
       </header>
       <div class="cc-wind" data-cc="wind"><small>WIND</small><b>CALM</b></div>
-      <canvas class="cc-canvas" data-cc="canvas" aria-label="Carrot cannon picnic range"></canvas>
-      <div class="cc-callout" data-cc="message">Drag the carrot back, then let go!</div>
+      <canvas class="cc-canvas" data-cc="canvas" tabindex="0" aria-label="Carrot cannon picnic range" aria-describedby="cc-control-help"></canvas>
+      <div class="cc-callout" data-cc="message">Drag to aim, or use the arrow controls!</div>
       <div class="cc-power" aria-hidden="true"><i data-cc="power"></i></div>
+      <div class="cc-aim-controls" role="group" aria-label="Carrot cannon aim controls">
+        <button data-action="aim-up" aria-label="Aim higher">▲</button>
+        <button data-action="power-down" aria-label="Reduce shot power">−</button>
+        <button class="cc-fire-button" data-action="fire">FIRE</button>
+        <button data-action="power-up" aria-label="Increase shot power">＋</button>
+        <button data-action="aim-down" aria-label="Aim lower">▼</button>
+      </div>
+      <p class="cc-control-help" id="cc-control-help">Arrow keys aim. Space fires. Dragging still works.</p>
       <footer class="cc-footer"><span>🥕 BOUNCES ADD BONUS</span><span data-cc="difficulty">PICNIC</span></footer>
       <div class="cc-overlay" data-cc="overlay"></div>
     `;
@@ -93,6 +119,9 @@ export class CarrotCannonMinigame implements MinigameModule {
       this.listen(this.canvas, "pointerup", this.onPointerUp);
       this.listen(this.canvas, "pointercancel", this.onPointerCancel);
     }
+    const document = context.mount.ownerDocument;
+    document.addEventListener("keydown", this.onKeyDown);
+    this.cleanup.push(() => document.removeEventListener("keydown", this.onKeyDown));
     this.showTutorial();
     this.render();
   }
@@ -120,9 +149,31 @@ export class CarrotCannonMinigame implements MinigameModule {
   update(deltaSeconds: number): void {
     if (!this.state || this.finished) return;
     const oldScore = this.state.score;
+    const oldPhase = this.state.phase;
     const wasFinished = this.state.phase === "finished";
     updateCannon(this.state, deltaSeconds);
-    if (this.state.score > oldScore) this.burstAtProjectile(this.state.score - oldScore);
+    if (this.state.score > oldScore) {
+      const points = this.state.score - oldScore;
+      this.burstAtProjectile(points);
+      this.hitFeedbackRemaining = 0.24;
+      this.emitFeedback(
+        this.state.multiHit > 1 ? "combo" : "hit",
+        this.state.multiHit > 1 ? "success" : "medium",
+        points,
+      );
+    }
+    if (
+      oldPhase === "flying"
+      && this.state.phase !== "flying"
+      && this.state.currentShotScore === 0
+    ) {
+      this.missFeedbackRemaining = 0.22;
+      this.emitFeedback("miss", "light");
+    }
+    if (oldPhase === "flying" && this.state.phase === "aiming") {
+      const suggested = PICNIC_CLEAR_SEQUENCE[this.state.shotNumber];
+      if (this.difficulty === "picnic" && suggested) this.aimPull = { ...suggested };
+    }
     this.updateParticles(deltaSeconds);
     if (!wasFinished && this.state.phase === "finished") this.completeRun();
     this.render();
@@ -134,17 +185,24 @@ export class CarrotCannonMinigame implements MinigameModule {
     return {
       score,
       coins: Math.min(90, Math.floor(score / 220)),
-      xp: Math.min(180, Math.floor(score / 105) + multiHit * 3),
+      xp: Math.min(
+        180,
+        Math.floor(score / 105)
+          + Math.max(multiHit, this.state?.bestMultiHit ?? 0) * 3
+          + Math.floor((this.state?.totalBounceBonus ?? 0) / 70),
+      ),
     };
   }
 
   dispose(): void {
     for (const remove of this.cleanup.splice(0)) remove();
+    this.settlement?.abandon();
     this.cancelDrag();
     this.host?.remove();
     this.host = null;
     this.canvas = null;
     this.context = null;
+    this.settlement = null;
     this.particles = [];
     this.finished = true;
   }
@@ -191,14 +249,23 @@ export class CarrotCannonMinigame implements MinigameModule {
         this.resume();
         break;
       case "restart":
-        this.startRound();
-        break;
       case "quit":
-        if (this.state) finishCannon(this.state);
-        this.finishToContext();
-        break;
       case "collect":
-        this.finishToContext();
+        break;
+      case "aim-up":
+        this.adjustAim(0, -1);
+        break;
+      case "aim-down":
+        this.adjustAim(0, 1);
+        break;
+      case "power-down":
+        this.adjustAim(-1, 0);
+        break;
+      case "power-up":
+        this.adjustAim(1, 0);
+        break;
+      case "fire":
+        this.fireAccessibleAim();
         break;
       default:
         break;
@@ -239,7 +306,10 @@ export class CarrotCannonMinigame implements MinigameModule {
     const dragY = CANNON_ORIGIN.y - this.dragPoint.y;
     const shouldLaunch = Math.hypot(dragX, dragY) >= 3;
     this.cancelDrag();
-    if (shouldLaunch) launchCarrot(this.state, dragX, dragY);
+    if (shouldLaunch) {
+      this.aimPull = { x: dragX, y: dragY };
+      launchCarrot(this.state, dragX, dragY);
+    }
     this.render();
   };
 
@@ -248,12 +318,39 @@ export class CarrotCannonMinigame implements MinigameModule {
     this.render();
   };
 
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (!this.state || this.state.phase !== "aiming") return;
+    const target = event.target;
+    const elementType = this.host?.ownerDocument.defaultView?.HTMLElement;
+    if (elementType && target instanceof elementType && target.closest("button, input, textarea, select")) return;
+    const adjustments: Readonly<Record<string, readonly [number, number]>> = {
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1],
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+    };
+    const adjustment = adjustments[event.key];
+    if (adjustment) {
+      event.preventDefault();
+      this.adjustAim(adjustment[0], adjustment[1]);
+    } else if (event.key === " " || event.key === "Enter") {
+      event.preventDefault();
+      this.fireAccessibleAim();
+    }
+  };
+
   private startRound(): void {
     if (!this.context) return;
     this.state = createCannonState(this.difficulty, this.context.rng);
     beginCannon(this.state);
-    this.resultVisible = false;
     this.particles = [];
+    this.hitFeedbackRemaining = 0;
+    this.missFeedbackRemaining = 0;
+    this.aimPull = {
+      ...(this.difficulty === "picnic"
+        ? PICNIC_CLEAR_SEQUENCE[0] ?? { x: 16, y: -13 }
+        : { x: 15, y: -9 }),
+    };
     this.cancelDrag();
     this.hideOverlay();
     this.render();
@@ -268,9 +365,24 @@ export class CarrotCannonMinigame implements MinigameModule {
     this.dragPoint = { ...CANNON_ORIGIN };
   }
 
+  private adjustAim(deltaPower: number, deltaHeight: number): void {
+    if (!this.state || this.state.phase !== "aiming") return;
+    this.aimPull = {
+      x: Math.min(18, Math.max(4, this.aimPull.x + deltaPower)),
+      y: Math.min(6, Math.max(-18, this.aimPull.y + deltaHeight)),
+    };
+    this.render();
+  }
+
+  private fireAccessibleAim(): void {
+    if (!this.state || this.state.phase !== "aiming") return;
+    launchCarrot(this.state, this.aimPull.x, this.aimPull.y);
+    this.render();
+  }
+
   private showTutorial(): void {
     const pages = [
-      ["🥕", "Pull, aim, release", "Grab the loaded carrot, drag back like a slingshot, and release to fire."],
+      ["🥕", "Pull, aim, release", "Drag back like a slingshot, or use the arrow controls and Fire button."],
       ["↗", "Bank clever shots", "Carrots bounce off the ground and edges. A hit after a bounce earns a tasty bonus."],
       ["🎯", "Clear the picnic", "Chain hay, cans, gophers, and the tough piñata in one flight for a multi-hit multiplier."],
     ] as const;
@@ -325,38 +437,16 @@ export class CarrotCannonMinigame implements MinigameModule {
         <h2>Picnic break</h2>
         <p>Your carrot is safely suspended mid-flight.</p>
         <button class="cc-primary cc-wide" data-action="resume">Back to the range</button>
-        <button class="cc-secondary cc-wide" data-action="restart">Restart 10 shots</button>
-        <button class="cc-text-button" data-action="quit">Quit &amp; collect</button>
       </div>
     `;
   }
 
   private completeRun(): void {
-    if (!this.state || this.resultVisible) return;
-    this.resultVisible = true;
+    if (!this.state || this.settlement?.closed) return;
     this.bestScore = Math.max(this.bestScore, this.state.score);
     const payout = this.payout();
-    const targetsHit = this.state.targets.filter((target) => !target.active).length;
-    const overlay = this.query("[data-cc='overlay']");
-    if (!overlay) return;
-    overlay.classList.add("is-visible");
-    overlay.innerHTML = `
-      <div class="cc-card cc-result-card">
-        <span class="cc-kicker">RANGE COMPLETE!</span>
-        <div class="cc-result-medal">🏅</div>
-        <h2>${payout.score.toLocaleString()}</h2>
-        <p>${targetsHit} targets cleared · Best shot <b>${this.state.bestShot}</b><br>High score <b>${this.bestScore.toLocaleString()}</b></p>
-        <div class="cc-rewards"><span>🪙 ${payout.coins}</span><span>★ ${payout.xp} XP</span></div>
-        <button class="cc-primary cc-wide" data-action="collect">Collect rewards</button>
-        <button class="cc-secondary cc-wide" data-action="restart">Fire 10 more</button>
-      </div>
-    `;
-  }
-
-  private finishToContext(): void {
-    if (this.finished) return;
     this.finished = true;
-    this.context?.finish(this.payout());
+    this.settlement?.complete(payout);
   }
 
   private hideOverlay(): void {
@@ -384,6 +474,8 @@ export class CarrotCannonMinigame implements MinigameModule {
 
   private updateParticles(deltaSeconds: number): void {
     const step = Math.min(0.1, Math.max(0, deltaSeconds));
+    this.hitFeedbackRemaining = Math.max(0, this.hitFeedbackRemaining - step);
+    this.missFeedbackRemaining = Math.max(0, this.missFeedbackRemaining - step);
     for (const particle of this.particles) {
       particle.life -= step;
       particle.vy += 12 * step;
@@ -420,7 +512,7 @@ export class CarrotCannonMinigame implements MinigameModule {
     this.setText("[data-cc='shots']", String(state?.shotsRemaining ?? 10));
     this.setText("[data-cc='score']", Math.floor(state?.score ?? 0).toLocaleString());
     this.setText("[data-cc='best']", `BEST ${Math.floor(this.bestScore).toLocaleString()}`);
-    this.setText("[data-cc='message']", state?.message ?? "Drag the carrot back, then let go!");
+    this.setText("[data-cc='message']", state?.message ?? "Drag to aim, or use the arrow controls!");
     this.setText("[data-cc='difficulty']", DIFFICULTY_COPY[this.difficulty].label.toUpperCase());
     const wind = this.query("[data-cc='wind']");
     if (wind) {
@@ -430,11 +522,14 @@ export class CarrotCannonMinigame implements MinigameModule {
     }
     const power = this.query("[data-cc='power']");
     if (power) {
-      const strength = this.dragging
-        ? Math.min(1, Math.hypot(CANNON_ORIGIN.x - this.dragPoint.x, CANNON_ORIGIN.y - this.dragPoint.y) / 18)
+      const aim = this.currentAim();
+      const strength = state?.phase === "aiming" || this.dragging
+        ? Math.min(1, Math.hypot(aim.x, aim.y) / 18)
         : 0;
       power.style.width = `${strength * 100}%`;
     }
+    this.host?.classList.toggle("is-hit", this.hitFeedbackRemaining > 0);
+    this.host?.classList.toggle("is-miss", this.missFeedbackRemaining > 0);
   }
 
   private resizeCanvas(canvas: HTMLCanvasElement): void {
@@ -538,10 +633,13 @@ export class CarrotCannonMinigame implements MinigameModule {
   }
 
   private drawTrajectory(drawing: CanvasRenderingContext2D): void {
-    if (!this.dragging || !this.state || this.difficulty !== "picnic") return;
-    const dragX = CANNON_ORIGIN.x - this.dragPoint.x;
-    const dragY = CANNON_ORIGIN.y - this.dragPoint.y;
-    const points = predictTrajectory(dragX, dragY, this.state.wind);
+    if (
+      !this.state
+      || this.difficulty !== "picnic"
+      || (!this.dragging && this.state.phase !== "aiming")
+    ) return;
+    const aim = this.currentAim();
+    const points = predictTrajectory(aim.x, aim.y, this.state.wind);
     drawing.fillStyle = "rgba(255,255,238,.82)";
     points.forEach((point, index) => {
       drawing.globalAlpha = 1 - index / Math.max(points.length * 1.4, 1);
@@ -612,6 +710,18 @@ export class CarrotCannonMinigame implements MinigameModule {
         drawing.stroke();
         break;
     }
+    if (target.maxHp > 1) {
+      const width = 12;
+      const ratio = Math.max(0, target.hp / target.maxHp);
+      drawing.fillStyle = "rgba(62,48,43,.62)";
+      drawing.fillRect(-width / 2, -8.8, width, 2.2);
+      drawing.fillStyle = ratio > 0.5 ? "#77bc67" : "#ffd457";
+      drawing.fillRect(-width / 2 + 0.35, -8.45, (width - 0.7) * ratio, 1.5);
+      drawing.fillStyle = "#fffbea";
+      drawing.font = "bold 2.3px sans-serif";
+      drawing.textAlign = "center";
+      drawing.fillText(`${target.hp}/${target.maxHp} HP`, 0, -10);
+    }
     drawing.restore();
   }
 
@@ -643,6 +753,25 @@ export class CarrotCannonMinigame implements MinigameModule {
       x: (event.clientX - rect.left) / Math.max(1, rect.width) * WORLD_WIDTH,
       y: (event.clientY - rect.top) / Math.max(1, rect.height) * WORLD_HEIGHT,
     };
+  }
+
+  private currentAim(): CannonPoint {
+    return this.dragging
+      ? {
+          x: CANNON_ORIGIN.x - this.dragPoint.x,
+          y: CANNON_ORIGIN.y - this.dragPoint.y,
+        }
+      : this.aimPull;
+  }
+
+  private emitFeedback(
+    action: "hit" | "miss" | "combo",
+    pattern: "light" | "medium" | "success",
+    value?: number,
+  ): void {
+    const shared: SharedFeedbackContext | null = this.context;
+    shared?.audio?.emit(action, value);
+    shared?.haptics?.impact(pattern);
   }
 
   private query(selector: string): HTMLElement | null {

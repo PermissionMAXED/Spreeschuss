@@ -79,5 +79,6 @@ export const MEMORY_MEADOW_STYLES = `
   .score { margin:8px 0 17px; color:#3f633c; font-size:34px; font-weight:950; }
   .new-best { display:inline-block; margin-bottom:12px; padding:5px 10px; border-radius:99px; color:#8b5d1f; background:#ffe798; font-size:9px; font-weight:950; letter-spacing:1px; }
   @media (max-height:700px) { .game{min-height:100%}.board{height:54vh}.panel{padding:16px}.mascot{font-size:42px}.panel h2{font-size:23px}.tip{margin:8px 0}.difficulty{gap:5px;margin:7px 0 10px}.difficulty button{padding:7px 10px} }
+  :host([data-reduced-motion="true"]) * { animation-duration:1ms!important;transition-duration:1ms!important; }
   @media (prefers-reduced-motion:reduce) { *{animation-duration:1ms!important;transition-duration:1ms!important} }
 `;

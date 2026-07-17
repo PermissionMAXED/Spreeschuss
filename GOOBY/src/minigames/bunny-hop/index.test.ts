@@ -26,6 +26,13 @@ class FixedRng implements RandomSource {
   }
 }
 
+function partitionedHop(fps: 30 | 60 | 120): ReturnType<BunnyHopSimulation["snapshot"]> {
+  const game = new BunnyHopSimulation(new FixedRng());
+  game.setSteering(0.5);
+  for (let frame = 0; frame < fps * 8; frame += 1) game.update(1 / fps);
+  return game.snapshot();
+}
+
 describe("Bunny Hop simulation", () => {
   it("ramps narrower, wider-spaced, faster, more hazardous platforms", () => {
     const meadow = bunnyHopDifficulty(0);
@@ -73,5 +80,13 @@ describe("Bunny Hop simulation", () => {
     expect(game.drainEvents()).toHaveLength(0);
     game.update(1);
     expect(game.snapshot()).toEqual(disposed);
+  });
+
+  it("keeps deterministic simulation state across 30, 60, and 120 fps partitions", () => {
+    const at30 = partitionedHop(30);
+    const at60 = partitionedHop(60);
+    const at120 = partitionedHop(120);
+    expect(at30).toEqual(at60);
+    expect(at60).toEqual(at120);
   });
 });

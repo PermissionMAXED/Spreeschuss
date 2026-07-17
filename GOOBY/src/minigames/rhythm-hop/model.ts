@@ -45,6 +45,7 @@ interface SongDefinition {
   readonly subtitle: string;
   readonly icon: string;
   readonly bpm: number;
+  readonly audioOffsetMs: number;
   readonly bars: number;
   readonly pattern: readonly RhythmLane[];
 }
@@ -56,6 +57,7 @@ const SONGS: readonly SongDefinition[] = [
     subtitle: "Sunny garden groove",
     icon: "🥕",
     bpm: 96,
+    audioOffsetMs: 1_800,
     bars: 8,
     pattern: [0, 1, 2, 1, 0, 2, 1, 2],
   },
@@ -65,6 +67,7 @@ const SONGS: readonly SongDefinition[] = [
     subtitle: "Splashy stepping beat",
     icon: "💧",
     bpm: 120,
+    audioOffsetMs: 1_800,
     bars: 10,
     pattern: [1, 0, 1, 2, 2, 1, 0, 2],
   },
@@ -74,6 +77,7 @@ const SONGS: readonly SongDefinition[] = [
     subtitle: "Twinkling night sprint",
     icon: "🌙",
     bpm: 138,
+    audioOffsetMs: 1_800,
     bars: 11,
     pattern: [0, 2, 1, 0, 1, 2, 0, 1],
   },
@@ -83,7 +87,7 @@ function makeBeatmap(song: SongDefinition, difficulty: RhythmDifficulty): Rhythm
   const beatMs = 60_000 / song.bpm;
   const notes: BeatNote[] = [];
   const totalBeats = song.bars * 4;
-  const startMs = 1_800;
+  const startMs = song.audioOffsetMs;
   const spacing = difficulty === "easy" ? 2 : 1;
 
   for (let beat = 0; beat < totalBeats; beat += spacing) {
@@ -114,7 +118,7 @@ function makeBeatmap(song: SongDefinition, difficulty: RhythmDifficulty): Rhythm
     icon: song.icon,
     bpm: song.bpm,
     difficulty,
-    audioOffsetMs: 0,
+    audioOffsetMs: song.audioOffsetMs,
     durationMs: Math.round((lastNote?.timeMs ?? startMs) + 1_600),
     notes,
   };
@@ -131,6 +135,12 @@ export const RHYTHM_BEATMAPS: Readonly<
     },
   ]),
 ) as Record<RhythmSongId, Record<RhythmDifficulty, RhythmBeatmap>>;
+
+export interface RhythmBeatCue {
+  readonly beatIndex: number;
+  readonly timeMs: number;
+  readonly accent: boolean;
+}
 
 export class RhythmSession {
   private readonly judged = new Set<string>();
@@ -209,24 +219,25 @@ export class RhythmSession {
 
   update(): JudgmentEvent[] {
     if (this.sessionState !== "playing") return [];
+    const songTime = this.songTimeMs;
     const windows = JUDGMENT_WINDOWS[this.beatmap.difficulty];
     const missed: JudgmentEvent[] = [];
     for (const note of this.beatmap.notes) {
       if (this.judged.has(note.id)) continue;
-      if (note.timeMs >= this.songTimeMs - windows.goodMs) break;
+      if (note.timeMs >= songTime - windows.goodMs) break;
       this.judged.add(note.id);
       this.currentCombo = 0;
       this.missCount += 1;
       missed.push({
         judgment: "miss",
-        offsetMs: this.songTimeMs - note.timeMs,
+        offsetMs: songTime - note.timeMs,
         noteId: note.id,
         lane: note.lane,
         combo: this.currentCombo,
         score: this.scoreTotal,
       });
     }
-    if (this.songTimeMs >= this.beatmap.durationMs) this.sessionState = "ended";
+    if (songTime >= this.beatmap.durationMs) this.sessionState = "ended";
     return missed;
   }
 
@@ -302,5 +313,42 @@ export class RhythmSession {
         note.timeMs >= now - lookBehindMs &&
         note.timeMs <= now + lookAheadMs,
     );
+  }
+}
+
+/**
+ * Emits each procedural beat once using the same frozen song clock as notes and
+ * judgments. The transport never advances while its session is paused.
+ */
+export class RhythmBeatCueTransport {
+  private nextBeatIndex = 0;
+
+  constructor(private readonly beatmap: RhythmBeatmap) {}
+
+  drain(session: RhythmSession): readonly RhythmBeatCue[] {
+    if (session.beatmap !== this.beatmap) {
+      throw new Error("Rhythm beat transport must use its session beatmap");
+    }
+    if (session.state !== "playing") return [];
+
+    const songTime = session.songTimeMs;
+    if (songTime < this.beatmap.audioOffsetMs) return [];
+
+    const beatDurationMs = 60_000 / this.beatmap.bpm;
+    const lastDueBeat = Math.floor(
+      (songTime - this.beatmap.audioOffsetMs) / beatDurationMs + Number.EPSILON,
+    );
+    const cues: RhythmBeatCue[] = [];
+    while (this.nextBeatIndex <= lastDueBeat) {
+      const timeMs = this.beatmap.audioOffsetMs + this.nextBeatIndex * beatDurationMs;
+      if (timeMs > this.beatmap.durationMs) break;
+      cues.push({
+        beatIndex: this.nextBeatIndex,
+        timeMs,
+        accent: this.nextBeatIndex % 4 === 0,
+      });
+      this.nextBeatIndex += 1;
+    }
+    return cues;
   }
 }

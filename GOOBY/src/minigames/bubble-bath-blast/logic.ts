@@ -17,18 +17,40 @@ export interface BubbleScoreState {
   readonly timePenalty: number;
 }
 
+export interface BubblePlayfield {
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface BubbleTapResult extends BubbleScoreState {
   readonly removedIds: readonly number[];
   readonly starBurst: boolean;
   readonly soapHit: boolean;
 }
 
-const isTouching = (first: BubbleNode, second: BubbleNode): boolean => {
-  const reach = first.radius + second.radius + 1.5;
-  return Math.hypot(first.x - second.x, first.y - second.y) <= reach;
+const normalizedPlayfield = (playfield: BubblePlayfield): BubblePlayfield => ({
+  width: Number.isFinite(playfield.width) && playfield.width > 0 ? playfield.width : 100,
+  height: Number.isFinite(playfield.height) && playfield.height > 0 ? playfield.height : 100,
+});
+
+const isTouching = (
+  first: BubbleNode,
+  second: BubbleNode,
+  requestedPlayfield: BubblePlayfield,
+): boolean => {
+  const playfield = normalizedPlayfield(requestedPlayfield);
+  const isotropicUnit = Math.min(playfield.width, playfield.height) / 100;
+  const deltaX = (first.x - second.x) * playfield.width / 100;
+  const deltaY = (first.y - second.y) * playfield.height / 100;
+  const reach = (first.radius + second.radius + 1.5) * isotropicUnit;
+  return Math.hypot(deltaX, deltaY) <= reach;
 };
 
-export function findTouchingChain(nodes: readonly BubbleNode[], startId: number): readonly number[] {
+export function findTouchingChain(
+  nodes: readonly BubbleNode[],
+  startId: number,
+  playfield: BubblePlayfield = { width: 100, height: 100 },
+): readonly number[] {
   const start = nodes.find(({ id }) => id === startId);
   if (!start || start.kind !== "bubble") return [];
 
@@ -42,7 +64,7 @@ export function findTouchingChain(nodes: readonly BubbleNode[], startId: number)
     const current = queue.shift();
     if (!current) break;
     for (const candidate of matching) {
-      if (visited.has(candidate.id) || !isTouching(current, candidate)) continue;
+      if (visited.has(candidate.id) || !isTouching(current, candidate, playfield)) continue;
       visited.add(candidate.id);
       queue.push(candidate);
     }
@@ -55,6 +77,7 @@ export function resolveBubbleTap(
   state: BubbleScoreState,
   nodes: readonly BubbleNode[],
   targetId: number,
+  playfield: BubblePlayfield = { width: 100, height: 100 },
 ): BubbleTapResult {
   const target = nodes.find(({ id }) => id === targetId);
   if (!target) {
@@ -73,7 +96,7 @@ export function resolveBubbleTap(
     };
   }
 
-  const removedIds = findTouchingChain(nodes, targetId);
+  const removedIds = findTouchingChain(nodes, targetId, playfield);
   const starBurst = removedIds.length >= 4;
   const nextCombo = Math.min(8, state.combo + 1);
   const chainPoints = removedIds.length * 35 * nextCombo;

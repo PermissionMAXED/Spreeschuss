@@ -1,13 +1,26 @@
-import type { MinigameContext, MinigameModule, MinigamePayout } from "../../core/contracts/minigame";
+import type {
+  MinigameContext,
+  MinigameLifecycle,
+  MinigameModule,
+  MinigamePayout,
+} from "../../core/contracts/minigame";
+import { SeededRng } from "../../core/contracts/rng";
+import type { MinigameSoundAction } from "../../audio/contracts";
 import type { MinigameStubDefinition } from "../stub";
 import {
   CarrotCatchSimulation,
   carrotCatchPayout,
   type CatchEvent,
 } from "./logic";
+import { MinigameRunSession } from "./run-session";
 
-const HIGH_SCORE_KEY = "gooby.minigame.carrot-catch.high-score.v1";
-const TUTORIAL_KEY = "gooby.minigame.carrot-catch.tutorial.v1";
+interface InjectedMinigameContext extends MinigameContext {
+  readonly lifecycle: MinigameLifecycle;
+  readonly audio?: {
+    emit(action: MinigameSoundAction, value?: number): void;
+  };
+  readonly reducedMotion?: boolean;
+}
 
 function requiredElement<T extends Element>(root: ParentNode, selector: string): T {
   const element = root.querySelector<T>(selector);
@@ -15,52 +28,13 @@ function requiredElement<T extends Element>(root: ParentNode, selector: string):
   return element;
 }
 
-class CarrotFeedback {
-  private audio: AudioContext | null = null;
-
-  public constructor(private readonly view: Window) {}
-
-  public unlock(): void {
-    const audio = this.audio ?? new AudioContext();
-    this.audio = audio;
-    if (audio.state === "suspended") void audio.resume().catch(() => undefined);
+function seedFromRunId(runId: string): number {
+  let seed = 0x811c9dc5;
+  for (const character of runId) {
+    seed ^= character.charCodeAt(0);
+    seed = Math.imul(seed, 0x01000193);
   }
-
-  public play(kind: "catch" | "golden" | "rotten" | "wave" | "finish"): void {
-    this.unlock();
-    const audio = this.audio;
-    if (!audio) return;
-    const notes = kind === "golden" || kind === "wave"
-      ? [659, 880, 1047]
-      : kind === "rotten"
-        ? [180, 125]
-        : kind === "finish"
-          ? [523, 659, 784]
-          : [440, 587];
-    notes.forEach((frequency, index) => {
-      const oscillator = audio.createOscillator();
-      const gain = audio.createGain();
-      const at = audio.currentTime + index * 0.055;
-      oscillator.type = kind === "rotten" ? "sawtooth" : "sine";
-      oscillator.frequency.setValueAtTime(frequency, at);
-      gain.gain.setValueAtTime(0.0001, at);
-      gain.gain.exponentialRampToValueAtTime(0.055, at + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.13);
-      oscillator.connect(gain).connect(audio.destination);
-      oscillator.start(at);
-      oscillator.stop(at + 0.14);
-    });
-  }
-
-  public haptic(pattern: "light" | "success" | "warning"): void {
-    const duration = pattern === "light" ? 8 : pattern === "success" ? [10, 35, 18] : [25, 25, 25];
-    this.view.navigator.vibrate?.(duration);
-  }
-
-  public dispose(): void {
-    if (this.audio) void this.audio.close().catch(() => undefined);
-    this.audio = null;
-  }
+  return seed >>> 0;
 }
 
 export class CarrotCatchMinigame implements MinigameModule {
@@ -74,7 +48,9 @@ export class CarrotCatchMinigame implements MinigameModule {
   private itemLayer: HTMLElement | null = null;
   private effectLayer: HTMLElement | null = null;
   private simulation: CarrotCatchSimulation | null = null;
-  private feedback: CarrotFeedback | null = null;
+  private session: MinigameRunSession | null = null;
+  private injected: InjectedMinigameContext | null = null;
+  private cosmeticRng = new SeededRng(0xcca7);
   private listeners: AbortController | null = null;
   private running = false;
   private ended = false;
@@ -83,15 +59,16 @@ export class CarrotCatchMinigame implements MinigameModule {
 
   public mount(context: MinigameContext): void {
     this.dispose();
+    if (!context.lifecycle) throw new Error("Carrot Catch requires the minigame lifecycle");
     this.context = context;
-    const view = context.mount.ownerDocument.defaultView;
-    if (!view) throw new Error("Carrot Catch requires a browser window");
-    this.feedback = new CarrotFeedback(view);
-    this.highScore = this.readNumber(HIGH_SCORE_KEY);
+    this.injected = context as InjectedMinigameContext;
+    this.session = new MinigameRunSession(context.lifecycle);
+    this.highScore = this.session.persistedBest;
     this.listeners = new AbortController();
 
     const root = context.mount.ownerDocument.createElement("section");
     root.className = "cc-game";
+    root.classList.toggle("reduced-motion", this.injected.reducedMotion === true);
     root.dataset.minigame = this.id;
     root.innerHTML = `
       <style>
@@ -107,9 +84,9 @@ export class CarrotCatchMinigame implements MinigameModule {
         .cc-basket{--x:.5;position:absolute;z-index:5;bottom:4.5%;left:calc(var(--x)*100%);width:34%;height:78px;transform:translateX(-50%);border-radius:11px 11px 35px 35px;background:repeating-linear-gradient(105deg,#bd7534 0 12px,#d9954c 12px 24px);border:7px solid #8d572a;box-shadow:inset 0 12px #f2b76b66,0 13px 18px #3f5d2f44}.cc-basket:before{content:"";position:absolute;left:12%;right:12%;top:-42px;height:57px;border:7px solid #8d572a;border-bottom:0;border-radius:55px 55px 0 0}
         .cc-grass{position:absolute;z-index:2;bottom:0;width:100%;height:10%;background:linear-gradient(#69aa4b,#498f40)}.cc-grass:before{content:"";position:absolute;top:-18px;left:-2%;width:104%;height:28px;background:linear-gradient(135deg,transparent 35%,#69aa4b 36% 64%,transparent 65%) 0 0/31px 31px}
         .cc-particle{--px:50%;--py:50%;--dx:0px;position:absolute;left:var(--px);top:var(--py);color:#fff;font-size:17px;font-weight:950;text-shadow:0 2px 4px #693d;animation:cc-pop .65s ease-out forwards}.cc-particle.bad{color:#493d35}.cc-particle.gold{color:#ffe665;font-size:23px}
-        .cc-controls{position:absolute;z-index:12;right:10px;bottom:max(10px,env(safe-area-inset-bottom));display:flex;gap:6px}.cc-icon-button{display:grid;width:42px;aspect-ratio:1;place-items:center;border:1px solid #fff9;border-radius:50%;color:#604631;background:#fffbeedd;box-shadow:0 5px 14px #36552c33;font-size:17px;font-weight:900}
-        .cc-overlay{position:absolute;z-index:30;inset:0;display:grid;place-items:center;padding:24px;background:#31544099;backdrop-filter:blur(8px)}.cc-overlay[hidden]{display:none}.cc-panel{width:min(100%,340px);padding:27px 24px 22px;border:1px solid #fff9;border-radius:27px;color:#513a2b;background:linear-gradient(145deg,#fffdf1,#ffedc7);box-shadow:0 22px 65px #253d2f66;text-align:center}.cc-panel .cc-hero{font-size:54px}.cc-panel h2{margin:7px 0 8px;font-size:27px;letter-spacing:-.7px}.cc-panel p{margin:0 0 18px;color:#795f4e;font-size:13px;line-height:1.5}.cc-tips{display:grid;gap:7px;margin:0 0 18px;text-align:left}.cc-tip{padding:8px 10px;border-radius:11px;background:#efdba077;font-size:11px;font-weight:750}.cc-main-button,.cc-quit-button{width:100%;min-height:49px;border:0;border-radius:16px;color:white;background:linear-gradient(#ee8c44,#db6238);font:900 14px inherit;box-shadow:0 9px 20px #b75b3544}.cc-quit-button{margin-top:8px;color:#795f4e;background:#e7d3b5;box-shadow:none}.cc-result{font-size:35px;font-weight:950}.cc-new-best{color:#d18319;font-size:12px;font-weight:950}
-        @keyframes cc-pop{from{opacity:1;transform:translate(-50%,-50%) scale(.65)}to{opacity:0;transform:translate(calc(-50% + var(--dx)),-105px) scale(1.25)}}@keyframes cc-wave{to{transform:translateX(-50%) scale(1.06)}}@keyframes cc-pulse{to{transform:scale(1.08)}}@media(prefers-reduced-motion:reduce){.cc-game *{animation-duration:1ms!important;transition-duration:1ms!important}}
+        .cc-controls{position:absolute;z-index:12;right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));display:flex;gap:6px}.cc-icon-button{display:grid;width:44px;min-height:44px;aspect-ratio:1;place-items:center;border:1px solid #fff9;border-radius:50%;color:#604631;background:#fffbeedd;box-shadow:0 5px 14px #36552c33;font-size:17px;font-weight:900}
+        .cc-overlay{position:absolute;z-index:30;inset:0;display:grid;place-items:center;padding:max(24px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));background:#31544099;backdrop-filter:blur(8px)}.cc-overlay[hidden]{display:none}.cc-panel{width:min(100%,340px);padding:27px 24px 22px;border:1px solid #fff9;border-radius:27px;color:#513a2b;background:linear-gradient(145deg,#fffdf1,#ffedc7);box-shadow:0 22px 65px #253d2f66;text-align:center}.cc-panel .cc-hero{font-size:54px}.cc-panel h2{margin:7px 0 8px;font-size:27px;letter-spacing:-.7px}.cc-panel p{margin:0 0 18px;color:#795f4e;font-size:13px;line-height:1.5}.cc-tips{display:grid;gap:7px;margin:0 0 18px;text-align:left}.cc-tip{padding:8px 10px;border-radius:11px;background:#efdba077;font-size:11px;font-weight:750}.cc-main-button,.cc-quit-button{width:100%;min-height:49px;border:0;border-radius:16px;color:white;background:linear-gradient(#ee8c44,#db6238);font:900 14px inherit;box-shadow:0 9px 20px #b75b3544}.cc-quit-button{margin-top:8px;color:#795f4e;background:#e7d3b5;box-shadow:none}.cc-result{font-size:35px;font-weight:950}.cc-new-best{color:#d18319;font-size:12px;font-weight:950}
+        @keyframes cc-pop{from{opacity:1;transform:translate(-50%,-50%) scale(.65)}to{opacity:0;transform:translate(calc(-50% + var(--dx)),-105px) scale(1.25)}}@keyframes cc-wave{to{transform:translateX(-50%) scale(1.06)}}@keyframes cc-pulse{to{transform:scale(1.08)}}.cc-game.reduced-motion *{animation-duration:1ms!important;transition-duration:1ms!important}@media(prefers-reduced-motion:reduce){.cc-game *{animation-duration:1ms!important;transition-duration:1ms!important}}
       </style>
       <div class="cc-field" aria-label="Carrot Catch play field">
         <div class="cc-sun"></div><div class="cc-cloud one"></div><div class="cc-cloud two"></div>
@@ -122,7 +99,7 @@ export class CarrotCatchMinigame implements MinigameModule {
       </header>
       <div class="cc-combo" data-combo>×1 COMBO</div><div class="cc-wave" data-wave hidden>✨ GOLDEN RUSH ✨</div>
       <nav class="cc-controls"><button class="cc-icon-button" data-pause aria-label="Pause">Ⅱ</button><button class="cc-icon-button" data-quit aria-label="Quit">×</button></nav>
-      <div class="cc-overlay" data-tutorial hidden><article class="cc-panel"><div class="cc-hero">🥕</div><span class="cc-label">75 second challenge</span><h2>Carrot Catch</h2><p>Slide anywhere to guide Gooby's basket. Keep clean catches flowing for bigger multipliers.</p><div class="cc-tips"><div class="cc-tip">🥕 Carrots build your combo</div><div class="cc-tip">✨ Golden carrots score 5×</div><div class="cc-tip">🟢 Rotten carrots break the streak</div><div class="cc-tip">⚡ Every 20 catches starts a Golden Rush</div></div><button class="cc-main-button" data-play>LET'S CATCH!</button></article></div>
+      <div class="cc-overlay" data-tutorial hidden><article class="cc-panel"><div class="cc-hero">🥕</div><span class="cc-label">75 second challenge</span><h2>Carrot Catch</h2><p>Slide anywhere to guide Gooby's basket. Keep clean catches flowing for bigger multipliers.</p><div class="cc-tips"><div class="cc-tip">🥕 Carrots build your combo</div><div class="cc-tip">✨ Golden carrots score 5×</div><div class="cc-tip">🟢 Rotten carrots break the streak</div><div class="cc-tip">⚡ Every 20 catches starts a Golden Rush</div></div><button class="cc-main-button" data-play>LET'S CATCH!</button><button class="cc-quit-button" data-tutorial-quit>QUIT TUTORIAL</button></article></div>
       <div class="cc-overlay" data-paused hidden><article class="cc-panel"><div class="cc-hero">🐰</div><h2>Basket break</h2><p>Your combo is safe. Jump back in whenever you're ready.</p><button class="cc-main-button" data-resume>RESUME</button><button class="cc-quit-button" data-pause-quit>QUIT & COLLECT</button></article></div>
       <div class="cc-overlay" data-ended hidden><article class="cc-panel"><div class="cc-hero">🏆</div><span class="cc-label">Final score</span><div class="cc-result" data-result>0</div><div class="cc-new-best" data-new-best hidden>NEW HIGH SCORE!</div><p data-summary></p><button class="cc-main-button" data-done>COLLECT REWARDS</button></article></div>
     `;
@@ -145,21 +122,23 @@ export class CarrotCatchMinigame implements MinigameModule {
       this.simulation?.moveBasket((event.clientX - rect.left) / rect.width);
     };
     field.addEventListener("pointerdown", (event) => {
-      this.feedback?.unlock();
+      this.session?.markAction();
       field.setPointerCapture(event.pointerId);
       move(event);
     }, { signal });
     field.addEventListener("pointermove", move, { signal });
     requiredElement<HTMLButtonElement>(root, "[data-play]").addEventListener("click", () => {
-      this.writeFlag(TUTORIAL_KEY);
       requiredElement<HTMLElement>(root, "[data-tutorial]").hidden = true;
+      const runId = this.session?.begin();
+      if (!runId) return;
+      this.cosmeticRng = new SeededRng(seedFromRunId(runId));
       this.running = true;
-      this.feedback?.play("wave");
+      this.emitFeedback("go");
     }, { signal });
     requiredElement<HTMLButtonElement>(root, "[data-pause]").addEventListener("click", () => this.pause(), { signal });
     requiredElement<HTMLButtonElement>(root, "[data-resume]").addEventListener("click", () => this.resume(), { signal });
-    for (const selector of ["[data-quit]", "[data-pause-quit]"]) {
-      requiredElement<HTMLButtonElement>(root, selector).addEventListener("click", () => this.finishRun(), { signal });
+    for (const selector of ["[data-quit]", "[data-pause-quit]", "[data-tutorial-quit]"]) {
+      requiredElement<HTMLButtonElement>(root, selector).addEventListener("click", () => this.finishRun("quit"), { signal });
     }
     requiredElement<HTMLButtonElement>(root, "[data-done]").addEventListener("click", () => this.notifyFinish(), { signal });
   }
@@ -172,9 +151,8 @@ export class CarrotCatchMinigame implements MinigameModule {
     this.simulation = new CarrotCatchSimulation(context.rng);
     this.ended = false;
     this.notified = false;
-    const firstPlay = !this.readFlag(TUTORIAL_KEY);
-    this.running = !firstPlay;
-    requiredElement<HTMLElement>(root, "[data-tutorial]").hidden = !firstPlay;
+    this.running = false;
+    requiredElement<HTMLElement>(root, "[data-tutorial]").hidden = false;
     requiredElement<HTMLElement>(root, "[data-paused]").hidden = true;
     requiredElement<HTMLElement>(root, "[data-ended]").hidden = true;
     this.render();
@@ -190,7 +168,7 @@ export class CarrotCatchMinigame implements MinigameModule {
     if (this.ended || !this.simulation || !this.root) return;
     requiredElement<HTMLElement>(this.root, "[data-paused]").hidden = true;
     this.running = true;
-    this.feedback?.play("catch");
+    this.emitFeedback("go");
   }
 
   public update(deltaSeconds: number): void {
@@ -208,29 +186,28 @@ export class CarrotCatchMinigame implements MinigameModule {
     if (event.type === "caught") {
       const className = event.kind === "rotten" ? "bad" : event.kind === "golden" ? "gold" : "";
       this.addParticle(event.x, event.y, event.points >= 0 ? `+${event.points}` : `${event.points}`, className);
-      this.feedback?.play(event.kind === "golden" ? "golden" : event.kind === "rotten" ? "rotten" : "catch");
-      this.feedback?.haptic(event.kind === "rotten" ? "warning" : event.kind === "golden" ? "success" : "light");
+      this.emitFeedback(event.kind === "rotten" ? "miss" : event.kind === "golden" ? "combo" : "hit");
     } else if (event.type === "missed" && event.kind !== "rotten") {
       this.addParticle(event.x, 0.92, "MISS", "bad");
+      this.emitFeedback("miss");
     } else if (event.type === "bonus-wave") {
-      this.feedback?.play("wave");
-      this.feedback?.haptic("success");
+      this.emitFeedback("combo", this.simulation?.snapshot().combo);
     } else if (event.type === "finished") {
-      this.finishRun();
+      this.finishRun("win");
     }
   }
 
   private addParticle(x: number, y: number, label: string, className: string): void {
     const context = this.context;
     const effectLayer = this.effectLayer;
-    if (!context || !effectLayer) return;
+    if (!context || !effectLayer || this.injected?.reducedMotion === true) return;
     const particle = effectLayer.ownerDocument.createElement("span");
     particle.className = `cc-particle ${className}`;
     particle.textContent = label;
     particle.dataset.expires = String(context.clock.now() + 700);
     particle.style.setProperty("--px", `${x * 100}%`);
     particle.style.setProperty("--py", `${y * 100}%`);
-    particle.style.setProperty("--dx", `${(context.rng.next() - 0.5) * 48}px`);
+    particle.style.setProperty("--dx", `${(this.cosmeticRng.next() - 0.5) * 48}px`);
     effectLayer.append(particle);
   }
 
@@ -262,31 +239,35 @@ export class CarrotCatchMinigame implements MinigameModule {
     ).join("");
   }
 
-  private finishRun(): void {
+  private finishRun(outcome: "win" | "quit" = "win"): void {
     if (this.ended || !this.root) return;
     this.running = false;
     this.ended = true;
     const payout = this.payout();
-    const isBest = payout.score > this.highScore;
-    if (isBest) {
-      this.highScore = payout.score;
-      this.writeNumber(HIGH_SCORE_KEY, payout.score);
-    }
+    const previousBest = this.session?.persistedBest ?? this.highScore;
+    const receipt = outcome === "quit"
+      ? this.session?.quit(payout) ?? null
+      : null;
+    const rewardPending = outcome !== "quit";
+    const isBest = (receipt !== null || rewardPending) && payout.score > previousBest;
+    this.highScore = receipt?.bestScore ?? Math.max(previousBest, rewardPending ? payout.score : 0);
     requiredElement<HTMLElement>(this.root, "[data-paused]").hidden = true;
     requiredElement<HTMLElement>(this.root, "[data-ended]").hidden = false;
     requiredElement<HTMLElement>(this.root, "[data-result]").textContent = payout.score.toLocaleString();
     requiredElement<HTMLElement>(this.root, "[data-new-best]").hidden = !isBest;
     requiredElement<HTMLElement>(this.root, "[data-summary]").textContent =
-      `${payout.coins} coins · ${payout.xp} XP · best combo ${this.simulation?.snapshot().bestCombo ?? 0}`;
-    this.feedback?.play("finish");
-    this.feedback?.haptic("success");
+      receipt || rewardPending
+        ? `${payout.coins} coins · ${payout.xp} XP · best combo ${this.simulation?.snapshot().bestCombo ?? 0}`
+        : "Run left before an action · no reward";
+    if (receipt || rewardPending) this.emitFeedback("win");
   }
 
   private notifyFinish(): void {
-    if (this.notified || !this.context) return;
-    if (!this.ended) this.finishRun();
+    if (this.notified) return;
+    if (!this.ended) this.finishRun("win");
     this.notified = true;
-    this.context.finish(this.payout());
+    const receipt = this.session?.complete(this.payout());
+    if (receipt) this.highScore = receipt.bestScore;
   }
 
   public payout(): MinigamePayout {
@@ -294,41 +275,8 @@ export class CarrotCatchMinigame implements MinigameModule {
     return carrotCatchPayout(snapshot?.score ?? 0, snapshot?.bestCombo ?? 0);
   }
 
-  private storage(): Storage | null {
-    try {
-      return this.root?.ownerDocument.defaultView?.localStorage ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  private readNumber(key: string): number {
-    const value = Number(this.storage()?.getItem(key));
-    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
-  }
-
-  private writeNumber(key: string, value: number): void {
-    try {
-      this.storage()?.setItem(key, String(value));
-    } catch {
-      // Persistence is optional in privacy-restricted browser contexts.
-    }
-  }
-
-  private readFlag(key: string): boolean {
-    try {
-      return this.storage()?.getItem(key) === "seen";
-    } catch {
-      return false;
-    }
-  }
-
-  private writeFlag(key: string): void {
-    try {
-      this.storage()?.setItem(key, "seen");
-    } catch {
-      // The tutorial remains safe to repeat if storage is unavailable.
-    }
+  private emitFeedback(action: MinigameSoundAction, value?: number): void {
+    this.injected?.audio?.emit(action, value);
   }
 
   public dispose(): void {
@@ -336,8 +284,8 @@ export class CarrotCatchMinigame implements MinigameModule {
     this.ended = true;
     this.listeners?.abort();
     this.listeners = null;
-    this.feedback?.dispose();
-    this.feedback = null;
+    this.session?.exit();
+    this.session = null;
     this.simulation?.dispose();
     this.simulation = null;
     this.root?.remove();
@@ -345,6 +293,7 @@ export class CarrotCatchMinigame implements MinigameModule {
     this.field = null;
     this.itemLayer = null;
     this.effectLayer = null;
+    this.injected = null;
     this.context = null;
   }
 }

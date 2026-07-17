@@ -4,6 +4,7 @@ import type { RandomSource } from "../../core/contracts/rng";
 export const PANCAKE_WORLD_WIDTH = 360;
 export const PERFECT_TOLERANCE_PX = 4;
 export const MAX_PANCAKE_WIDTH = 272;
+export const PANCAKE_MAX_STEP_SECONDS = 0.25;
 
 export interface PancakeLayer {
   readonly id: number;
@@ -135,23 +136,31 @@ export class PancakePeakSimulation {
 
   public update(deltaSeconds: number): void {
     if (this.ended || this.disposed || !Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return;
-    const delta = Math.min(deltaSeconds, 0.25);
-    this.elapsed += delta;
+    let remaining = deltaSeconds;
+    while (remaining > 0) {
+      const step = Math.min(PANCAKE_MAX_STEP_SECONDS, remaining);
+      this.advanceSwing(step);
+      this.elapsed += step;
+      remaining -= step;
+    }
+  }
+
+  private advanceSwing(deltaSeconds: number): void {
     const difficulty = pancakeDifficulty(this.stackCount);
     const halfWidth = this.moving.width / 2;
     const leftLimit = halfWidth + difficulty.swingInset;
     const rightLimit = PANCAKE_WORLD_WIDTH - halfWidth - difficulty.swingInset;
-    let x = this.moving.x + this.moving.direction * difficulty.speed * delta;
-    let direction = this.moving.direction;
-    while (x < leftLimit || x > rightLimit) {
-      if (x > rightLimit) {
-        x = rightLimit - (x - rightLimit);
-        direction = -1;
-      } else if (x < leftLimit) {
-        x = leftLimit + (leftLimit - x);
-        direction = 1;
-      }
-    }
+    const span = rightLimit - leftLimit;
+    if (span <= 0) return;
+    const cycle = span * 2;
+    const offset = this.moving.x - leftLimit;
+    const phase = this.moving.direction > 0 ? offset : cycle - offset;
+    const nextPhase = ((phase + difficulty.speed * deltaSeconds) % cycle + cycle) % cycle;
+    const movingRight = nextPhase < span;
+    const x = movingRight
+      ? leftLimit + nextPhase
+      : rightLimit - (nextPhase - span);
+    const direction = movingRight ? 1 : -1;
     this.moving = { ...this.moving, x, direction };
   }
 

@@ -52,6 +52,9 @@ export interface DeliveryState {
   deliveries: number;
   chain: number;
   bestChain: number;
+  totalBonusTime: number;
+  bestTimeBonus: number;
+  bestDeliveryPoints: number;
   bumpCount: number;
   wrongWay: boolean;
   wrongWayTime: number;
@@ -123,6 +126,7 @@ export const CITY_ONE_WAYS: readonly OneWay[] = [
 ] as const;
 
 const TRAFFIC_COLORS = ["#e86f5d", "#6d9fc5", "#e3b64e", "#9473ae", "#62a878"] as const;
+const TRAFFIC_SPAWN_CLEARANCE = 7;
 
 function createParcel(
   id: number,
@@ -144,24 +148,72 @@ function createParcel(
   };
 }
 
-function createTraffic(id: number, rng: RandomSource): TrafficCar {
-  const vertical = rng.next() < 0.5;
-  const direction = rng.next() < 0.5 ? -1 : 1;
-  const road = rng.pick([16, 50, 84] as const);
-  const position = 6 + rng.next() * 88;
-  const speed = 7 + rng.next() * 6;
-  return {
+function isClearTrafficSpawn(
+  traffic: Readonly<Pick<TrafficCar, "x" | "y">>,
+  forbidden: readonly CityPoint[],
+): boolean {
+  return forbidden.every((point) =>
+    Math.hypot(traffic.x - point.x, traffic.y - point.y) >= TRAFFIC_SPAWN_CLEARANCE);
+}
+
+function createTraffic(
+  id: number,
+  rng: RandomSource,
+  forbidden: readonly CityPoint[],
+): TrafficCar {
+  let sampled: TrafficCar | null = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const vertical = rng.next() < 0.5;
+    const direction = rng.next() < 0.5 ? -1 : 1;
+    const road = rng.pick([16, 50, 84] as const);
+    const position = 6 + rng.next() * 88;
+    const speed = 7 + rng.next() * 6;
+    sampled = {
+      id,
+      x: vertical ? road + direction * 1.8 : position,
+      y: vertical ? position : road - direction * 1.8,
+      vx: vertical ? 0 : speed * direction,
+      vy: vertical ? speed * direction : 0,
+      color: rng.pick(TRAFFIC_COLORS),
+    };
+    if (isClearTrafficSpawn(sampled, forbidden)) return sampled;
+  }
+
+  const fallback = sampled ?? {
     id,
-    x: vertical ? road + direction * 1.8 : position,
-    y: vertical ? position : road - direction * 1.8,
-    vx: vertical ? 0 : speed * direction,
-    vy: vertical ? speed * direction : 0,
-    color: rng.pick(TRAFFIC_COLORS),
+    x: 16,
+    y: 6,
+    vx: 0,
+    vy: 8,
+    color: TRAFFIC_COLORS[id % TRAFFIC_COLORS.length] ?? TRAFFIC_COLORS[0],
   };
+  for (let offset = 0; offset < 100; offset += 11) {
+    const candidate = {
+      ...fallback,
+      x: fallback.vx === 0 ? fallback.x : (6 + id * 17 + offset) % 88 + 6,
+      y: fallback.vy === 0 ? fallback.y : (6 + id * 17 + offset) % 88 + 6,
+    };
+    if (isClearTrafficSpawn(candidate, forbidden)) return candidate;
+  }
+  return fallback;
 }
 
 export function createDeliveryState(difficulty: DeliveryDifficulty, rng: RandomSource): DeliveryState {
   const tuning = TUNING[difficulty];
+  const car = {
+    x: 50,
+    y: 82,
+    vx: 0,
+    vy: 0,
+    heading: -Math.PI / 2,
+    bumpCooldown: 0,
+  };
+  const parcel = createParcel(1, difficulty, rng);
+  const forbiddenSpawns = [
+    { x: car.x, y: car.y, name: "Player" },
+    parcel.pickup,
+    parcel.destination,
+  ];
   return {
     phase: "ready",
     difficulty,
@@ -170,22 +222,21 @@ export function createDeliveryState(difficulty: DeliveryDifficulty, rng: RandomS
     deliveries: 0,
     chain: 0,
     bestChain: 0,
+    totalBonusTime: 0,
+    bestTimeBonus: 0,
+    bestDeliveryPoints: 0,
     bumpCount: 0,
     wrongWay: false,
     wrongWayTime: 0,
     nextParcelId: 2,
-    car: {
-      x: 50,
-      y: 82,
-      vx: 0,
-      vy: 0,
-      heading: -Math.PI / 2,
-      bumpCooldown: 0,
-    },
+    car,
     inputX: 0,
     inputY: 0,
-    parcel: createParcel(1, difficulty, rng),
-    traffic: Array.from({ length: tuning.traffic }, (_, index) => createTraffic(index + 1, rng)),
+    parcel,
+    traffic: Array.from(
+      { length: tuning.traffic },
+      (_, index) => createTraffic(index + 1, rng, forbiddenSpawns),
+    ),
     message: "Follow the parcel pin!",
   };
 }
@@ -328,12 +379,23 @@ export function completeDelivery(state: DeliveryState, rng: RandomSource): Deliv
   );
   const timeAdded = tuning.chainTime + Math.min(3.2, Math.max(0, state.chain - 1) * 0.55);
   state.score += points;
+  state.totalBonusTime += timeAdded;
+  state.bestTimeBonus = Math.max(state.bestTimeBonus, timeAdded);
+  state.bestDeliveryPoints = Math.max(state.bestDeliveryPoints, points);
   state.remaining = Math.min(90, state.remaining + timeAdded);
   const previous = state.parcel.destination;
   state.parcel = createParcel(state.nextParcelId, state.difficulty, rng, previous);
   state.nextParcelId += 1;
   if (state.deliveries % 3 === 0 && state.traffic.length < tuning.traffic + 3) {
-    state.traffic.push(createTraffic(state.traffic.length + 1, rng));
+    state.traffic.push(createTraffic(
+      state.traffic.length + 1,
+      rng,
+      [
+        { x: state.car.x, y: state.car.y, name: "Player" },
+        state.parcel.pickup,
+        state.parcel.destination,
+      ],
+    ));
   }
   state.message = `${state.chain}× DELIVERY CHAIN · +${timeAdded.toFixed(1)}s`;
   return { points, timeAdded };

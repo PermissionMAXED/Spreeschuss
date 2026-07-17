@@ -30,7 +30,8 @@ export const POND_FISHING_STYLES = `
   .lily.one { left:16%; top:22%; transform:rotate(-8deg); }
   .lily.two { right:15%; top:51%; transform:scale(.8) rotate(12deg); }
   .shadow { position:absolute; z-index:3; width:70px; height:22px; transform:translate(-50%,-50%) rotate(var(--angle));
-    border-radius:60% 45% 45% 60%; opacity:.52; background:#164f5b; filter:blur(2px); box-shadow:12px 0 #164f5b; animation:swim 2.4s ease-in-out infinite alternate; pointer-events:none; }
+    padding:0;border:0;border-radius:60% 45% 45% 60%; opacity:.52; background:#164f5b; filter:blur(2px); box-shadow:12px 0 #164f5b; animation:swim 2.4s ease-in-out infinite alternate; cursor:crosshair; }
+  .shadow:focus-visible { outline:4px solid #fff3a3;outline-offset:7px;filter:none;opacity:.85; }
   .shadow::after { content:""; position:absolute; right:-16px; top:2px; border-block:9px solid transparent; border-left:18px solid #164f5b; }
   @keyframes swim { to { transform:translate(-44%,-50%) rotate(var(--angle)); opacity:.38; } }
   .cast-line { position:absolute; z-index:5; left:50%; bottom:6%; width:3px; height:var(--line-length,0); transform:translateX(-50%) rotate(var(--line-angle,0deg)); transform-origin:bottom;
@@ -82,5 +83,6 @@ export const POND_FISHING_STYLES = `
   .primary,.secondary { width:100%; min-height:49px; border-radius:17px; font-weight:950; }.primary{color:#fff;background:linear-gradient(145deg,#42a58a,#247276);box-shadow:0 8px 18px #246f7044,inset 0 1px #fff6}.secondary{margin-top:8px;color:#477069;background:#c5e5cb}
   .result-weight { margin:8px 0 3px; color:#25676b; font-size:36px; font-weight:950; }.result-score{margin-bottom:14px;color:#5e7d72;font-size:13px}.new-best{display:inline-block;margin-bottom:11px;padding:5px 10px;border-radius:99px;color:#8b5d1f;background:#ffe798;font-size:9px;font-weight:950;letter-spacing:1px}
   @media (max-height:700px){.game{min-height:100%}.panel{padding:15px}.mascot{font-size:41px}h2{font-size:22px}.tip{margin:7px 0}.difficulty{gap:5px;margin:7px 0 10px}.difficulty button{padding:7px 9px}.gooby{transform:translateX(-50%) scale(.8);transform-origin:bottom}.tension-wrap{bottom:13%}}
+  :host([data-reduced-motion="true"]) *{animation-duration:1ms!important;transition-duration:1ms!important}
   @media (prefers-reduced-motion:reduce){*{animation-duration:1ms!important;transition-duration:1ms!important}}
 `;

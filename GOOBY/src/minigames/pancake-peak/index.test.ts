@@ -27,6 +27,12 @@ class FixedRng implements RandomSource {
   }
 }
 
+function partitionedSwing(fps: 30 | 60 | 120): ReturnType<PancakePeakSimulation["snapshot"]> {
+  const game = new PancakePeakSimulation(new FixedRng());
+  for (let frame = 0; frame < fps * 12; frame += 1) game.update(1 / fps);
+  return game.snapshot();
+}
+
 describe("Pancake Peak simulation", () => {
   it("regrows and combos drops within four pixels", () => {
     const exact = calculatePlacement(180, 250, 180 + PERFECT_TOLERANCE_PX, 250);
@@ -72,5 +78,22 @@ describe("Pancake Peak simulation", () => {
     game.update(1);
     game.drop();
     expect(game.snapshot()).toEqual(disposed);
+  });
+
+  it("preserves all elapsed time and matches swing state at 30, 60, and 120 fps", () => {
+    const oneSecond = new PancakePeakSimulation(new FixedRng());
+    oneSecond.update(1);
+    expect(oneSecond.snapshot().elapsed).toBeCloseTo(1, 12);
+
+    const at30 = partitionedSwing(30);
+    const at60 = partitionedSwing(60);
+    const at120 = partitionedSwing(120);
+    expect(at30.elapsed).toBeCloseTo(12, 10);
+    expect(at60.elapsed).toBeCloseTo(at30.elapsed, 10);
+    expect(at120.elapsed).toBeCloseTo(at30.elapsed, 10);
+    expect(at60.moving.x).toBeCloseTo(at30.moving.x, 8);
+    expect(at120.moving.x).toBeCloseTo(at30.moving.x, 8);
+    expect(at60.moving.direction).toBe(at30.moving.direction);
+    expect(at120.moving.direction).toBe(at30.moving.direction);
   });
 });

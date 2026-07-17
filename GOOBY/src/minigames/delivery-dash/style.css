@@ -2,12 +2,17 @@
   --ink: #40382f;
   --cream: #fff8df;
   --coral: #e97858;
+  --dd-safe-top: var(--safe-top, max(10px, env(safe-area-inset-top)));
+  --dd-safe-bottom: var(--safe-bottom, max(9px, env(safe-area-inset-bottom)));
+  --dd-top-reserve: calc(var(--dd-safe-top) + 50px);
   position: relative;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+  box-sizing: border-box;
   width: 100%;
   height: 100%;
-  min-height: 560px;
+  min-height: 0;
+  padding: var(--dd-top-reserve) 0 var(--dd-safe-bottom);
   overflow: hidden;
   color: var(--ink);
   font-family: "Trebuchet MS", "Avenir Next", system-ui, sans-serif;
@@ -17,8 +22,14 @@
 }
 
 .dd-game button {
+  min-height: 44px;
   font: inherit;
   -webkit-tap-highlight-color: transparent;
+}
+
+.dd-game button:focus-visible {
+  outline: 3px solid #fff6ad;
+  outline-offset: 2px;
 }
 
 .dd-topbar {
@@ -26,7 +37,7 @@
   display: grid;
   grid-template-columns: 1fr 1.5fr 1fr;
   align-items: start;
-  padding: max(12px, env(safe-area-inset-top)) 17px 5px;
+  padding: 4px 17px 5px;
 }
 
 .dd-time,
@@ -68,8 +79,8 @@
 
 .dd-icon-button {
   justify-self: end;
-  width: 41px;
-  height: 41px;
+  width: 44px;
+  height: 44px;
   border: 2px solid rgb(255 255 255 / 55%);
   border-radius: 50%;
   color: var(--ink);
@@ -199,7 +210,7 @@
 .dd-controls {
   display: grid;
   grid-template-columns: repeat(3, 48px);
-  grid-template-rows: repeat(3, 38px);
+  grid-template-rows: repeat(3, 44px);
   justify-content: center;
   gap: 3px;
   padding: 5px 0 3px;
@@ -258,7 +269,7 @@
   z-index: 2;
   display: flex;
   justify-content: space-between;
-  padding: 2px 15px max(10px, env(safe-area-inset-bottom));
+  padding: 2px 15px;
   color: rgb(255 255 255 / 78%);
   font-size: 8px;
   font-weight: 900;
@@ -267,6 +278,10 @@
 
 .dd-game.is-bump .dd-map-wrap {
   animation: dd-bump .15s linear infinite alternate;
+}
+
+.dd-game.is-delivery .dd-map-wrap {
+  box-shadow: 0 0 0 4px #ffe874, 0 8px 0 #5b7f50, 0 13px 22px rgb(48 69 43 / 24%);
 }
 
 .dd-overlay {
@@ -498,12 +513,14 @@
   from { opacity: 0; }
 }
 
-@media (max-height: 650px) {
-  .dd-game { min-height: 470px; }
-  .dd-topbar { padding-top: 6px; }
+@media (max-height: 700px) {
+  .dd-game {
+    --dd-top-reserve: calc(var(--dd-safe-top) + 46px);
+  }
+  .dd-topbar { padding-top: 2px; }
   .dd-mission { padding-block: 4px; margin-bottom: 3px; }
   .dd-parcel-icon { width: 31px; height: 31px; }
-  .dd-map-wrap { min-height: 225px; }
-  .dd-controls { grid-template-columns: repeat(3, 42px); grid-template-rows: repeat(3, 31px); }
+  .dd-map-wrap { min-height: 190px; }
+  .dd-controls { grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 44px); }
   .dd-footer { padding-bottom: 3px; }
 }

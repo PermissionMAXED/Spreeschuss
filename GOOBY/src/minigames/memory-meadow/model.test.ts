@@ -62,6 +62,20 @@ describe("Memory Meadow board", () => {
     expect(round.matchedGroups).toBe(round.totalGroups);
     expect(round.result().stars).toBe(3);
   });
+
+  it("awards no stars, score, or time bonus for an unfinished board", () => {
+    const fresh = new MemoryMeadowRound(1, new SeededRng(12));
+    expect(fresh.result()).toMatchObject({ stars: 0, score: 0, moves: 0 });
+
+    const timedOut = new MemoryMeadowRound(1, new SeededRng(12));
+    const first = timedOut.board[0];
+    const group = timedOut.board.filter(({ symbol }) => symbol === first?.symbol);
+    for (const card of group) timedOut.flip(card.id);
+    expect(timedOut.matchedGroups).toBe(1);
+    timedOut.update(MEADOW_CONFIGS[1].timeLimitSeconds + 1);
+    expect(timedOut.isOutOfTime).toBe(true);
+    expect(timedOut.result()).toMatchObject({ stars: 0, score: 0 });
+  });
 });
 
 function solveRound(round: MemoryMeadowRound, difficulty: MeadowDifficulty): void {

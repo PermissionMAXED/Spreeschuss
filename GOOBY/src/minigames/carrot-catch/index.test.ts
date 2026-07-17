@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
+import type {
+  MinigameFeedback,
+  MinigameLifecycle,
+  MinigamePayout,
+  MinigameSettlementReceipt,
+} from "../../core/contracts/minigame";
 import type { RandomSource } from "../../core/contracts/rng";
+import bunnyHopSource from "../bunny-hop/index.ts?raw";
+import goobySaysSource from "../gooby-says/index.ts?raw";
+import pancakePeakSource from "../pancake-peak/index.ts?raw";
+import carrotCatchSource from "./index.ts?raw";
 import {
   CARROT_CATCH_DURATION_SECONDS,
   CarrotCatchSimulation,
@@ -7,6 +17,7 @@ import {
   carrotCatchPayout,
   scoreCaughtItem,
 } from "./logic";
+import { MinigameRunSession } from "./run-session";
 
 class FixedRng implements RandomSource {
   public next(): number {
@@ -22,6 +33,64 @@ class FixedRng implements RandomSource {
     if (item === undefined) throw new RangeError("Expected a non-empty list");
     return item;
   }
+}
+
+class RecordingLifecycle implements MinigameLifecycle {
+  public readonly feedback: MinigameFeedback = { emit: () => undefined };
+  public completions = 0;
+  public exits = 0;
+  private sequence = 0;
+  private best = 11;
+  private active: string | null = null;
+  private readonly receipts = new Map<string, MinigameSettlementReceipt>();
+
+  public get persistedBest(): number {
+    return this.best;
+  }
+
+  public beginRun(): string {
+    this.sequence += 1;
+    this.active = `run-${this.sequence}`;
+    return this.active;
+  }
+
+  public completeRun(runId: string, payout: MinigamePayout): MinigameSettlementReceipt {
+    const previous = this.receipts.get(runId);
+    if (previous) return previous;
+    if (this.active !== runId) throw new Error("inactive run");
+    this.completions += 1;
+    this.best = Math.max(this.best, payout.score);
+    const receipt = {
+      runId,
+      minigameId: "carrot-catch" as const,
+      payout,
+      bestScore: this.best,
+      completedAt: this.sequence,
+    };
+    this.receipts.set(runId, receipt);
+    this.active = null;
+    return receipt;
+  }
+
+  public exit(): void {
+    if (this.active) this.exits += 1;
+    this.active = null;
+  }
+}
+
+function partitionedCarrotRun(fps: 30 | 60 | 120): {
+  readonly snapshot: ReturnType<CarrotCatchSimulation["snapshot"]>;
+  readonly eventTypes: readonly string[];
+} {
+  const game = new CarrotCatchSimulation(new FixedRng());
+  game.moveBasket(0.5);
+  for (let frame = 0; frame < CARROT_CATCH_DURATION_SECONDS * fps; frame += 1) {
+    game.update(1 / fps);
+  }
+  return {
+    snapshot: game.snapshot(),
+    eventTypes: game.drainEvents().map((event) => event.type),
+  };
 }
 
 describe("Carrot Catch simulation", () => {
@@ -66,5 +135,50 @@ describe("Carrot Catch simulation", () => {
     expect(game.drainEvents()).toHaveLength(0);
     game.update(10);
     expect(game.snapshot()).toEqual(disposed);
+  });
+
+  it("produces identical state and ordered events at 30, 60, and 120 fps", () => {
+    const at30 = partitionedCarrotRun(30);
+    const at60 = partitionedCarrotRun(60);
+    const at120 = partitionedCarrotRun(120);
+    expect(at30).toEqual(at60);
+    expect(at60).toEqual(at120);
+    expect(at120.eventTypes.at(-1)).toBe("finished");
+  });
+});
+
+describe("owned minigame lifecycle integration", () => {
+  it("exits a zero-action run unpaid and settles duplicates once before replay", () => {
+    const lifecycle = new RecordingLifecycle();
+    const session = new MinigameRunSession(lifecycle);
+    const payout = { coins: 8, xp: 13, score: 50 };
+
+    session.begin();
+    expect(session.quit(payout)).toBeNull();
+    expect(lifecycle).toMatchObject({ exits: 1, completions: 0, persistedBest: 11 });
+
+    const firstRun = session.begin();
+    session.markAction();
+    const receipt = session.complete(payout);
+    expect(session.complete({ coins: 999, xp: 999, score: 999 })).toBe(receipt);
+    expect(lifecycle).toMatchObject({ completions: 1, persistedBest: 50 });
+
+    const replayRun = session.begin();
+    expect(replayRun).not.toBe(firstRun);
+    session.markAction();
+    expect(session.complete({ coins: 1, xp: 1, score: 20 })?.bestScore).toBe(50);
+    expect(lifecycle.completions).toBe(2);
+  });
+
+  it("contains no private storage, audio context, vibration, or deprecated finish calls", () => {
+    const forbidden = [
+      ["Audio", "Context"].join(""),
+      ["local", "Storage"].join(""),
+      ["navigator", ".vibrate"].join(""),
+      ["context", ".finish"].join(""),
+    ];
+    for (const source of [carrotCatchSource, pancakePeakSource, bunnyHopSource, goobySaysSource]) {
+      for (const token of forbidden) expect(source).not.toContain(token);
+    }
   });
 });

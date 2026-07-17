@@ -2,6 +2,7 @@ import type { MinigamePayout } from "../../core/contracts/minigame";
 import type { RandomSource } from "../../core/contracts/rng";
 
 export const CARROT_CATCH_DURATION_SECONDS = 75;
+export const CARROT_CATCH_FIXED_STEP_SECONDS = 1 / 120;
 
 export type CatchItemKind = "carrot" | "golden" | "rotten";
 
@@ -71,6 +72,8 @@ export function carrotCatchPayout(score: number, bestCombo: number): MinigamePay
 }
 
 export class CarrotCatchSimulation {
+  private accumulator = 0;
+  private ticks = 0;
   private elapsed = 0;
   private score = 0;
   private combo = 0;
@@ -94,16 +97,24 @@ export class CarrotCatchSimulation {
 
   public update(deltaSeconds: number): void {
     if (this.finished || this.disposed || !Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return;
-    let remaining = Math.min(deltaSeconds, CARROT_CATCH_DURATION_SECONDS - this.elapsed);
-    while (remaining > 0 && !this.finished) {
-      const step = Math.min(0.02, remaining);
-      this.step(step);
-      remaining -= step;
+    this.accumulator += deltaSeconds;
+    let steps = Math.floor((this.accumulator + 1e-10) / CARROT_CATCH_FIXED_STEP_SECONDS);
+    this.accumulator = Math.max(
+      0,
+      this.accumulator - steps * CARROT_CATCH_FIXED_STEP_SECONDS,
+    );
+    while (steps > 0 && !this.finished) {
+      this.step(CARROT_CATCH_FIXED_STEP_SECONDS);
+      steps -= 1;
     }
   }
 
   private step(deltaSeconds: number): void {
-    this.elapsed = Math.min(CARROT_CATCH_DURATION_SECONDS, this.elapsed + deltaSeconds);
+    this.ticks += 1;
+    this.elapsed = Math.min(
+      CARROT_CATCH_DURATION_SECONDS,
+      this.ticks * CARROT_CATCH_FIXED_STEP_SECONDS,
+    );
     this.bonusWaveSeconds = Math.max(0, this.bonusWaveSeconds - deltaSeconds);
     this.spawnIn -= deltaSeconds;
 
@@ -175,7 +186,11 @@ export class CarrotCatchSimulation {
   public drainEvents(): readonly CatchEvent[] {
     const events = this.events;
     this.events = [];
-    return events;
+    if (!events.some((event) => event.type === "finished")) return events;
+    return [
+      ...events.filter((event) => event.type !== "finished"),
+      { type: "finished" } as const,
+    ];
   }
 
   public snapshot(): CarrotCatchSnapshot {
@@ -196,6 +211,8 @@ export class CarrotCatchSimulation {
   }
 
   public dispose(): void {
+    this.accumulator = 0;
+    this.ticks = 0;
     this.items = [];
     this.events = [];
     this.finished = true;
