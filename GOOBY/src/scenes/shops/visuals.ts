@@ -8,6 +8,7 @@ import {
   Mesh,
   MeshStandardMaterial,
   SphereGeometry,
+  Texture,
   TorusGeometry,
   type Material,
   type Object3D,
@@ -19,6 +20,7 @@ import type {
   FurnitureCatalogItem,
 } from "../../data/catalog";
 import type { ShopId } from "../../core/contracts/scenes";
+import { applyCosmeticModelAttachment } from "../../gooby/attachments";
 
 const material = (color: number, roughness = 0.78): MeshStandardMaterial =>
   new MeshStandardMaterial({ color, roughness, metalness: roughness < 0.5 ? 0.16 : 0 });
@@ -152,6 +154,7 @@ export function createCosmeticModel(item: CosmeticCatalogItem): Group {
     flap.position.set(0, 0.22, 0.18);
     group.add(pack, flap);
   }
+  applyCosmeticModelAttachment(item.slot, group);
   return group;
 }
 
@@ -266,14 +269,25 @@ export class ProceduralShopkeeper {
 }
 
 export function disposeObjectTree(root: Object3D): void {
+  const disposed = new Set<{ dispose(): void }>();
   root.traverse((child) => {
     const renderable = child as Object3D & {
       geometry?: { dispose(): void };
       material?: Material | Material[];
     };
-    renderable.geometry?.dispose();
-    if (Array.isArray(renderable.material)) renderable.material.forEach((value) => value.dispose());
-    else renderable.material?.dispose();
+    if (renderable.geometry) disposed.add(renderable.geometry);
+    const materials = Array.isArray(renderable.material)
+      ? renderable.material
+      : renderable.material
+        ? [renderable.material]
+        : [];
+    for (const value of materials) {
+      disposed.add(value);
+      for (const property of Object.values(value)) {
+        if (property instanceof Texture) disposed.add(property);
+      }
+    }
   });
   root.removeFromParent();
+  for (const resource of disposed) resource.dispose();
 }

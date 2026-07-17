@@ -66,13 +66,15 @@ export class Kitchen extends HomeZoneScene {
     const livingDoor = makeDoor(0xe5a273, "right");
     livingDoor.name = "door:living-room";
     livingDoor.position.set(-4.22, 0, 0.85);
-    livingDoor.rotation.y = Math.PI / 2;
+    livingDoor.rotation.y = 0.18;
     const bathroomDoor = makeDoor(0x89bfc4);
     bathroomDoor.name = "door:bathroom";
     bathroomDoor.position.set(4.22, 0, 1.15);
-    bathroomDoor.rotation.y = -Math.PI / 2;
+    bathroomDoor.rotation.y = -0.18;
     this.doors.set("living-room", livingDoor);
     this.doors.set("bathroom", bathroomDoor);
+    this.registerEssentialTarget("door:living-room", livingDoor, [-4.22, 1.42, 0.85], [1.65, 3.2, 0.7]);
+    this.registerEssentialTarget("door:bathroom", bathroomDoor, [4.22, 1.42, 1.15], [1.65, 3.2, 0.7]);
 
     this.gooby.root.position.set(0.1, 0.06, 0.55);
     this.gooby.root.scale.setScalar(0.87);
@@ -102,12 +104,18 @@ export class Kitchen extends HomeZoneScene {
   closeFridge(): void {
     this.fridgeOpen = false;
     this.fridge.rotation.y = 0;
-    for (const food of this.foodObjects.values()) food.removeFromParent();
+    for (const [id, food] of this.foodObjects) {
+      this.unregisterEssentialTarget(`food:${id}`);
+      this.disposeDynamic(food);
+    }
     this.foodObjects.clear();
   }
 
   private showAvailableFood(inventory: Readonly<Record<string, number>>): void {
-    for (const food of this.foodObjects.values()) food.removeFromParent();
+    for (const [id, food] of this.foodObjects) {
+      this.unregisterEssentialTarget(`food:${id}`);
+      this.disposeDynamic(food);
+    }
     this.foodObjects.clear();
     const visibleFoods = (Object.keys(FOOD_ASSET) as FoodId[]).filter((id) => (inventory[id] ?? 0) > 0);
     visibleFoods.forEach((id, index) => {
@@ -118,6 +126,12 @@ export class Kitchen extends HomeZoneScene {
       this.root.add(object);
       this.trackDynamic(object);
       this.foodObjects.set(id, object);
+      this.registerEssentialTarget(
+        `food:${id}`,
+        object,
+        [-3.35 + index * 0.65, 1.65 + (index % 2) * 0.55, -1.62],
+        [1.4, 1.5, 0.9],
+      );
     });
   }
 
@@ -183,8 +197,8 @@ export class Kitchen extends HomeZoneScene {
 
   protected override handleZoneGesture(gesture: Gesture): boolean {
     if (gesture.type === "tap" || gesture.type === "double-tap") {
-      for (const [zone, door] of this.doors) {
-        if (this.hit(door, gesture.x, gesture.y)) {
+      for (const [zone] of this.doors) {
+        if (this.hitEssential(`door:${zone}`, gesture.x, gesture.y)) {
           this.navigateToZone(zone);
           return true;
         }
@@ -196,8 +210,8 @@ export class Kitchen extends HomeZoneScene {
       return true;
     }
     if (gesture.type === "press-start") {
-      for (const [id, object] of this.foodObjects) {
-        if (this.hit(object, gesture.x, gesture.y)) return this.beginFoodDrag(id);
+      for (const [id] of this.foodObjects) {
+        if (this.hitEssential(`food:${id}`, gesture.x, gesture.y)) return this.beginFoodDrag(id);
       }
     }
     if (gesture.type === "press-move" && this.draggedFood) {
@@ -227,7 +241,7 @@ export class Kitchen extends HomeZoneScene {
       crumb.mesh.position.addScaledVector(crumb.velocity, deltaSeconds);
       crumb.mesh.rotation.x += deltaSeconds * 4;
       if (crumb.age > 1.4) {
-        crumb.mesh.removeFromParent();
+        this.disposeDynamic(crumb.mesh);
         this.crumbs.splice(index, 1);
       }
     }

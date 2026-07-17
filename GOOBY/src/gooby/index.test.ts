@@ -3,6 +3,7 @@ import {
   Group,
   Mesh,
   MeshStandardMaterial,
+  Texture,
 } from "three";
 import { describe, expect, it } from "vitest";
 import type {
@@ -14,6 +15,8 @@ import type {
 import { deriveCareMood } from "../data/emotions";
 import {
   CHARACTER_TRIANGLE_BUDGET,
+  COSMETIC_ATTACHMENTS,
+  COSMETIC_SOCKETS,
   ProceduralGooby,
   countCharacterTriangles,
 } from ".";
@@ -22,18 +25,20 @@ import type { BufferGeometry, Material, Object3D } from "three";
 interface PendingLoad {
   readonly key: AssetKey;
   resolve(value: Object3D): void;
+  reject(reason: Error): void;
 }
 
 class DeferredAssetLoader implements AssetLoader {
   readonly pending: PendingLoad[] = [];
 
   load<T extends AssetValue = AssetValue>(key: AssetKey): Promise<LoadedAsset<T>> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.pending.push({
         key,
         resolve: (value) => {
           resolve({ key, value: value as T, source: "procedural" });
         },
+        reject,
       });
     });
   }
@@ -47,16 +52,19 @@ class DeferredAssetLoader implements AssetLoader {
   }
 }
 
-const cosmetic = (): {
+const cosmetic = (withTexture = false): {
   readonly root: Group;
   readonly geometry: BoxGeometry;
   readonly material: MeshStandardMaterial;
+  readonly texture: Texture | null;
 } => {
   const root = new Group();
   const geometry = new BoxGeometry(0.2, 0.2, 0.2);
   const material = new MeshStandardMaterial();
+  const texture = withTexture ? new Texture() : null;
+  material.map = texture;
   root.add(new Mesh(geometry, material));
-  return { root, geometry, material };
+  return { root, geometry, material, texture };
 };
 
 describe("care mood derivation", () => {
@@ -170,6 +178,20 @@ describe("ProceduralGooby production constraints", () => {
     actor.dispose();
   });
 
+  it("parents every socket from the authoritative descriptor, including ears", () => {
+    const actor = new ProceduralGooby();
+    for (const socket of COSMETIC_SOCKETS) {
+      const anchor = actor.getCosmeticSocket(socket);
+      const descriptor = COSMETIC_ATTACHMENTS[socket];
+      expect(anchor.parent?.name).toBe(
+        descriptor.parent === "head" ? "Gooby.head-rig" : "Gooby.animation-rig",
+      );
+      expect(anchor.position.toArray()).toEqual([...descriptor.anchorPosition]);
+      expect(anchor.rotation.toArray().slice(0, 3)).toEqual([...descriptor.anchorRotation]);
+    }
+    actor.dispose();
+  });
+
   it("keeps only the newest cosmetic and disposes replaced or raced assets", async () => {
     const loader = new DeferredAssetLoader();
     const actor = new ProceduralGooby({ assetLoader: loader });
@@ -221,6 +243,48 @@ describe("ProceduralGooby production constraints", () => {
     await expect(request).resolves.toBe(false);
     expect(disposals).toBe(2);
     expect(actor.resourceCount).toBe(0);
+  });
+
+  it("keeps a constant resource count through twenty re-equips", async () => {
+    const loader = new DeferredAssetLoader();
+    const actor = new ProceduralGooby({ assetLoader: loader });
+    const baseline = actor.resourceCount;
+    let disposedResources = 0;
+
+    for (let index = 0; index < 20; index += 1) {
+      const next = cosmetic(true);
+      next.geometry.addEventListener("dispose", () => disposedResources += 1);
+      next.material.addEventListener("dispose", () => disposedResources += 1);
+      next.texture?.addEventListener("dispose", () => disposedResources += 1);
+      const request = actor.equipCosmetic("head", "icon.heart");
+      loader.pending[index]?.resolve(next.root);
+      await expect(request).resolves.toBe(true);
+      expect(actor.resourceCount).toBe(baseline + 3);
+      expect(actor.getCosmeticSocket("head").children).toHaveLength(1);
+    }
+
+    expect(disposedResources).toBe(19 * 3);
+    actor.dispose();
+    expect(disposedResources).toBe(20 * 3);
+    expect(actor.resourceCount).toBe(0);
+  });
+
+  it("keeps the current cosmetic and resource set when a newer async load fails", async () => {
+    const loader = new DeferredAssetLoader();
+    const actor = new ProceduralGooby({ assetLoader: loader });
+    const current = cosmetic();
+    const first = actor.equipCosmetic("head", "food.carrot");
+    loader.pending[0]?.resolve(current.root);
+    await expect(first).resolves.toBe(true);
+    const resources = actor.resourceCount;
+
+    const failed = actor.equipCosmetic("head", "icon.coin");
+    loader.pending[1]?.reject(new Error("fixture load failed"));
+    await expect(failed).resolves.toBe(false);
+    expect(actor.getCosmeticKey("head")).toBe("food.carrot");
+    expect(actor.resourceCount).toBe(resources);
+    expect(actor.getCosmeticSocket("head").children).toHaveLength(1);
+    actor.dispose();
   });
 
   it("disposes every owned geometry and material exactly once", () => {

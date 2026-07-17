@@ -4,5 +4,6 @@ export * from "./overlay";
 export * from "./route-machine";
 export * from "./scene";
 export * from "./simulation";
+export * from "./travel-snapshot";
 export * from "./world";
 export * from "../../data/city";

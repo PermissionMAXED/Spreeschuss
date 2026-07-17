@@ -90,13 +90,16 @@ export class Bathroom extends HomeZoneScene {
     const bedroomDoor = makeDoor(0xb6a4cc, "right");
     bedroomDoor.name = "door:bedroom";
     bedroomDoor.position.set(4.25, 0, 0.95);
-    bedroomDoor.rotation.y = -Math.PI / 2;
+    bedroomDoor.rotation.y = -0.18;
     const kitchenDoor = makeDoor(0x87bca7);
     kitchenDoor.name = "door:kitchen";
     kitchenDoor.position.set(-4.25, 0, 1.1);
-    kitchenDoor.rotation.y = Math.PI / 2;
+    kitchenDoor.rotation.y = 0.18;
     this.doors.set("bedroom", bedroomDoor);
     this.doors.set("kitchen", kitchenDoor);
+    this.registerEssentialTarget("door:bedroom", bedroomDoor, [4.25, 1.42, 0.95], [1.65, 3.2, 0.7]);
+    this.registerEssentialTarget("door:kitchen", kitchenDoor, [-4.25, 1.42, 1.1], [1.65, 3.2, 0.7]);
+    this.registerEssentialTarget("toothbrush", this.toothbrush, [3.05, 1.65, -2.18], [1.5, 1.5, 0.75]);
 
     this.gooby.root.position.set(0, 0.06, 0.65);
     this.gooby.root.scale.setScalar(0.84);
@@ -182,8 +185,8 @@ export class Bathroom extends HomeZoneScene {
 
   protected override handleZoneGesture(gesture: Gesture): boolean {
     if (gesture.type === "tap" || gesture.type === "double-tap") {
-      for (const [zone, door] of this.doors) {
-        if (this.hit(door, gesture.x, gesture.y)) {
+      for (const [zone] of this.doors) {
+        if (this.hitEssential(`door:${zone}`, gesture.x, gesture.y)) {
           this.navigateToZone(zone);
           return true;
         }
@@ -193,7 +196,7 @@ export class Bathroom extends HomeZoneScene {
       this.toggleTub();
       return true;
     }
-    if (gesture.type === "tap" && this.hit(this.toothbrush, gesture.x, gesture.y)) {
+    if (gesture.type === "tap" && this.hitEssential("toothbrush", gesture.x, gesture.y)) {
       this.useToothbrush();
       return true;
     }
@@ -237,7 +240,7 @@ export class Bathroom extends HomeZoneScene {
       bubble.object.position.x += bubble.drift * deltaSeconds;
       bubble.object.rotation.y += deltaSeconds * 1.8;
       if (bubble.age > 2.2) {
-        bubble.object.removeFromParent();
+        this.disposeDynamic(bubble.object);
         this.bubbles.splice(index, 1);
       }
     }

@@ -28,6 +28,7 @@ import type { GameRenderer } from "../../render/renderer";
 import {
   CityDriveOverlay,
   computeEdgePointer,
+  type EdgePointerLayout,
   type CityOverlayMetrics,
 } from "./overlay";
 import { CityRouteMachine } from "./route-machine";
@@ -36,6 +37,7 @@ import {
   type CityCarSnapshot,
 } from "./simulation";
 import { CityWorld, type CityWorldStats } from "./world";
+import type { CityTravelSnapshot } from "./travel-snapshot";
 
 export interface CityDriveSceneOptions {
   readonly renderer: GameRenderer;
@@ -48,6 +50,7 @@ export interface CityDriveSceneOptions {
   readonly onEnterShop?: (shop: ShopId, scene: CityDriveScene) => void;
   readonly onCoinsCollected?: (count: number, ids: readonly string[]) => void;
   readonly onBoost?: (padIds: readonly string[]) => void;
+  readonly onTravelSnapshotChanged?: (snapshot: CityTravelSnapshot) => void;
 }
 
 export interface CityDriveDebugSnapshot {
@@ -56,6 +59,8 @@ export interface CityDriveDebugSnapshot {
   readonly economy: Economy;
   readonly activeRoute: readonly CityPoint[];
   readonly worldStats: CityWorldStats | null;
+  readonly travelSnapshot: CityTravelSnapshot;
+  readonly cameraPosition: readonly [number, number, number];
 }
 
 const RELEASED_CONTROLS: DriveControls = {
@@ -77,25 +82,55 @@ export class CityDriveScene implements GameScene {
   private entered = false;
   private disposed = false;
   private previousMountPosition = "";
+  private travelSnapshotSeconds = 0;
+  private readonly destinationScratch = new Vector3();
+  private readonly cameraSpaceScratch = new Vector3();
+  private readonly projectedScratch = new Vector3();
+  private readonly edgePointerScratch: EdgePointerLayout = { x: 0, y: 0, angleRadians: 0 };
+  private readonly safePoseScratch: [number, number, number] = [0, 0.35, 0];
 
   constructor(private readonly options: CityDriveSceneOptions) {
     this.controller = options.controller ?? new CityRouteMachine();
     this.economy = options.economy ?? createEconomy();
-    this.activeRoute = cityRoute("carrot-market");
+    const restored = this.controller.restoredTravelSnapshot;
+    const restoredShop = restored?.destination ?? restored?.visitedShop ?? "carrot-market";
+    this.activeRoute = cityRoute(
+      restoredShop,
+      restored?.phase === "driving-home" ? "home" : "outbound",
+    );
     this.physics = new CityDrivePhysics(this.activeRoute, {
-      position: CITY_GARAGE_POSITION,
-      headingRadians: CITY_GARAGE_HEADING,
+      position: restored?.safeCarPose.position ?? CITY_GARAGE_POSITION,
+      headingRadians: restored?.safeCarPose.headingRadians ?? CITY_GARAGE_HEADING,
+      collectedCoinIds: restored?.collectedRouteState.coinIds ?? [],
     });
-    this.physics.park(false);
+    if (
+      !restored
+      || restored.phase === "destination-board"
+      || restored.phase === "depart-ready"
+    ) {
+      this.physics.park(false);
+    } else if (restored.phase === "arrived" || restored.phase === "return-board") {
+      this.physics.park(true);
+    }
   }
 
   debugSnapshot(): CityDriveDebugSnapshot {
+    const car = this.physics.snapshot;
     return {
       state: this.controller.state,
-      car: this.physics.snapshot,
+      car,
       economy: this.economy,
       activeRoute: this.activeRoute,
       worldStats: this.world?.stats ?? null,
+      travelSnapshot: this.controller.createTravelSnapshot(
+        this.physics.safePose,
+        car.collectedCoinIds,
+      ),
+      cameraPosition: [
+        this.options.renderer.camera.position.x,
+        this.options.renderer.camera.position.y,
+        this.options.renderer.camera.position.z,
+      ],
     };
   }
 
@@ -110,7 +145,6 @@ export class CityDriveScene implements GameScene {
     this.world = this.options.assetLoader
       ? await CityWorld.create(this.options.renderer, this.options.assetLoader)
       : await CityWorld.create(this.options.renderer);
-    this.world.showDestination(null);
     this.overlay = new CityDriveOverlay(this.options.mount, {
       select: (shop) => this.selectDestination(shop),
       depart: () => this.depart(),
@@ -120,17 +154,22 @@ export class CityDriveScene implements GameScene {
       controlsChanged: (controls) => this.updateControls(controls),
     });
     this.resize(context);
-    this.world.setCar(this.physics.snapshot);
-    this.renderUi();
+    this.configureWorldForState();
+    const car = this.physics.snapshot;
+    this.world.setCar(car);
+    this.world.snapCamera(car);
+    this.renderUi(car);
+    this.emitTravelSnapshot(car);
   }
 
   update(deltaSeconds: number): void {
     if (!this.entered || this.disposed || !this.world || !this.overlay) return;
     const state = this.controller.state;
+    let car: CityCarSnapshot;
 
     if (state.phase === "driving-outbound" || state.phase === "driving-home") {
-      this.controller.updateControls(this.controls);
       const step = this.physics.step(deltaSeconds, this.controls);
+      car = step.snapshot;
       if (step.collectedCoinIds.length > 0) {
         this.economy = grantReward(this.economy, { coins: step.collectedCoinIds.length });
         this.options.onEconomyChanged?.(this.economy);
@@ -138,8 +177,10 @@ export class CityDriveScene implements GameScene {
       }
       if (step.activatedBoostPadIds.length > 0) this.options.onBoost?.(step.activatedBoostPadIds);
       const safe = this.physics.safePose;
+      this.safePoseScratch[0] = safe.position[0];
+      this.safePoseScratch[2] = safe.position[1];
       this.controller.pinSafePose(
-        [safe.position[0], 0.35, safe.position[1]],
+        this.safePoseScratch,
         safe.headingRadians,
       );
 
@@ -147,8 +188,9 @@ export class CityDriveScene implements GameScene {
         const arrived = this.controller.tryArriveAt(step.snapshot.position);
         if (arrived) {
           this.physics.park(true);
+          this.world.showDestination(null);
           this.overlay.releaseControls();
-          this.emitState();
+          this.emitState(car);
         }
       } else if (distance2d(step.snapshot.position, CITY_GARAGE_POSITION) <= GARAGE_TRIGGER_RADIUS) {
         this.controller.arriveHome();
@@ -159,13 +201,17 @@ export class CityDriveScene implements GameScene {
         this.physics.park(false);
         this.world.showDestination(null);
         this.overlay.releaseControls();
-        this.emitState();
+        this.emitState(car);
       }
+    } else {
+      car = this.physics.snapshot;
     }
 
-    this.world.update(deltaSeconds, this.physics.snapshot);
-    this.renderUi();
+    this.world.update(deltaSeconds, car);
+    this.renderUi(car);
     this.updateEdgePointer();
+    this.travelSnapshotSeconds += deltaSeconds;
+    if (this.travelSnapshotSeconds >= 0.5) this.emitTravelSnapshot(car);
   }
 
   resize(context: SceneContext): void {
@@ -176,7 +222,13 @@ export class CityDriveScene implements GameScene {
 
   exit(): void {
     this.overlay?.releaseControls();
+    this.controls = RELEASED_CONTROLS;
     this.entered = false;
+  }
+
+  pause(): void {
+    this.overlay?.releaseControls();
+    this.controls = RELEASED_CONTROLS;
   }
 
   dispose(): void {
@@ -194,7 +246,7 @@ export class CityDriveScene implements GameScene {
     this.physics.park(true);
     this.world?.showDestination(null);
     this.emitState();
-    this.renderUi();
+    this.renderUi(this.physics.snapshot);
   }
 
   recoverCar(reason: "off-route" | "stalled" | "invalid-pose"): void {
@@ -203,8 +255,9 @@ export class CityDriveScene implements GameScene {
       [recovered.position[0], 0.35, recovered.position[1]],
       recovered.headingRadians,
     );
-    this.world?.setCar(this.physics.snapshot);
-    this.renderUi();
+    const car = this.physics.snapshot;
+    this.world?.setCar(car);
+    this.renderUi(car);
   }
 
   /** Development-only acceleration for full-app browser coverage. */
@@ -215,6 +268,11 @@ export class CityDriveScene implements GameScene {
     const state = this.controller.state;
     if (state.phase === "driving-outbound") {
       this.controller.arrive(state.selected);
+      const end = pointAlongRoute(this.activeRoute, Number.POSITIVE_INFINITY);
+      this.physics.setRoute(this.activeRoute, {
+        position: end.point,
+        headingRadians: end.headingRadians,
+      });
       this.physics.park(true);
       this.world?.showDestination(null);
     } else if (state.phase === "driving-home") {
@@ -230,7 +288,7 @@ export class CityDriveScene implements GameScene {
     }
     this.overlay?.releaseControls();
     this.emitState();
-    this.renderUi();
+    this.renderUi(this.physics.snapshot);
   }
 
   private selectDestination(shop: ShopId): void {
@@ -238,7 +296,7 @@ export class CityDriveScene implements GameScene {
     this.physics.park(false);
     this.world?.showDestination(null);
     this.emitState();
-    this.renderUi();
+    this.renderUi(this.physics.snapshot);
   }
 
   private depart(): void {
@@ -253,7 +311,7 @@ export class CityDriveScene implements GameScene {
     });
     this.world?.showDestination(state.selected, this.activeRoute);
     this.emitState();
-    this.renderUi();
+    this.renderUi(this.physics.snapshot);
   }
 
   private enterShop(): void {
@@ -274,7 +332,7 @@ export class CityDriveScene implements GameScene {
     });
     this.world?.showGarageRoute(this.activeRoute);
     this.emitState();
-    this.renderUi();
+    this.renderUi(this.physics.snapshot);
   }
 
   private quickReturn(): void {
@@ -287,7 +345,7 @@ export class CityDriveScene implements GameScene {
     this.physics.park(false);
     this.world?.showDestination(null);
     this.emitState();
-    this.renderUi();
+    this.renderUi(this.physics.snapshot);
   }
 
   private updateControls(controls: DriveControls): void {
@@ -295,22 +353,23 @@ export class CityDriveScene implements GameScene {
     this.controller.updateControls(controls);
   }
 
-  private renderUi(): void {
+  private renderUi(car: CityCarSnapshot): void {
     if (!this.overlay) return;
     const state = this.controller.state;
-    const car = this.physics.snapshot;
-    let target: CityPoint = CITY_GARAGE_POSITION;
+    let targetX = CITY_GARAGE_POSITION[0];
+    let targetZ = CITY_GARAGE_POSITION[1];
     let destinationLabel = "Gooby Garage";
     if (state.phase === "depart-ready" || state.phase === "driving-outbound" || state.phase === "arrived") {
       const destination = CITY_DESTINATIONS[state.selected];
-      target = [destination.markerPosition[0], destination.markerPosition[2]];
+      targetX = destination.markerPosition[0];
+      targetZ = destination.markerPosition[2];
       destinationLabel = destination.label;
     } else if (state.phase === "return-board" || state.phase === "driving-home") {
       destinationLabel = state.phase === "return-board" ? "Gooby Garage" : "Gooby Garage";
     }
     const routeDistance = state.phase === "driving-outbound" || state.phase === "driving-home"
       ? nearestRouteSample(car.position, this.activeRoute).remainingDistance
-      : distance2d(car.position, target);
+      : Math.hypot(car.position[0] - targetX, car.position[1] - targetZ);
     const metrics: CityOverlayMetrics = {
       distance: routeDistance,
       destinationLabel,
@@ -324,24 +383,49 @@ export class CityDriveScene implements GameScene {
 
   private updateEdgePointer(): void {
     if (!this.world || !this.overlay) return;
-    const target = this.world.destinationPosition;
     const state = this.controller.state;
-    if (!target || (state.phase !== "driving-outbound" && state.phase !== "driving-home")) return;
+    if (
+      (state.phase !== "driving-outbound" && state.phase !== "driving-home")
+      || !this.world.copyDestinationPosition(this.destinationScratch)
+    ) return;
     const camera = this.options.renderer.camera;
-    const cameraSpace = target.clone().applyMatrix4(camera.matrixWorldInverse);
-    const projected = target.clone().project(camera);
+    const cameraSpace = this.cameraSpaceScratch.copy(this.destinationScratch).applyMatrix4(camera.matrixWorldInverse);
+    const projected = this.projectedScratch.copy(this.destinationScratch).project(camera);
     const layout = computeEdgePointer(
       this.options.renderer.renderer.domElement.clientWidth,
       this.options.renderer.renderer.domElement.clientHeight,
       projected.x,
       projected.y,
       cameraSpace.z > 0,
+      this.edgePointerScratch,
     );
     this.overlay.placeEdgePointer(layout);
   }
 
-  private emitState(): void {
+  private emitState(car = this.physics.snapshot): void {
     this.options.onStateChanged?.(this.controller.state);
+    this.emitTravelSnapshot(car);
+  }
+
+  private emitTravelSnapshot(car: CityCarSnapshot): void {
+    this.travelSnapshotSeconds = 0;
+    const snapshot = this.controller.createTravelSnapshot(
+      this.physics.safePose,
+      car.collectedCoinIds,
+    );
+    this.options.onTravelSnapshotChanged?.(snapshot);
+  }
+
+  private configureWorldForState(): void {
+    if (!this.world) return;
+    const state = this.controller.state;
+    if (state.phase === "driving-outbound") {
+      this.world.showDestination(state.selected, this.activeRoute);
+    } else if (state.phase === "driving-home") {
+      this.world.showGarageRoute(this.activeRoute);
+    } else {
+      this.world.showDestination(null);
+    }
   }
 }
 

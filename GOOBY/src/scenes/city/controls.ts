@@ -1,6 +1,14 @@
 import type { DriveControls } from "../../core/contracts/input";
 
 export type DriveControlRegion = "steer-left" | "steer-right" | "brake";
+export type CityDriveKey =
+  | "ArrowLeft"
+  | "ArrowRight"
+  | "ArrowDown"
+  | "KeyA"
+  | "KeyD"
+  | "KeyS"
+  | "Space";
 
 export interface NormalizedHitRegion {
   readonly x: number;
@@ -29,6 +37,7 @@ export function hitRegionsOverlap(a: NormalizedHitRegion, b: NormalizedHitRegion
 
 export class DriveControlState {
   private readonly pointers = new Map<number, DriveControlRegion>();
+  private readonly keys = new Set<CityDriveKey>();
 
   press(pointerId: number, region: DriveControlRegion): DriveControls {
     this.pointers.set(pointerId, region);
@@ -40,16 +49,31 @@ export class DriveControlState {
     return this.controls;
   }
 
+  pressKey(code: string): DriveControls {
+    if (isCityDriveKey(code)) this.keys.add(code);
+    return this.controls;
+  }
+
+  releaseKey(code: string): DriveControls {
+    if (isCityDriveKey(code)) this.keys.delete(code);
+    return this.controls;
+  }
+
   releaseAll(): DriveControls {
     this.pointers.clear();
+    this.keys.clear();
     return this.controls;
   }
 
   get controls(): DriveControls {
-    const active = new Set(this.pointers.values());
-    const left = active.has("steer-left");
-    const right = active.has("steer-right");
-    const brake = active.has("brake");
+    let left = this.keys.has("ArrowLeft") || this.keys.has("KeyA");
+    let right = this.keys.has("ArrowRight") || this.keys.has("KeyD");
+    let brake = this.keys.has("ArrowDown") || this.keys.has("KeyS") || this.keys.has("Space");
+    for (const region of this.pointers.values()) {
+      left ||= region === "steer-left";
+      right ||= region === "steer-right";
+      brake ||= region === "brake";
+    }
     return {
       steering: left === right ? 0 : left ? 1 : -1,
       braking: brake,
@@ -59,12 +83,23 @@ export class DriveControlState {
   }
 }
 
+export function isCityDriveKey(code: string): code is CityDriveKey {
+  return code === "ArrowLeft"
+    || code === "ArrowRight"
+    || code === "ArrowDown"
+    || code === "KeyA"
+    || code === "KeyD"
+    || code === "KeyS"
+    || code === "Space";
+}
+
 export class CityPointerControls {
   private readonly state = new DriveControlState();
   private readonly disposers: Array<() => void> = [];
+  private enabled = false;
 
   constructor(
-    buttons: Readonly<Record<DriveControlRegion, HTMLButtonElement>>,
+    private readonly buttons: Readonly<Record<DriveControlRegion, HTMLButtonElement>>,
     private readonly onChange: (controls: DriveControls) => void,
   ) {
     for (const region of ["steer-left", "brake", "steer-right"] as const) {
@@ -72,13 +107,13 @@ export class CityPointerControls {
       const down = (event: PointerEvent): void => {
         event.preventDefault();
         button.setPointerCapture(event.pointerId);
-        button.classList.add("is-held");
         this.onChange(this.state.press(event.pointerId, region));
+        this.syncHeldClasses();
       };
       const end = (event: PointerEvent): void => {
         event.preventDefault();
-        button.classList.remove("is-held");
         this.onChange(this.state.release(event.pointerId));
+        this.syncHeldClasses();
       };
       button.addEventListener("pointerdown", down);
       button.addEventListener("pointerup", end);
@@ -91,18 +126,62 @@ export class CityPointerControls {
         button.removeEventListener("lostpointercapture", end);
       });
     }
+
+    const keyDown = (event: KeyboardEvent): void => {
+      if (!this.enabled || !isCityDriveKey(event.code)) return;
+      event.preventDefault();
+      this.onChange(this.state.pressKey(event.code));
+      this.syncHeldClasses();
+    };
+    const keyUp = (event: KeyboardEvent): void => {
+      if (!isCityDriveKey(event.code)) return;
+      event.preventDefault();
+      this.onChange(this.state.releaseKey(event.code));
+      this.syncHeldClasses();
+    };
+    const release = (): void => this.releaseAll();
+    const visibility = (): void => {
+      if (document.visibilityState !== "visible") this.releaseAll();
+    };
+    window.addEventListener("keydown", keyDown);
+    window.addEventListener("keyup", keyUp);
+    window.addEventListener("blur", release);
+    window.addEventListener("pagehide", release);
+    document.addEventListener("visibilitychange", visibility);
+    this.disposers.push(() => {
+      window.removeEventListener("keydown", keyDown);
+      window.removeEventListener("keyup", keyUp);
+      window.removeEventListener("blur", release);
+      window.removeEventListener("pagehide", release);
+      document.removeEventListener("visibilitychange", visibility);
+    });
   }
 
   get controls(): DriveControls {
     return this.state.controls;
   }
 
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+    if (!enabled) this.releaseAll();
+  }
+
   releaseAll(): void {
     this.onChange(this.state.releaseAll());
+    this.syncHeldClasses();
   }
 
   dispose(): void {
+    this.enabled = false;
     this.releaseAll();
     for (const dispose of this.disposers.splice(0)) dispose();
+  }
+
+  private syncHeldClasses(): void {
+    const controls = this.state.controls;
+    this.buttons["steer-left"].classList.toggle("is-held", controls.steeringHeld && controls.steering > 0);
+    this.buttons["steer-right"].classList.toggle("is-held", controls.steeringHeld && controls.steering < 0);
+    this.buttons.brake.classList.toggle("is-held", controls.brakeHeld);
   }
 }

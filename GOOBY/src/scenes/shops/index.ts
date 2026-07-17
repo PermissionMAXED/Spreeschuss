@@ -6,7 +6,7 @@ import type { CityShopArrival } from "./routes";
 export interface ShopStub {
   readonly id: ShopId;
   readonly title: string;
-  readonly specialty: "food" | "clothes" | "grooming";
+  readonly specialty: "food" | "furniture-decor" | "cosmetics";
   readonly routePolicy: "city-arrival-only";
 }
 
@@ -20,13 +20,13 @@ export const SHOP_REGISTRY: Readonly<Record<ShopId, ShopStub>> = {
   "cloud-boutique": {
     id: "cloud-boutique",
     title: "Cloud Boutique",
-    specialty: "clothes",
+    specialty: "furniture-decor",
     routePolicy: "city-arrival-only",
   },
   "fluff-salon": {
     id: "fluff-salon",
     title: "Fluff Salon",
-    specialty: "grooming",
+    specialty: "cosmetics",
     routePolicy: "city-arrival-only",
   },
 };
@@ -83,6 +83,7 @@ export {
   consumeFood,
   isPurchaseReceiptKey,
   purchaseCatalogItem,
+  PurchaseRequestIdSource,
   PurchaseRequestSchema,
   ShopPurchaseService,
   visibleInventory,

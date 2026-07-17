@@ -65,6 +65,30 @@ export const CATALOG_BY_ID: ReadonlyMap<string, CatalogItem> = new Map(
   ALL_CATALOG_ITEMS.map((item) => [item.id, item]),
 );
 
+export interface CatalogOwnershipMetadata {
+  readonly owned: boolean;
+  readonly quantity: number;
+  readonly stackable: boolean;
+  readonly accessibilityLabel: string;
+}
+
+export function getCatalogOwnershipMetadata(
+  item: CatalogItem,
+  inventory: Readonly<Record<string, number>>,
+): CatalogOwnershipMetadata {
+  const quantity = inventory[item.id] ?? 0;
+  const ownershipLabel = quantity > 0
+    ? `Owned, quantity ${quantity}`
+    : "Not owned, quantity 0";
+  const stackabilityLabel = item.stackable ? "Stackable" : "Single ownership";
+  return Object.freeze({
+    owned: quantity > 0,
+    quantity,
+    stackable: item.stackable,
+    accessibilityLabel: `${item.name}. ${ownershipLabel}. ${stackabilityLabel}.`,
+  });
+}
+
 export const SHOP_CATALOGS: Readonly<Record<ShopId, readonly CatalogItem[]>> = Object.freeze({
   "carrot-market": FOOD_CATALOG,
   "cloud-boutique": FURNITURE_CATALOG,

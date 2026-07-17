@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Vector3 } from "three";
 import { FallbackAssetLoader } from "../../render/proc";
 import {
   CITY_BOOST_PADS,
@@ -16,8 +17,10 @@ import {
   CityRouteMachine,
   DriveControlState,
   cityRoute,
+  computeCityCameraPose,
   computeBoundedRecoveryPose,
   computeEdgePointer,
+  createSafeBoardTravelSnapshot,
   detectCityPickups,
   distance2d,
   hitRegionsOverlap,
@@ -25,6 +28,7 @@ import {
   isPointOnRoad,
   isValidCarPosition,
   nearestRouteSample,
+  parseCityTravelSnapshot,
   pointAlongRoute,
   routeLength,
   type CityPoint,
@@ -154,6 +158,17 @@ describe("real hold controls and drive responses", () => {
     expect(controls.releaseAll()).toEqual(RELEASED);
   });
 
+  it("composes held keyboard and pointer controls and clears every source together", () => {
+    const controls = new DriveControlState();
+    expect(controls.pressKey("KeyA")).toMatchObject({ steering: 1, steeringHeld: true });
+    expect(controls.press(8, "brake")).toMatchObject({ steering: 1, braking: true });
+    expect(controls.pressKey("ArrowRight")).toMatchObject({ steering: 0, steeringHeld: true });
+    expect(controls.releaseKey("KeyA")).toMatchObject({ steering: -1, braking: true });
+    expect(controls.pressKey("Space")).toMatchObject({ steering: -1, brakeHeld: true });
+    expect(controls.release(8)).toMatchObject({ steering: -1, braking: true });
+    expect(controls.releaseAll()).toEqual(RELEASED);
+  });
+
   it("auto-throttles, visibly brakes, and materially slows while brake is held", () => {
     const physics = new CityDrivePhysics(cityRoute("carrot-market"));
     for (let index = 0; index < 30; index += 1) physics.step(0.1, RELEASED);
@@ -175,6 +190,90 @@ describe("real hold controls and drive responses", () => {
     const homePhysics = new CityDrivePhysics(home);
     expect(simulatePointerSteering(homePhysics, [0, -44], 3)).toBeLessThan(1_200);
     expect(simulatePointerSteering(homePhysics, CITY_GARAGE_POSITION, 3)).toBeLessThan(1_200);
+  });
+});
+
+describe("serializable city travel snapshots", () => {
+  it("round-trips an outbound leg with its safe pose and collected route state", () => {
+    const outbound = new CityRouteMachine();
+    outbound.selectDestination("carrot-market");
+    outbound.confirmDeparture();
+    const snapshot = outbound.createTravelSnapshot(
+      { position: [0, 27], headingRadians: Math.PI },
+      ["coin-garage", "coin-maple"],
+    );
+    const serialized: unknown = JSON.parse(JSON.stringify(snapshot));
+    const restored = new CityRouteMachine([], serialized);
+    expect(restored.state).toMatchObject({
+      phase: "driving-outbound",
+      selected: "carrot-market",
+    });
+    expect(restored.restoredTravelSnapshot).toMatchObject({
+      safeCarPose: { position: [0, 27], headingRadians: Math.PI },
+      collectedRouteState: { coinIds: ["coin-garage", "coin-maple"] },
+      returnRequired: true,
+    });
+  });
+
+  it("restores arrived, required-return board, and driving-home phases without unlocking teleport", () => {
+    const trip = new CityRouteMachine();
+    trip.selectDestination("cloud-boutique");
+    trip.confirmDeparture();
+    trip.arrive("cloud-boutique");
+    const arrived = trip.createTravelSnapshot(
+      { position: [26, -68], headingRadians: Math.PI / 2 },
+      ["coin-promenade"],
+    );
+    const arrivedReload = new CityRouteMachine([], arrived);
+    expect(arrivedReload.state).toMatchObject({ phase: "arrived", selected: "cloud-boutique" });
+    arrivedReload.openReturnBoard();
+    expect(arrivedReload.state).toMatchObject({ phase: "return-board", returnRequired: true });
+    const returnBoard = arrivedReload.createTravelSnapshot(
+      { position: [26, -68], headingRadians: -Math.PI / 2 },
+      ["coin-promenade"],
+    );
+    const returnReload = new CityRouteMachine(arrivedReload.visitedShops(), returnBoard);
+    expect(returnReload.state).toMatchObject({ phase: "return-board", returnRequired: true });
+    expect(() => returnReload.useQuickReturn()).toThrow(/first visit/u);
+    returnReload.confirmReturnDeparture();
+    const drivingHome = returnReload.createTravelSnapshot(
+      { position: [0, -68], headingRadians: 0 },
+      ["coin-promenade"],
+    );
+    const drivingReload = new CityRouteMachine(returnReload.visitedShops(), drivingHome);
+    expect(drivingReload.state).toMatchObject({
+      phase: "driving-home",
+      visited: "cloud-boutique",
+    });
+  });
+
+  it("fails closed to the garage board and upgrades inconsistent first-return data", () => {
+    const invalid = {
+      ...createSafeBoardTravelSnapshot(),
+      phase: "driving-outbound",
+      destination: "carrot-market",
+      safeCarPose: { position: [999, 999], headingRadians: 0 },
+    };
+    expect(parseCityTravelSnapshot(invalid)).toBeNull();
+    expect(new CityRouteMachine([], invalid).state).toEqual({
+      phase: "destination-board",
+      car: "parked",
+      selected: null,
+    });
+
+    const tampered = {
+      phase: "return-board",
+      destination: null,
+      visitedShop: "carrot-market",
+      returnRequired: false,
+      safeCarPose: { position: [-18, -44], headingRadians: Math.PI / 2 },
+      collectedRouteState: { coinIds: [] },
+    };
+    const parsed = parseCityTravelSnapshot(tampered, []);
+    expect(parsed?.returnRequired).toBe(true);
+    const restored = new CityRouteMachine([], tampered);
+    expect(restored.state).toMatchObject({ phase: "return-board", returnRequired: true });
+    expect(() => restored.useQuickReturn()).toThrow(/first visit/u);
   });
 });
 
@@ -262,6 +361,26 @@ describe("marker legibility and mobile budgets", () => {
     expect(CITY_BUILDINGS.length).toBeLessThanOrEqual(CITY_RENDER_BUDGET.maxBuildings);
     expect(CITY_RENDER_BUDGET.maxTrafficCars).toBeLessThanOrEqual(6);
     expect(CITY_RENDER_BUDGET.maxBreadcrumbs).toBeLessThanOrEqual(24);
+    expect(CITY_RENDER_BUDGET.targetDrawCalls).toBeLessThanOrEqual(54);
+  });
+
+  it("frames the parked garage from in front of its back wall", () => {
+    const desired = new Vector3();
+    const lookAt = new Vector3();
+    computeCityCameraPose({
+      position: CITY_GARAGE_POSITION,
+      headingRadians: Math.PI,
+      speed: 0,
+      boostSeconds: 0,
+      braking: false,
+      recoveryMode: "none",
+      recoveryAttempts: 0,
+      noProgressSeconds: 0,
+      collectedCoinIds: [],
+    }, desired, lookAt);
+    expect(desired.z).toBeLessThan(59.15);
+    expect(lookAt.z).toBeLessThan(desired.z);
+    expect(desired.distanceTo(lookAt)).toBeGreaterThan(8);
   });
 
   it("falls back procedurally when every vendored city asset fails", async () => {

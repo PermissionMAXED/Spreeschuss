@@ -1,4 +1,5 @@
 import type { Clock } from "../../core/contracts/clock";
+import type { AssetKey } from "../../core/contracts/assets";
 import type { SaveState } from "../../core/contracts/save";
 import {
   advanceSimulation,
@@ -13,8 +14,10 @@ import {
   type HomeRect,
 } from "../../data/home";
 import type { HomeZoneId } from "../../core/contracts/scenes";
+import { CATALOG_BY_ID, type FurnitureCatalogItem } from "../../data/catalog";
 
 const DECOR_PREFIX = "__home.decor.v1|";
+const CATALOG_DECOR_PREFIX = "__home.catalog.v1|";
 const HARVEST_DAY_KEY = "__home.harvest.day";
 const HARVEST_COUNT_KEY = "__home.harvest.count";
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -22,7 +25,7 @@ export const DAILY_CARROT_LIMIT = 3;
 
 export interface DecorPlacement {
   readonly instanceId: string;
-  readonly decorId: DecorId;
+  readonly decorId: string;
   readonly zone: HomeZoneId;
   readonly gridX: number;
   readonly gridZ: number;
@@ -32,7 +35,7 @@ export interface DecorPlacement {
 
 export interface PlacementRequest {
   readonly instanceId: string;
-  readonly decorId: DecorId;
+  readonly decorId: string;
   readonly zone: HomeZoneId;
   readonly x: number;
   readonly z: number;
@@ -43,6 +46,8 @@ export interface PlacementRequest {
 export type PlacementFailure =
   | "invalid-instance"
   | "invalid-coordinate"
+  | "unknown-decor"
+  | "inventory-exhausted"
   | "wrong-zone"
   | "unknown-slot"
   | "slot-rejects-decor"
@@ -58,8 +63,43 @@ function snap(value: number): number {
   return Math.round(value / HOME_GRID_SIZE);
 }
 
+const CATALOG_FOOTPRINTS = Object.freeze({
+  tiny: [0.75, 0.75],
+  small: [1.15, 1.05],
+  medium: [1.7, 1.4],
+  large: [2.5, 1.9],
+} as const);
+
+export interface ResolvedDecorDefinition {
+  readonly assetKey: AssetKey | null;
+  readonly footprint: readonly [width: number, depth: number];
+  readonly allowedZones: readonly HomeZoneId[];
+  readonly catalogItem: FurnitureCatalogItem | null;
+}
+
+export function resolveDecorDefinition(decorId: string): ResolvedDecorDefinition | null {
+  if (decorId in HOME_DECOR_CATALOG) {
+    const definition = HOME_DECOR_CATALOG[decorId as DecorId];
+    return {
+      assetKey: definition.assetKey,
+      footprint: definition.footprint,
+      allowedZones: definition.allowedZones,
+      catalogItem: null,
+    };
+  }
+  const item = CATALOG_BY_ID.get(decorId);
+  if (item?.kind !== "furniture") return null;
+  return {
+    assetKey: null,
+    footprint: CATALOG_FOOTPRINTS[item.footprint],
+    allowedZones: item.zones,
+    catalogItem: item,
+  };
+}
+
 function worldRect(placement: DecorPlacement): HomeRect {
-  const definition = HOME_DECOR_CATALOG[placement.decorId];
+  const definition = resolveDecorDefinition(placement.decorId);
+  if (!definition) throw new Error(`Unknown decor in placement: ${placement.decorId}`);
   const rotated = placement.quarterTurns % 2 === 1;
   return {
     center: [placement.gridX * HOME_GRID_SIZE, placement.gridZ * HOME_GRID_SIZE],
@@ -88,17 +128,26 @@ function contains(outer: HomeRect, inner: HomeRect): boolean {
 export function validateDecorPlacement(
   request: PlacementRequest,
   existing: readonly DecorPlacement[],
+  inventory?: Readonly<Record<string, number>>,
 ): PlacementValidation {
-  if (!/^[a-z0-9-]{1,24}$/u.test(request.instanceId)) {
+  if (!/^[a-z0-9-]{1,64}$/u.test(request.instanceId)) {
     return { valid: false, reason: "invalid-instance" };
   }
   if (!Number.isFinite(request.x) || !Number.isFinite(request.z)) {
     return { valid: false, reason: "invalid-coordinate" };
   }
 
-  const definition = HOME_DECOR_CATALOG[request.decorId];
+  const definition = resolveDecorDefinition(request.decorId);
+  if (!definition) return { valid: false, reason: "unknown-decor" };
   if (!definition.allowedZones.includes(request.zone)) {
     return { valid: false, reason: "wrong-zone" };
+  }
+  if (inventory && definition.catalogItem) {
+    const owned = inventory[request.decorId] ?? 0;
+    const used = existing.filter(
+      ({ decorId, instanceId }) => decorId === request.decorId && instanceId !== request.instanceId,
+    ).length;
+    if (used >= owned) return { valid: false, reason: "inventory-exhausted" };
   }
 
   const blueprint = HOME_ZONE_BLUEPRINTS[request.zone];
@@ -108,7 +157,11 @@ export function validateDecorPlacement(
   if (slotId) {
     const slot = blueprint.decorSlots.find(({ id }) => id === slotId);
     if (!slot) return { valid: false, reason: "unknown-slot" };
-    if (!slot.allowedDecor.includes(request.decorId)) {
+    if (
+      definition.catalogItem
+        ? !definition.catalogItem.zones.includes(request.zone)
+        : !slot.allowedDecor.includes(request.decorId as DecorId)
+    ) {
       return { valid: false, reason: "slot-rejects-decor" };
     }
     [x, z] = slot.position;
@@ -144,8 +197,9 @@ export function validateDecorPlacement(
 export function upsertDecorPlacement(
   existing: readonly DecorPlacement[],
   request: PlacementRequest,
+  inventory?: Readonly<Record<string, number>>,
 ): { readonly placements: readonly DecorPlacement[]; readonly validation: PlacementValidation } {
-  const validation = validateDecorPlacement(request, existing);
+  const validation = validateDecorPlacement(request, existing, inventory);
   if (!validation.valid) return { placements: existing, validation };
   return {
     placements: [
@@ -159,6 +213,7 @@ export function upsertDecorPlacement(
 export function rotateDecorPlacement(
   existing: readonly DecorPlacement[],
   instanceId: string,
+  inventory?: Readonly<Record<string, number>>,
 ): { readonly placements: readonly DecorPlacement[]; readonly validation: PlacementValidation } {
   const current = existing.find((placement) => placement.instanceId === instanceId);
   if (!current) {
@@ -172,7 +227,7 @@ export function rotateDecorPlacement(
     z: current.gridZ * HOME_GRID_SIZE,
     quarterTurns: ((current.quarterTurns + 1) % 4) as 0 | 1 | 2 | 3,
     slotId: current.slotId,
-  });
+  }, inventory);
 }
 
 export function removeDecorPlacement(
@@ -183,8 +238,11 @@ export function removeDecorPlacement(
 }
 
 function decorKey(placement: DecorPlacement): string {
+  const prefix = resolveDecorDefinition(placement.decorId)?.catalogItem
+    ? CATALOG_DECOR_PREFIX
+    : DECOR_PREFIX;
   return [
-    DECOR_PREFIX.slice(0, -1),
+    prefix.slice(0, -1),
     placement.zone,
     placement.instanceId,
     placement.decorId,
@@ -195,33 +253,91 @@ function decorKey(placement: DecorPlacement): string {
   ].join("|");
 }
 
+export function findAvailableDecorPlacement(
+  existing: readonly DecorPlacement[],
+  decorId: string,
+  zone: HomeZoneId,
+  instanceId: string,
+  inventory?: Readonly<Record<string, number>>,
+): PlacementValidation {
+  const blueprint = HOME_ZONE_BLUEPRINTS[zone];
+  const candidates: Array<{ readonly x: number; readonly z: number; readonly slotId: string | null }> = [
+    ...blueprint.decorSlots.map(({ id, position }) => ({ x: position[0], z: position[1], slotId: id })),
+  ];
+  const minX = blueprint.bounds.center[0] - blueprint.bounds.size[0] / 2;
+  const maxX = blueprint.bounds.center[0] + blueprint.bounds.size[0] / 2;
+  const minZ = blueprint.bounds.center[1] - blueprint.bounds.size[1] / 2;
+  const maxZ = blueprint.bounds.center[1] + blueprint.bounds.size[1] / 2;
+  for (let z = minZ; z <= maxZ; z += HOME_GRID_SIZE) {
+    for (let x = minX; x <= maxX; x += HOME_GRID_SIZE) candidates.push({ x, z, slotId: null });
+  }
+  for (const candidate of candidates) {
+    const validation = validateDecorPlacement({
+      instanceId,
+      decorId,
+      zone,
+      x: candidate.x,
+      z: candidate.z,
+      slotId: candidate.slotId,
+    }, existing, inventory);
+    if (validation.valid) return validation;
+  }
+  return { valid: false, reason: "out-of-bounds" };
+}
+
+function sanitizeDecorPlacements(
+  save: SaveState,
+  placements: readonly DecorPlacement[],
+): readonly DecorPlacement[] {
+  const valid: DecorPlacement[] = [];
+  for (const placement of placements) {
+    const validation = validateDecorPlacement({
+      ...placement,
+      x: placement.gridX * HOME_GRID_SIZE,
+      z: placement.gridZ * HOME_GRID_SIZE,
+    }, valid, save.inventory);
+    if (validation.valid) valid.push(validation.placement);
+  }
+  return valid;
+}
+
 export function persistDecorPlacements(
   save: SaveState,
   placements: readonly DecorPlacement[],
 ): SaveState {
   const inventory = Object.fromEntries(
-    Object.entries(save.inventory).filter(([key]) => !key.startsWith(DECOR_PREFIX)),
+    Object.entries(save.inventory).filter(
+      ([key]) => !key.startsWith(DECOR_PREFIX) && !key.startsWith(CATALOG_DECOR_PREFIX),
+    ),
   );
-  for (const placement of placements) inventory[decorKey(placement)] = 1;
+  for (const placement of sanitizeDecorPlacements(save, placements)) inventory[decorKey(placement)] = 1;
   return { ...save, inventory };
 }
 
 export function restoreDecorPlacements(save: SaveState): readonly DecorPlacement[] {
   const restored: DecorPlacement[] = [];
   for (const [key, value] of Object.entries(save.inventory)) {
-    if (!key.startsWith(DECOR_PREFIX) || value !== 1) continue;
+    const persistedDecor = key.startsWith(DECOR_PREFIX) || key.startsWith(CATALOG_DECOR_PREFIX);
+    if (!persistedDecor || value !== 1) continue;
     const [, zone, instanceId, decorId, x, z, turns, slot] = key.split("|");
     if (
       !zone ||
       !instanceId ||
       !decorId ||
-      !x ||
-      !z ||
-      !turns ||
-      !slot ||
       !(zone in HOME_ZONE_BLUEPRINTS) ||
-      !(decorId in HOME_DECOR_CATALOG)
+      !resolveDecorDefinition(decorId)
     ) {
+      continue;
+    }
+    if (x === undefined || z === undefined || turns === undefined || slot === undefined) {
+      const legacy = findAvailableDecorPlacement(
+        restored,
+        decorId,
+        zone as HomeZoneId,
+        instanceId,
+        save.inventory,
+      );
+      if (legacy.valid) restored.push(legacy.placement);
       continue;
     }
     const parsedX = Number(x);
@@ -238,7 +354,7 @@ export function restoreDecorPlacements(save: SaveState): readonly DecorPlacement
     }
     const candidate: DecorPlacement = {
       instanceId,
-      decorId: decorId as DecorId,
+      decorId,
       zone: zone as HomeZoneId,
       gridX: parsedX,
       gridZ: parsedZ,
@@ -252,6 +368,7 @@ export function restoreDecorPlacements(save: SaveState): readonly DecorPlacement
         z: candidate.gridZ * HOME_GRID_SIZE,
       },
       restored,
+      save.inventory,
     );
     if (validation.valid) restored.push(validation.placement);
   }
@@ -320,10 +437,26 @@ export interface HarvestResult {
   readonly remainingToday: number;
 }
 
+function harvestLedger(
+  save: SaveState,
+  clock: Clock,
+): { readonly day: number; readonly count: number } {
+  const clockDay = Math.max(0, Math.floor(clock.now() / DAY_MS));
+  const canonicalDay = save.dailyHarvest?.day ?? -1;
+  const legacyDay = save.inventory[HARVEST_DAY_KEY] ?? -1;
+  const highWaterDay = Math.max(canonicalDay, legacyDay);
+  if (clockDay > highWaterDay) return { day: clockDay, count: 0 };
+  const canonicalCount = canonicalDay === highWaterDay ? (save.dailyHarvest?.count ?? 0) : 0;
+  const legacyCount = legacyDay === highWaterDay ? (save.inventory[HARVEST_COUNT_KEY] ?? 0) : 0;
+  return {
+    day: Math.max(clockDay, highWaterDay),
+    count: Math.max(0, canonicalCount, legacyCount),
+  };
+}
+
 export function harvestCarrot(save: SaveState, clock: Clock): HarvestResult {
-  const today = Math.max(0, Math.floor(clock.now() / DAY_MS));
-  const storedDay = save.inventory[HARVEST_DAY_KEY];
-  const harvestedBefore = storedDay === today ? (save.inventory[HARVEST_COUNT_KEY] ?? 0) : 0;
+  const ledger = harvestLedger(save, clock);
+  const harvestedBefore = ledger.count;
   if (harvestedBefore >= DAILY_CARROT_LIMIT) {
     return {
       save,
@@ -336,11 +469,15 @@ export function harvestCarrot(save: SaveState, clock: Clock): HarvestResult {
   const inventory = {
     ...save.inventory,
     carrot: (save.inventory.carrot ?? 0) + 1,
-    [HARVEST_DAY_KEY]: today,
+    [HARVEST_DAY_KEY]: ledger.day,
     [HARVEST_COUNT_KEY]: harvestedToday,
   };
   return {
-    save: { ...save, inventory },
+    save: {
+      ...save,
+      inventory,
+      dailyHarvest: { day: ledger.day, count: harvestedToday },
+    },
     harvested: true,
     harvestedToday,
     remainingToday: DAILY_CARROT_LIMIT - harvestedToday,
@@ -348,9 +485,5 @@ export function harvestCarrot(save: SaveState, clock: Clock): HarvestResult {
 }
 
 export function carrotsRemainingToday(save: SaveState, clock: Clock): number {
-  const today = Math.max(0, Math.floor(clock.now() / DAY_MS));
-  const count = save.inventory[HARVEST_DAY_KEY] === today
-    ? (save.inventory[HARVEST_COUNT_KEY] ?? 0)
-    : 0;
-  return Math.max(0, DAILY_CARROT_LIMIT - count);
+  return Math.max(0, DAILY_CARROT_LIMIT - harvestLedger(save, clock).count);
 }

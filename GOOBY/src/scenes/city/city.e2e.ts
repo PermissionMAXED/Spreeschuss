@@ -114,3 +114,155 @@ test("renders the fog-free city route, hold controls, and gold guidance", async 
     animations: "disabled",
   });
 });
+
+test("reloads outbound and required-return travel without changing the honest phase", async ({ page }) => {
+  await page.goto("/src/scenes/city/dev-harness.html");
+  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  await page.getByTestId("destination-carrot-market").click();
+  await page.getByTestId("start-drive").click();
+  await expect.poll(async () => (await snapshot(page)).car.position[1], { timeout: 15_000 })
+    .toBeLessThan(39);
+  await expect.poll(async () => (await snapshot(page)).travelSnapshot.collectedRouteState.coinIds)
+    .toContain("coin-garage");
+  const outboundBeforeReload = await snapshot(page);
+
+  await page.reload();
+  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  const outboundAfterReload = await snapshot(page);
+  expect(outboundAfterReload.state).toMatchObject({
+    phase: "driving-outbound",
+    selected: "carrot-market",
+  });
+  expect(distance2dForTest(
+    outboundAfterReload.car.position,
+    outboundBeforeReload.travelSnapshot.safeCarPose.position,
+  )).toBeLessThan(6);
+  for (const coinId of outboundBeforeReload.travelSnapshot.collectedRouteState.coinIds) {
+    expect(outboundAfterReload.car.collectedCoinIds).toContain(coinId);
+  }
+
+  await page.evaluate(() => window.__cityHarness.completeLeg());
+  await expect.poll(async () => (await snapshot(page)).state.phase).toBe("arrived");
+  await page.getByTestId("enter-shop").click();
+  await expect.poll(async () => (await snapshot(page)).state.phase).toBe("return-board");
+  await page.reload();
+  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  expect((await snapshot(page)).state).toMatchObject({
+    phase: "return-board",
+    visited: "carrot-market",
+    returnRequired: true,
+  });
+  await expect(page.getByTestId("quick-return")).toBeHidden();
+
+  await page.getByTestId("drive-home").click();
+  await expect.poll(async () => (await snapshot(page)).car.position[0]).toBeGreaterThan(-16);
+  await expect.poll(async () => (await snapshot(page)).travelSnapshot.safeCarPose.position[0])
+    .toBeGreaterThan(-17);
+  await page.reload();
+  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  expect((await snapshot(page)).state).toMatchObject({
+    phase: "driving-home",
+    visited: "carrot-market",
+  });
+});
+
+test("invalid travel recovers to the safe garage board", async ({ page }) => {
+  await page.goto("/src/scenes/city/dev-harness.html");
+  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  await page.evaluate(() => window.__cityHarness.saveRaw({
+    phase: "driving-home",
+    destination: null,
+    visitedShop: "carrot-market",
+    returnRequired: true,
+    safeCarPose: { position: [900, -900], headingRadians: Number.NaN },
+    collectedRouteState: { coinIds: ["not-a-city-coin"] },
+  }));
+  await page.reload();
+  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  const recovered = await snapshot(page);
+  expect(recovered.state).toEqual({ phase: "destination-board", car: "parked", selected: null });
+  expect(recovered.car.position).toEqual(CITY_GARAGE_POSITION);
+});
+
+test("composes real held keyboard and pointer inputs and clears them on lifecycle pauses", async ({ page }) => {
+  await page.goto("/src/scenes/city/dev-harness.html");
+  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  await page.getByTestId("destination-carrot-market").click();
+  await page.getByTestId("start-drive").click();
+
+  await page.keyboard.down("a");
+  await expect.poll(async () => {
+    const state = (await snapshot(page)).state;
+    return state.phase === "driving-outbound" ? state.controls.steering : 0;
+  }).toBe(1);
+  const brake = page.getByRole("button", { name: "Hold brake" });
+  const brakeBox = await brake.boundingBox();
+  if (!brakeBox) throw new Error("Brake control has no pointer hit box");
+  await page.mouse.move(brakeBox.x + brakeBox.width / 2, brakeBox.y + brakeBox.height / 2);
+  await page.mouse.down();
+  await expect.poll(async () => {
+    const state = (await snapshot(page)).state;
+    return state.phase === "driving-outbound" ? state.controls : null;
+  }).toMatchObject({ steering: 1, steeringHeld: true, braking: true, brakeHeld: true });
+  await page.keyboard.up("a");
+  await expect.poll(async () => {
+    const state = (await snapshot(page)).state;
+    return state.phase === "driving-outbound" ? state.controls : null;
+  }).toMatchObject({ steering: 0, braking: true });
+
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect.poll(async () => {
+    const state = (await snapshot(page)).state;
+    return state.phase === "driving-outbound" ? state.controls : null;
+  }).toEqual({ steering: 0, braking: false, steeringHeld: false, brakeHeld: false });
+  await page.mouse.up();
+
+  await page.keyboard.down("d");
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect.poll(async () => {
+    const state = (await snapshot(page)).state;
+    return state.phase === "driving-outbound" ? state.controls : null;
+  }).toEqual({ steering: 0, braking: false, steeringHeld: false, brakeHeld: false });
+  await page.keyboard.up("d");
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+
+  await page.keyboard.down("d");
+  await page.evaluate(() => window.__cityHarness.pause());
+  await expect.poll(async () => {
+    const state = (await snapshot(page)).state;
+    return state.phase === "driving-outbound" ? state.controls : null;
+  }).toEqual({ steering: 0, braking: false, steeringHeld: false, brakeHeld: false });
+  await page.keyboard.up("d");
+
+  await page.keyboard.down("a");
+  await page.evaluate(() => window.__cityHarness.exit());
+  const exited = await snapshot(page);
+  expect(exited.state).toMatchObject({
+    phase: "driving-outbound",
+    controls: { steering: 0, braking: false, steeringHeld: false, brakeHeld: false },
+  });
+  await page.keyboard.up("a");
+});
+
+test("keeps the parked camera clear of the garage wall and stays within draw budget", async ({ page }) => {
+  await page.goto("/src/scenes/city/dev-harness.html");
+  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  await expect.poll(async () => (await snapshot(page)).worldStats?.drawCalls ?? 0).toBeGreaterThan(0);
+  const city = await snapshot(page);
+  expect(city.worldStats?.drawCalls).toBeLessThanOrEqual(city.worldStats?.targetDrawCalls ?? 0);
+  expect(city.cameraPosition[2]).toBeLessThan(59.15);
+  expect(city.cameraPosition[0]).toBeGreaterThan(2);
+  await page.screenshot({
+    path: "/opt/cursor/artifacts/gooby_city_parked_camera_budget.png",
+    animations: "disabled",
+  });
+});
+
+function distance2dForTest(a: CityPoint, b: CityPoint): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1]);
+}

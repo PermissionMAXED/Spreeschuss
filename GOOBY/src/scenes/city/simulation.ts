@@ -6,7 +6,6 @@ import {
   CITY_COINS,
   CITY_WORLD_BOUNDS,
   COIN_PICKUP_RADIUS,
-  distance2d,
   isPointInWorld,
   isValidCarPosition,
   nearestRouteSample,
@@ -60,12 +59,18 @@ interface CollisionResult {
   readonly collided: boolean;
 }
 
+interface MutablePickupResult {
+  readonly coinIds: string[];
+  readonly boostPadIds: string[];
+}
+
 const EMPTY_CONTROLS: DriveControls = {
   steering: 0,
   braking: false,
   steeringHeld: false,
   brakeHeld: false,
 };
+const EMPTY_COOLDOWNS: ReadonlyMap<string, number> = new Map();
 
 function moveToward(value: number, target: number, amount: number): number {
   if (value < target) return Math.min(target, value + amount);
@@ -151,19 +156,33 @@ export function computeBoundedRecoveryPose(position: CityPoint, route: readonly 
 export function detectCityPickups(
   position: CityPoint,
   collectedCoinIds: ReadonlySet<string>,
-  boostPadCooldowns: ReadonlyMap<string, number> = new Map(),
+  boostPadCooldowns: ReadonlyMap<string, number> = EMPTY_COOLDOWNS,
+  target?: MutablePickupResult,
 ): {
   readonly coinIds: readonly string[];
   readonly boostPadIds: readonly string[];
 } {
-  const coinIds = CITY_COINS
-    .filter((coin) => !collectedCoinIds.has(coin.id) && distance2d(position, coin.position) <= COIN_PICKUP_RADIUS)
-    .map((coin) => coin.id);
-  const boostPadIds = CITY_BOOST_PADS
-    .filter((pad) => (boostPadCooldowns.get(pad.id) ?? 0) <= 0
-      && distance2d(position, pad.position) <= BOOST_PICKUP_RADIUS)
-    .map((pad) => pad.id);
-  return { coinIds, boostPadIds };
+  const coinIds = target?.coinIds ?? [];
+  const boostPadIds = target?.boostPadIds ?? [];
+  coinIds.length = 0;
+  boostPadIds.length = 0;
+  const coinRadiusSquared = COIN_PICKUP_RADIUS * COIN_PICKUP_RADIUS;
+  for (const coin of CITY_COINS) {
+    const dx = position[0] - coin.position[0];
+    const dz = position[1] - coin.position[1];
+    if (!collectedCoinIds.has(coin.id) && dx * dx + dz * dz <= coinRadiusSquared) {
+      coinIds.push(coin.id);
+    }
+  }
+  const boostRadiusSquared = BOOST_PICKUP_RADIUS * BOOST_PICKUP_RADIUS;
+  for (const pad of CITY_BOOST_PADS) {
+    const dx = position[0] - pad.position[0];
+    const dz = position[1] - pad.position[1];
+    if ((boostPadCooldowns.get(pad.id) ?? 0) <= 0 && dx * dx + dz * dz <= boostRadiusSquared) {
+      boostPadIds.push(pad.id);
+    }
+  }
+  return target ?? { coinIds, boostPadIds };
 }
 
 export class CityDrivePhysics {
@@ -181,11 +200,16 @@ export class CityDrivePhysics {
   private previousRemaining: number;
   private readonly collectedCoinIds = new Set<string>();
   private readonly boostPadCooldowns = new Map<string, number>();
+  private readonly pickupResult: MutablePickupResult = { coinIds: [], boostPadIds: [] };
   private lastSafePose: RecoveryPose;
 
   constructor(
     route: readonly CityPoint[],
-    initialPose?: { readonly position: CityPoint; readonly headingRadians: number },
+    initialPose?: {
+      readonly position: CityPoint;
+      readonly headingRadians: number;
+      readonly collectedCoinIds?: readonly string[];
+    },
   ) {
     if (route.length < 2) throw new RangeError("Drive physics requires a reachable route");
     this.route = route;
@@ -198,6 +222,7 @@ export class CityDrivePhysics {
     this.headingRadians = initial.headingRadians;
     this.previousRemaining = nearestRouteSample(initial.position, route).remainingDistance;
     this.lastSafePose = { position: initial.position, headingRadians: initial.headingRadians };
+    for (const id of initialPose?.collectedCoinIds ?? []) this.collectedCoinIds.add(id);
   }
 
   get snapshot(): CityCarSnapshot {
@@ -395,7 +420,12 @@ export class CityDrivePhysics {
       this.lastSafePose = { position: currentPosition, headingRadians: this.headingRadians };
     }
 
-    const pickups = detectCityPickups(currentPosition, this.collectedCoinIds, this.boostPadCooldowns);
+    const pickups = detectCityPickups(
+      currentPosition,
+      this.collectedCoinIds,
+      this.boostPadCooldowns,
+      this.pickupResult,
+    );
     for (const id of pickups.coinIds) this.collectedCoinIds.add(id);
     for (const id of pickups.boostPadIds) {
       this.boostPadCooldowns.set(id, 4);

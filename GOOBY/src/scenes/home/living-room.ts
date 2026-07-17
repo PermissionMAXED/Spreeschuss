@@ -76,6 +76,8 @@ export class LivingRoom extends HomeZoneScene {
     gardenDoor.position.set(4.18, 0, -3.02);
     this.doors.set("kitchen", kitchenDoor);
     this.doors.set("garden", gardenDoor);
+    this.registerEssentialTarget("door:kitchen", kitchenDoor, [-4.18, 1.42, -3], [1.65, 3.2, 0.65]);
+    this.registerEssentialTarget("door:garden", gardenDoor, [4.18, 1.42, -3], [1.65, 3.2, 0.65]);
 
     const plant = createProceduralAsset("city.tree");
     plant.name = "living-room:plant";
@@ -118,8 +120,8 @@ export class LivingRoom extends HomeZoneScene {
       this.toggleTelevision();
       return true;
     }
-    for (const [zone, door] of this.doors) {
-      if (this.hit(door, gesture.x, gesture.y)) {
+    for (const [zone] of this.doors) {
+      if (this.hitEssential(`door:${zone}`, gesture.x, gesture.y)) {
         this.navigateToZone(zone);
         return true;
       }

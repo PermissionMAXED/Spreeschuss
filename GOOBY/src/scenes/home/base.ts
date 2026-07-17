@@ -1,13 +1,20 @@
 import {
   AmbientLight,
+  Box3,
+  BoxGeometry,
   Color,
   DirectionalLight,
   Group,
+  Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   Raycaster,
+  Texture,
   Vector2,
-  type Mesh,
+  Vector3,
+  type Material,
   type Object3D,
+  type PerspectiveCamera,
 } from "three";
 import { RealClock, type Clock } from "../../core/contracts/clock";
 import type { AssetLoader } from "../../core/contracts/assets";
@@ -25,12 +32,18 @@ import { ProceduralGooby } from "../../gooby";
 import { createProceduralAsset } from "../../render/proc";
 import { ResourceTracker, type GameRenderer } from "../../render/renderer";
 import { CATALOG_BY_ID, COSMETIC_SLOTS, type CosmeticSlot } from "../../data/catalog";
-import { HOME_DECOR_CATALOG, HOME_GRID_SIZE, HOME_ZONE_BLUEPRINTS } from "../../data/home";
-import { createCatalogItemModel, createCosmeticModel } from "../shops/visuals";
+import { HOME_GRID_SIZE, HOME_ZONE_BLUEPRINTS } from "../../data/home";
 import {
+  createCatalogItemModel,
+  createCosmeticModel,
+  disposeObjectTree,
+} from "../shops/visuals";
+import {
+  findAvailableDecorPlacement,
   persistDecorPlacements,
   petGooby,
   removeDecorPlacement,
+  resolveDecorDefinition,
   restoreDecorPlacements,
   rotateDecorPlacement,
   upsertDecorPlacement,
@@ -38,6 +51,112 @@ import {
   type PlacementRequest,
   type PlacementValidation,
 } from "./state";
+
+export interface HomeViewport {
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface ScreenProjection {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+  readonly width: number;
+  readonly height: number;
+  readonly centerX: number;
+  readonly centerY: number;
+  readonly inFront: boolean;
+  readonly fullyVisible: boolean;
+}
+
+export interface EssentialInteractionTarget {
+  readonly id: string;
+  readonly visual: Object3D;
+  readonly hitTarget: Object3D;
+}
+
+export interface SelectedDecorPlacementRequest {
+  readonly x: number;
+  readonly z: number;
+  readonly quarterTurns?: 0 | 1 | 2 | 3;
+  readonly slotId?: string | null;
+}
+
+export function configureHomeCamera(
+  camera: PerspectiveCamera,
+  zone: HomeZoneId,
+  viewport: HomeViewport,
+): void {
+  const aspect = viewport.width / Math.max(1, viewport.height);
+  const blueprint = HOME_ZONE_BLUEPRINTS[zone];
+  const fov = aspect < 0.75 ? 52 : 36;
+  const verticalTangent = Math.tan(fov * Math.PI / 360);
+  const interactionPullback = 5.35 / Math.max(0.01, verticalTangent * aspect) + 1.9;
+  camera.aspect = aspect;
+  camera.position.set(
+    blueprint.camera.position[0],
+    blueprint.camera.position[1],
+    Math.max(blueprint.camera.position[2], interactionPullback),
+  );
+  camera.fov = fov;
+  camera.lookAt(...blueprint.camera.target);
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+}
+
+export function projectObjectToScreen(
+  object: Object3D,
+  camera: PerspectiveCamera,
+  viewport: HomeViewport,
+): ScreenProjection {
+  object.updateWorldMatrix(true, true);
+  camera.updateMatrixWorld(true);
+  const bounds = new Box3().setFromObject(object);
+  if (bounds.isEmpty()) {
+    return {
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      width: 0,
+      height: 0,
+      centerX: 0,
+      centerY: 0,
+      inFront: false,
+      fullyVisible: false,
+    };
+  }
+  const projected = [
+    new Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+    new Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+    new Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+    new Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+    new Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+    new Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+    new Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+    new Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+  ].map((corner) => corner.project(camera));
+  const xs = projected.map(({ x }) => (x + 1) * viewport.width / 2);
+  const ys = projected.map(({ y }) => (1 - y) * viewport.height / 2);
+  const left = Math.min(...xs);
+  const right = Math.max(...xs);
+  const top = Math.min(...ys);
+  const bottom = Math.max(...ys);
+  const inFront = projected.every(({ z }) => z >= -1 && z <= 1);
+  return {
+    left,
+    right,
+    top,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+    centerX: (left + right) / 2,
+    centerY: (top + bottom) / 2,
+    inFront,
+    fullyVisible: inFront && left >= 0 && right <= viewport.width && top >= 0 && bottom <= viewport.height,
+  };
+}
 
 export type HomeEvent =
   | { readonly type: "inventory:opened"; readonly items: Readonly<Record<string, number>> }
@@ -74,6 +193,9 @@ export abstract class HomeZoneScene implements GameScene {
   private placements: readonly DecorPlacement[];
   private readonly decorObjects = new Map<string, Object3D>();
   private readonly catalogCosmetics = new Map<CosmeticSlot, Object3D>();
+  private readonly dynamicObjects = new Set<Object3D>();
+  private readonly essentialTargets = new Map<string, EssentialInteractionTarget>();
+  private selectedDecor: { readonly decorId: string; readonly instanceId: string | null } | null = null;
   private complete = false;
   private disposed = false;
 
@@ -146,7 +268,73 @@ export abstract class HomeZoneScene implements GameScene {
   }
 
   protected trackDynamic(object: Object3D): void {
-    this.resources.trackTree(object);
+    this.dynamicObjects.add(object);
+  }
+
+  protected disposeDynamic(object: Object3D): void {
+    if (!this.dynamicObjects.delete(object)) return;
+    disposeObjectTree(object);
+  }
+
+  get dynamicResourceCount(): number {
+    const resources = new Set<unknown>();
+    for (const root of this.dynamicObjects) {
+      root.traverse((object) => {
+        const renderable = object as Object3D & {
+          geometry?: unknown;
+          material?: Material | Material[];
+        };
+        if (renderable.geometry) resources.add(renderable.geometry);
+        const materials = Array.isArray(renderable.material)
+          ? renderable.material
+          : renderable.material
+            ? [renderable.material]
+            : [];
+        for (const material of materials) {
+          resources.add(material);
+          for (const value of Object.values(material)) if (value instanceof Texture) resources.add(value);
+        }
+      });
+    }
+    return resources.size;
+  }
+
+  protected registerEssentialTarget(
+    id: string,
+    visual: Object3D,
+    center: readonly [x: number, y: number, z: number],
+    size: readonly [width: number, height: number, depth: number],
+  ): void {
+    this.unregisterEssentialTarget(id);
+    const material = new MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      colorWrite: false,
+    });
+    const hitTarget = new Mesh(new BoxGeometry(...size), material);
+    hitTarget.name = `essential-hit:${this.zoneId}:${id}`;
+    hitTarget.position.set(...center);
+    this.root.add(hitTarget);
+    if (this.complete) this.trackDynamic(hitTarget);
+    this.essentialTargets.set(id, { id, visual, hitTarget });
+  }
+
+  protected unregisterEssentialTarget(id: string): void {
+    const current = this.essentialTargets.get(id);
+    if (!current) return;
+    this.essentialTargets.delete(id);
+    if (this.dynamicObjects.has(current.hitTarget)) this.disposeDynamic(current.hitTarget);
+    else current.hitTarget.removeFromParent();
+  }
+
+  getEssentialInteractionTargets(): readonly EssentialInteractionTarget[] {
+    return [...this.essentialTargets.values()];
+  }
+
+  protected hitEssential(id: string, clientX: number, clientY: number): boolean {
+    const target = this.essentialTargets.get(id);
+    return !!target && (this.hit(target.hitTarget, clientX, clientY) || this.hit(target.visual, clientX, clientY));
   }
 
   protected material(color: number, roughness = 0.82): MeshStandardMaterial {
@@ -214,6 +402,7 @@ export abstract class HomeZoneScene implements GameScene {
   }
 
   handleGesture(gesture: Gesture): boolean {
+    if (this.handleZoneGesture(gesture)) return true;
     if (
       gesture.type === "press-move" &&
       Math.hypot(gesture.dx, gesture.dy) > 18 &&
@@ -230,13 +419,13 @@ export abstract class HomeZoneScene implements GameScene {
       this.react("poke");
       return true;
     }
-    return this.handleZoneGesture(gesture);
+    return false;
   }
 
   protected abstract handleZoneGesture(gesture: Gesture): boolean;
 
   placeDecor(request: PlacementRequest): PlacementValidation {
-    const result = upsertDecorPlacement(this.placements, request);
+    const result = upsertDecorPlacement(this.placements, request, this.currentSave()?.inventory);
     if (!result.validation.valid) return result.validation;
     this.placements = result.placements;
     this.persistDecor();
@@ -245,7 +434,7 @@ export abstract class HomeZoneScene implements GameScene {
   }
 
   rotateDecor(instanceId: string): PlacementValidation {
-    const result = rotateDecorPlacement(this.placements, instanceId);
+    const result = rotateDecorPlacement(this.placements, instanceId, this.currentSave()?.inventory);
     if (!result.validation.valid) return result.validation;
     this.placements = result.placements;
     this.persistDecor();
@@ -265,6 +454,96 @@ export abstract class HomeZoneScene implements GameScene {
     return this.placements;
   }
 
+  selectDecor(decorId: string): boolean {
+    const definition = resolveDecorDefinition(decorId);
+    const save = this.currentSave();
+    if (
+      !definition ||
+      !definition.allowedZones.includes(this.zoneId) ||
+      (definition.catalogItem && (!save || (save.inventory[decorId] ?? 0) <= 0))
+    ) {
+      this.selectedDecor = null;
+      return false;
+    }
+    this.selectedDecor = { decorId, instanceId: null };
+    return true;
+  }
+
+  selectPlacedDecor(instanceId: string): boolean {
+    const placement = this.placements.find((candidate) => candidate.instanceId === instanceId);
+    if (!placement || placement.zone !== this.zoneId) {
+      this.selectedDecor = null;
+      return false;
+    }
+    this.selectedDecor = { decorId: placement.decorId, instanceId };
+    return true;
+  }
+
+  getSelectedDecor(): Readonly<{ decorId: string; instanceId: string | null }> | null {
+    return this.selectedDecor;
+  }
+
+  private nextDecorInstanceId(decorId: string): string {
+    for (let index = 1; index <= 9_999; index += 1) {
+      const suffix = `-${index}`;
+      const candidate = `${decorId.slice(0, 64 - suffix.length)}${suffix}`;
+      if (!this.placements.some(({ instanceId }) => instanceId === candidate)) return candidate;
+    }
+    throw new Error(`No decor instance IDs remain for ${decorId}`);
+  }
+
+  placeSelectedDecor(request: SelectedDecorPlacementRequest): PlacementValidation {
+    const selected = this.selectedDecor;
+    if (!selected || selected.instanceId) return { valid: false, reason: "invalid-instance" };
+    const instanceId = this.nextDecorInstanceId(selected.decorId);
+    const validation = this.placeDecor({
+      ...request,
+      instanceId,
+      decorId: selected.decorId,
+      zone: this.zoneId,
+    });
+    if (validation.valid) this.selectedDecor = { ...selected, instanceId };
+    return validation;
+  }
+
+  moveDecor(
+    instanceId: string,
+    request: Omit<SelectedDecorPlacementRequest, "quarterTurns">,
+  ): PlacementValidation {
+    const current = this.placements.find((placement) => placement.instanceId === instanceId);
+    if (!current || current.zone !== this.zoneId) return { valid: false, reason: "invalid-instance" };
+    return this.placeDecor({
+      instanceId,
+      decorId: current.decorId,
+      zone: current.zone,
+      x: request.x,
+      z: request.z,
+      quarterTurns: current.quarterTurns,
+      slotId: request.slotId ?? null,
+    });
+  }
+
+  moveSelectedDecor(request: Omit<SelectedDecorPlacementRequest, "quarterTurns">): PlacementValidation {
+    const instanceId = this.selectedDecor?.instanceId;
+    return instanceId
+      ? this.moveDecor(instanceId, request)
+      : { valid: false, reason: "invalid-instance" };
+  }
+
+  rotateSelectedDecor(): PlacementValidation {
+    const instanceId = this.selectedDecor?.instanceId;
+    return instanceId
+      ? this.rotateDecor(instanceId)
+      : { valid: false, reason: "invalid-instance" };
+  }
+
+  removeSelectedDecor(): boolean {
+    const selected = this.selectedDecor;
+    if (!selected?.instanceId || !this.removeDecor(selected.instanceId)) return false;
+    this.selectedDecor = { decorId: selected.decorId, instanceId: null };
+    return true;
+  }
+
   placeCatalogItem(itemId: string): boolean {
     const save = this.currentSave();
     const item = CATALOG_BY_ID.get(itemId);
@@ -277,32 +556,49 @@ export abstract class HomeZoneScene implements GameScene {
       this.emit({ type: "toast", message: "That piece cannot be placed in this room." });
       return false;
     }
-    const count = Object.keys(save.inventory)
-      .filter((key) => key.startsWith(`__home.catalog.v1|${this.zoneId}|`) && key.endsWith(`|${itemId}`))
-      .length;
-    const instanceId = `${itemId}-${count + 1}`;
-    this.commit({
-      ...save,
-      inventory: {
-        ...save.inventory,
-        [`__home.catalog.v1|${this.zoneId}|${instanceId}|${itemId}`]: 1,
-      },
+    const placedCopies = this.placements.filter(({ decorId }) => decorId === itemId).length;
+    if (placedCopies >= (save.inventory[itemId] ?? 0)) {
+      this.emit({ type: "toast", message: "Every owned copy of that piece is already placed." });
+      return false;
+    }
+    if (!this.selectDecor(itemId)) return false;
+    const instanceId = this.nextDecorInstanceId(itemId);
+    const available = findAvailableDecorPlacement(
+      this.placements,
+      itemId,
+      this.zoneId,
+      instanceId,
+      save.inventory,
+    );
+    if (!available.valid) {
+      this.emit({ type: "toast", message: "There is no collision-free spot for that piece yet." });
+      return false;
+    }
+    const placed = this.placeDecor({
+      instanceId,
+      decorId: itemId,
+      zone: this.zoneId,
+      x: available.placement.gridX * HOME_GRID_SIZE,
+      z: available.placement.gridZ * HOME_GRID_SIZE,
+      quarterTurns: available.placement.quarterTurns,
+      slotId: available.placement.slotId,
     });
-    this.syncDecorObjects();
+    if (!placed.valid) return false;
+    this.selectedDecor = { decorId: itemId, instanceId };
     this.emit({ type: "toast", message: `${item.name} is now cozy in ${HOME_ZONE_BLUEPRINTS[this.zoneId].title}.` });
     return true;
   }
 
   equipCatalogCosmetics(equipped: Readonly<Partial<Record<CosmeticSlot, string>>>): void {
     for (const slot of COSMETIC_SLOTS) {
-      this.catalogCosmetics.get(slot)?.removeFromParent();
+      const previous = this.catalogCosmetics.get(slot);
+      if (previous) this.disposeDynamic(previous);
       this.catalogCosmetics.delete(slot);
       const itemId = equipped[slot];
       const item = itemId ? CATALOG_BY_ID.get(itemId) : null;
       if (item?.kind !== "cosmetic" || item.slot !== slot) continue;
       const object = createCosmeticModel(item);
       object.name = `equipped:${slot}:${item.id}`;
-      object.scale.setScalar(slot === "back" ? 0.68 : 0.58);
       this.gooby.getCosmeticSocket(slot).add(object);
       this.trackDynamic(object);
       this.catalogCosmetics.set(slot, object);
@@ -316,11 +612,14 @@ export abstract class HomeZoneScene implements GameScene {
   }
 
   private syncDecorObjects(): void {
-    for (const object of this.decorObjects.values()) object.removeFromParent();
+    for (const object of this.decorObjects.values()) this.disposeDynamic(object);
     this.decorObjects.clear();
     for (const placement of this.placements.filter(({ zone }) => zone === this.zoneId)) {
-      const definition = HOME_DECOR_CATALOG[placement.decorId];
-      const object = createProceduralAsset(definition.assetKey);
+      const definition = resolveDecorDefinition(placement.decorId);
+      if (!definition) continue;
+      const object = definition.catalogItem
+        ? createCatalogItemModel(definition.catalogItem)
+        : createProceduralAsset(definition.assetKey!);
       object.name = `decor:${placement.instanceId}`;
       object.position.set(
         placement.gridX * HOME_GRID_SIZE,
@@ -332,24 +631,6 @@ export abstract class HomeZoneScene implements GameScene {
       this.trackDynamic(object);
       this.decorObjects.set(placement.instanceId, object);
     }
-    const save = this.currentSave();
-    if (!save) return;
-    const catalogEntries = Object.entries(save.inventory)
-      .filter(([key, value]) => key.startsWith(`__home.catalog.v1|${this.zoneId}|`) && value === 1);
-    catalogEntries.forEach(([key], index) => {
-      const [, zone, instanceId, itemId] = key.split("|");
-      const item = itemId ? CATALOG_BY_ID.get(itemId) : null;
-      if (zone !== this.zoneId || !instanceId || item?.kind !== "furniture" || !item.zones.includes(this.zoneId)) {
-        return;
-      }
-      const object = createCatalogItemModel(item);
-      object.name = `catalog-decor:${instanceId}`;
-      object.position.set(-2.8 + (index % 3) * 2.8, 0.05, 1.55 + Math.floor(index / 3) * 1.15);
-      object.scale.setScalar(item.footprint === "large" ? 0.72 : item.footprint === "medium" ? 0.62 : 0.52);
-      this.root.add(object);
-      this.trackDynamic(object);
-      this.decorObjects.set(`catalog:${instanceId}`, object);
-    });
   }
 
   enter(context: SceneContext): void {
@@ -374,16 +655,7 @@ export abstract class HomeZoneScene implements GameScene {
   }
 
   private frameCamera(aspect = this.gameRenderer.camera.aspect): void {
-    const blueprint = HOME_ZONE_BLUEPRINTS[this.zoneId];
-    const portraitPullback = Math.max(0, 0.72 - aspect) * 7.5;
-    this.gameRenderer.camera.position.set(
-      blueprint.camera.position[0],
-      blueprint.camera.position[1],
-      blueprint.camera.position[2] + portraitPullback,
-    );
-    this.gameRenderer.camera.fov = aspect < 0.7 ? 39 : 36;
-    this.gameRenderer.camera.lookAt(...blueprint.camera.target);
-    this.gameRenderer.camera.updateProjectionMatrix();
+    configureHomeCamera(this.gameRenderer.camera, this.zoneId, { width: aspect, height: 1 });
   }
 
   exit(): void {
@@ -393,8 +665,10 @@ export abstract class HomeZoneScene implements GameScene {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const object of [...this.dynamicObjects]) this.disposeDynamic(object);
     this.catalogCosmetics.clear();
     this.decorObjects.clear();
+    this.essentialTargets.clear();
     this.resources.dispose();
   }
 

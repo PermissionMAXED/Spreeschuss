@@ -67,13 +67,15 @@ export class Bedroom extends HomeZoneScene {
     const bathroomDoor = makeDoor(0x8ebfbd, "right");
     bathroomDoor.name = "door:bathroom";
     bathroomDoor.position.set(4.22, 0, 0.95);
-    bathroomDoor.rotation.y = -Math.PI / 2;
+    bathroomDoor.rotation.y = -0.18;
     const livingDoor = makeDoor(0xe3a074);
     livingDoor.name = "door:living-room";
     livingDoor.position.set(-4.22, 0, 1.15);
-    livingDoor.rotation.y = Math.PI / 2;
+    livingDoor.rotation.y = 0.18;
     this.doors.set("bathroom", bathroomDoor);
     this.doors.set("living-room", livingDoor);
+    this.registerEssentialTarget("door:bathroom", bathroomDoor, [4.22, 1.42, 0.95], [1.65, 3.2, 0.7]);
+    this.registerEssentialTarget("door:living-room", livingDoor, [-4.22, 1.42, 1.15], [1.65, 3.2, 0.7]);
 
     this.gooby.root.position.set(0.25, 0.06, 0.6);
     this.gooby.root.scale.setScalar(0.96);
@@ -157,8 +159,8 @@ export class Bedroom extends HomeZoneScene {
 
   protected override handleZoneGesture(gesture: Gesture): boolean {
     if (gesture.type !== "tap" && gesture.type !== "double-tap") return false;
-    for (const [zone, door] of this.doors) {
-      if (this.hit(door, gesture.x, gesture.y)) {
+    for (const [zone] of this.doors) {
+      if (this.hitEssential(`door:${zone}`, gesture.x, gesture.y)) {
         this.navigateToZone(zone);
         return true;
       }

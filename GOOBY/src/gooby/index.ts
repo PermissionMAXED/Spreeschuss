@@ -10,16 +10,19 @@ import {
   TorusGeometry,
 } from "three";
 import type { GoobyActor, GoobyMood, GoobyReaction } from "../core/contracts/gooby";
-import type { AssetKey, AssetLoader } from "../core/contracts/assets";
+import type { AssetKey, AssetLoader, LoadedAsset } from "../core/contracts/assets";
 import type { Needs } from "../core/contracts/simulation";
 import { deriveCareMood, type CareMood } from "../data/emotions";
 import { FallbackAssetLoader } from "../render/proc";
 import type { BufferGeometry, Material, Vector3 } from "three";
+import {
+  COSMETIC_ATTACHMENTS,
+  COSMETIC_SOCKETS,
+  applyCosmeticModelAttachment,
+  type CosmeticSocket,
+} from "./attachments";
 
 export const CHARACTER_TRIANGLE_BUDGET = 12_000;
-export const COSMETIC_SOCKETS = ["head", "ears", "neck", "back"] as const;
-
-export type CosmeticSocket = (typeof COSMETIC_SOCKETS)[number];
 export type CharacterReaction =
   | GoobyReaction
   | "bathe"
@@ -316,24 +319,24 @@ export class ProceduralGooby implements GoobyActor {
     tailShape.scale.set(0.4, 0.4, 0.4);
     this.tail.add(tailShape);
 
-    const headSocket = new Group();
-    headSocket.name = "Gooby.socket.head";
-    headSocket.position.set(0, 0.68, 0);
-    const earsSocket = new Group();
-    earsSocket.name = "Gooby.socket.ears";
-    earsSocket.position.set(0, 4.42, 0.02);
-    const neckSocket = new Group();
-    neckSocket.name = "Gooby.socket.neck";
-    neckSocket.position.set(0, 2.48, 0.32);
-    const backSocket = new Group();
-    backSocket.name = "Gooby.socket.back";
-    backSocket.position.set(0, 1.92, -0.9);
-    this.head.add(headSocket);
+    const sockets = Object.fromEntries(COSMETIC_SOCKETS.map((socket) => {
+      const descriptor = COSMETIC_ATTACHMENTS[socket];
+      const anchor = new Group();
+      anchor.name = `Gooby.socket.${socket}`;
+      anchor.position.fromArray(descriptor.anchorPosition);
+      anchor.rotation.set(
+        descriptor.anchorRotation[0],
+        descriptor.anchorRotation[1],
+        descriptor.anchorRotation[2],
+      );
+      (descriptor.parent === "head" ? this.head : this.rig).add(anchor);
+      return [socket, anchor];
+    })) as Record<CosmeticSocket, Group>;
     this.cosmeticSlots = {
-      head: this.createCosmeticSlot(headSocket),
-      ears: this.createCosmeticSlot(earsSocket),
-      neck: this.createCosmeticSlot(neckSocket),
-      back: this.createCosmeticSlot(backSocket),
+      head: this.createCosmeticSlot(sockets.head),
+      ears: this.createCosmeticSlot(sockets.ears),
+      neck: this.createCosmeticSlot(sockets.neck),
+      back: this.createCosmeticSlot(sockets.back),
     };
 
     this.head.add(
@@ -362,9 +365,6 @@ export class ProceduralGooby implements GoobyActor {
       footRight,
       padLeft,
       padRight,
-      earsSocket,
-      neckSocket,
-      backSocket,
     );
 
     const triangles = countCharacterTriangles(this.root);
@@ -763,7 +763,12 @@ export class ProceduralGooby implements GoobyActor {
     if (this.disposed) return false;
     const slot = this.cosmeticSlots[socket];
     const generation = ++slot.generation;
-    const loaded = await this.assetLoader.load(key);
+    let loaded: LoadedAsset;
+    try {
+      loaded = await this.assetLoader.load(key);
+    } catch {
+      return false;
+    }
     if (!(loaded.value instanceof Object3D)) {
       if (loaded.value instanceof Texture) loaded.value.dispose();
       return false;
@@ -776,6 +781,7 @@ export class ProceduralGooby implements GoobyActor {
     slot.object = loaded.value;
     slot.key = key;
     loaded.value.name = `Gooby.cosmetic.${socket}.${key}`;
+    applyCosmeticModelAttachment(socket, loaded.value);
     collectTreeResources(loaded.value, slot.resources);
     slot.anchor.add(loaded.value);
     return true;
@@ -807,3 +813,14 @@ export class ProceduralGooby implements GoobyActor {
     this.root.clear();
   }
 }
+
+export {
+  COSMETIC_ATTACHMENTS,
+  COSMETIC_SOCKETS,
+  applyCosmeticModelAttachment,
+};
+export type {
+  CosmeticAttachmentDescriptor,
+  CosmeticAttachmentParent,
+  CosmeticSocket,
+} from "./attachments";

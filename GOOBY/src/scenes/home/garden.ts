@@ -50,6 +50,12 @@ export class Garden extends HomeZoneScene {
       carrot.rotation.z = Math.PI;
       carrot.scale.setScalar(0.72);
       this.carrots.push(carrot);
+      this.registerEssentialTarget(
+        `carrot:${index + 1}`,
+        carrot,
+        [-3.35 + index * 0.62, 0.82, -1.75 + (index % 2) * 0.2],
+        [1.45, 1.5, 0.9],
+      );
     }
 
     for (let index = 0; index < 4; index += 1) {
@@ -85,12 +91,19 @@ export class Garden extends HomeZoneScene {
       emblem.scale.setScalar(0.58);
       sign.add(emblem);
       this.signs.set(descriptor.game, sign);
+      this.registerEssentialTarget(
+        `sign:${descriptor.game}`,
+        sign,
+        [2.45 + (index % 2) * 1.25, 1.2, -0.2 + index * 1.05],
+        [1.55, 2.65, 0.8],
+      );
     });
 
     this.livingDoor = makeDoor(0xe3a074, "right");
     this.livingDoor.name = "door:living-room";
     this.livingDoor.position.set(-4.35, 0, 1.65);
-    this.livingDoor.rotation.y = Math.PI / 2;
+    this.livingDoor.rotation.y = 0.18;
+    this.registerEssentialTarget("door:living-room", this.livingDoor, [-4.35, 1.42, 1.65], [1.65, 3.2, 0.7]);
 
     const flowerColors = [0xf2a4b5, 0xf6d16d, 0xa6b8ec, 0xf1a879];
     for (let index = 0; index < 14; index += 1) {
@@ -154,18 +167,18 @@ export class Garden extends HomeZoneScene {
 
   protected override handleZoneGesture(gesture: Gesture): boolean {
     if (gesture.type !== "tap" && gesture.type !== "double-tap") return false;
-    if (this.hit(this.livingDoor, gesture.x, gesture.y)) {
+    if (this.hitEssential("door:living-room", gesture.x, gesture.y)) {
       this.navigateToZone("living-room");
       return true;
     }
-    for (const carrot of this.carrots) {
-      if (carrot.visible && this.hit(carrot, gesture.x, gesture.y)) {
+    for (const [index, carrot] of this.carrots.entries()) {
+      if (carrot.visible && this.hitEssential(`carrot:${index + 1}`, gesture.x, gesture.y)) {
         this.harvest();
         return true;
       }
     }
-    for (const [game, sign] of this.signs) {
-      if (this.hit(sign, gesture.x, gesture.y)) {
+    for (const [game] of this.signs) {
+      if (this.hitEssential(`sign:${game}`, gesture.x, gesture.y)) {
         this.openMinigameSign(game);
         return true;
       }

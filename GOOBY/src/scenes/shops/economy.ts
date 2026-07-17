@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Clock } from "../../core/contracts/clock";
 import { grantReward, spendCoins } from "../../core/contracts/economy";
 import type { SavePort } from "../../core/contracts/platform";
+import type { ShopId } from "../../core/contracts/scenes";
 import {
   commitSave,
   loadSave,
@@ -16,6 +17,72 @@ import {
 } from "../../data/catalog";
 
 const PURCHASE_RECEIPT_PREFIX = "__shop_purchase__";
+const FALLBACK_REQUEST_STATE_KEY = Symbol.for("gooby.shop.purchase-request-state");
+const MAX_COMMIT_ATTEMPTS = 4;
+
+interface FallbackRequestState {
+  entropy: string;
+  sequence: number;
+}
+
+function createFallbackEntropy(): string {
+  return Array.from({ length: 4 }, () =>
+    Math.floor(Math.random() * 0x1_0000_0000).toString(36).padStart(7, "0")).join("");
+}
+
+function isFallbackRequestState(value: unknown): value is FallbackRequestState {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<FallbackRequestState>;
+  return typeof candidate.entropy === "string" &&
+    candidate.entropy.length === 28 &&
+    Number.isSafeInteger(candidate.sequence) &&
+    (candidate.sequence ?? -1) >= 0;
+}
+
+function fallbackRequestState(): FallbackRequestState {
+  const existing = Reflect.get(globalThis, FALLBACK_REQUEST_STATE_KEY) as unknown;
+  if (isFallbackRequestState(existing)) return existing;
+  const state: FallbackRequestState = {
+    entropy: createFallbackEntropy(),
+    sequence: 0,
+  };
+  Object.defineProperty(globalThis, FALLBACK_REQUEST_STATE_KEY, {
+    configurable: false,
+    enumerable: false,
+    value: state,
+    writable: false,
+  });
+  return state;
+}
+
+function nextFallbackRequestId(shopId: ShopId): string {
+  const state = fallbackRequestState();
+  state.sequence += 1;
+  if (!Number.isSafeInteger(state.sequence)) {
+    state.entropy = createFallbackEntropy();
+    state.sequence = 1;
+  }
+  return `fallback-${shopId}-${state.entropy}-${state.sequence.toString(36).padStart(8, "0")}`;
+}
+
+/**
+ * Scene-scoped source backed by one page-global fallback sequence. The random
+ * session entropy separates full reloads; the sequence separates every scene
+ * instance in the current page, without depending on wall-clock time.
+ */
+export class PurchaseRequestIdSource {
+  next(shopId: ShopId): string {
+    const crypto = globalThis.crypto;
+    if (crypto && typeof crypto.randomUUID === "function") {
+      try {
+        return crypto.randomUUID();
+      } catch {
+        // Restricted webviews can expose crypto while rejecting randomUUID.
+      }
+    }
+    return nextFallbackRequestId(shopId);
+  }
+}
 
 export const PurchaseRequestSchema = z
   .object({
@@ -140,18 +207,34 @@ export interface ConsumeFoodResult {
   readonly status: "consumed" | "not-food" | "not-owned" | "unknown-item";
   readonly state: SaveState;
   readonly item?: FoodCatalogItem;
+  readonly quantityBefore: number;
+  readonly quantityAfter: number;
 }
 
 export function consumeFood(state: SaveState, itemId: string): ConsumeFoodResult {
   const safeState = SaveStateSchema.parse(state);
   const item = CATALOG_BY_ID.get(itemId);
-  if (!item) return { status: "unknown-item", state: safeState };
-  if (item.kind !== "food") return { status: "not-food", state: safeState };
+  if (!item) {
+    return { status: "unknown-item", state: safeState, quantityBefore: 0, quantityAfter: 0 };
+  }
+  if (item.kind !== "food") {
+    return { status: "not-food", state: safeState, quantityBefore: 0, quantityAfter: 0 };
+  }
   const count = safeState.inventory[item.id] ?? 0;
-  if (count <= 0) return { status: "not-owned", state: safeState, item };
+  if (count <= 0) {
+    return {
+      status: "not-owned",
+      state: safeState,
+      item,
+      quantityBefore: 0,
+      quantityAfter: 0,
+    };
+  }
   return {
     status: "consumed",
     item,
+    quantityBefore: count,
+    quantityAfter: count - 1,
     state: SaveStateSchema.parse({
       ...safeState,
       simulation: applyNeedDelta(safeState.simulation, "hunger", item.hunger),
@@ -178,20 +261,27 @@ export class ShopPurchaseService {
   ) {}
 
   purchase(request: PurchaseRequest): Promise<CommittedPurchaseResult> {
-    return new Promise<CommittedPurchaseResult>((resolve, reject) => {
-      this.queue = this.queue
-        .then(async () => {
-          const loaded = await loadSave(this.save, this.clock.now());
-          const result = purchaseCatalogItem(loaded.state, request);
-          const revision =
-            result.status === "purchased"
-              ? await commitSave(this.save, loaded.revision, result.state)
-              : loaded.revision;
-          resolve({ ...result, revision });
-        })
-        .catch((error: unknown) => {
-          reject(error instanceof Error ? error : new Error("Purchase could not be saved"));
-        });
-    });
+    const operation = this.queue.then(() => this.commitPurchase(request));
+    this.queue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  private async commitPurchase(request: PurchaseRequest): Promise<CommittedPurchaseResult> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < MAX_COMMIT_ATTEMPTS; attempt += 1) {
+      const loaded = await loadSave(this.save, this.clock.now());
+      const result = purchaseCatalogItem(loaded.state, request);
+      if (result.status !== "purchased") return { ...result, revision: loaded.revision };
+      try {
+        const revision = await commitSave(this.save, loaded.revision, result.state);
+        return { ...result, revision };
+      } catch (error: unknown) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Purchase could not be saved");
   }
 }

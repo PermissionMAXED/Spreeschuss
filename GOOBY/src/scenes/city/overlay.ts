@@ -6,9 +6,9 @@ import type { RecoveryMode } from "./simulation";
 import { CITY_MARKER_VISUALS } from "./world";
 
 export interface EdgePointerLayout {
-  readonly x: number;
-  readonly y: number;
-  readonly angleRadians: number;
+  x: number;
+  y: number;
+  angleRadians: number;
 }
 
 export interface CityOverlayMetrics {
@@ -37,6 +37,7 @@ export function computeEdgePointer(
   normalizedX: number,
   normalizedY: number,
   behindCamera = false,
+  target?: EdgePointerLayout,
 ): EdgePointerLayout {
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);
@@ -59,11 +60,11 @@ export function computeEdgePointer(
     maxX / Math.max(0.001, Math.abs(directionX)),
     Math.max(45, maxY) / Math.max(0.001, Math.abs(directionY)),
   );
-  return {
-    x: Math.max(insetX, Math.min(safeWidth - insetX, centerX + directionX * scale)),
-    y: Math.max(insetTop, Math.min(safeHeight - insetBottom, centerY + directionY * scale)),
-    angleRadians: Math.atan2(directionY, directionX) + Math.PI / 2,
-  };
+  const result = target ?? { x: 0, y: 0, angleRadians: 0 };
+  result.x = Math.max(insetX, Math.min(safeWidth - insetX, centerX + directionX * scale));
+  result.y = Math.max(insetTop, Math.min(safeHeight - insetBottom, centerY + directionY * scale));
+  result.angleRadians = Math.atan2(directionY, directionX) + Math.PI / 2;
+  return result;
 }
 
 function requiredElement<T extends Element>(root: ParentNode, selector: string): T {
@@ -224,9 +225,9 @@ export class CityDriveOverlay {
         <button class="city-secondary" data-action="quick-return" data-testid="quick-return" hidden>Quick trip home</button>
       </section>
       <div class="city-controls" aria-label="Driving controls" hidden>
-        <button class="city-control" data-control="steer-left" aria-label="Hold to steer left">◀<span>HOLD LEFT</span></button>
-        <button class="city-control" data-control="brake" aria-label="Hold brake">BRAKE<span>HOLD</span></button>
-        <button class="city-control" data-control="steer-right" aria-label="Hold to steer right">▶<span>HOLD RIGHT</span></button>
+        <button class="city-control" data-control="steer-left" aria-label="Hold to steer left">◀<span>HOLD · A / ←</span></button>
+        <button class="city-control" data-control="brake" aria-label="Hold brake">BRAKE<span>SPACE · S / ↓</span></button>
+        <button class="city-control" data-control="steer-right" aria-label="Hold to steer right">▶<span>HOLD · D / →</span></button>
       </div>
       <div class="city-drive-status" aria-live="polite">
         <span>● <b data-coins>0</b></span><span data-boost></span><span data-recovery></span>
@@ -279,6 +280,7 @@ export class CityDriveOverlay {
 
   render(state: CityDriveState, metrics: CityOverlayMetrics): void {
     const driving = state.phase === "driving-outbound" || state.phase === "driving-home";
+    this.pointerControls.setEnabled(driving);
     this.destinationBoard.hidden = state.phase !== "destination-board" && state.phase !== "depart-ready";
     this.arrivedBoard.hidden = state.phase !== "arrived";
     this.returnBoard.hidden = state.phase !== "return-board";

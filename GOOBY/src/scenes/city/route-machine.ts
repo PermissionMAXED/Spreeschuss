@@ -13,6 +13,12 @@ import {
   distance2d,
   type CityPoint,
 } from "../../data/city";
+import {
+  createSafeBoardTravelSnapshot,
+  parseCityTravelSnapshot,
+  type CitySafeCarPose,
+  type CityTravelSnapshot,
+} from "./travel-snapshot";
 
 const PARKED_CONTROLS: DriveControls = {
   steering: 0,
@@ -45,6 +51,8 @@ export const CITY_DESTINATION_MARKERS: Readonly<Record<ShopId, DestinationMarker
 export class CityRouteMachine implements CityRouteController {
   private current: CityDriveState = { phase: "destination-board", car: "parked", selected: null };
   private readonly visited: Set<ShopId>;
+  private latestSnapshot: CityTravelSnapshot | null;
+  private tripReturnRequired = false;
   private lastSafePose: {
     position: readonly [number, number, number];
     headingRadians: number;
@@ -53,8 +61,12 @@ export class CityRouteMachine implements CityRouteController {
     headingRadians: CITY_GARAGE_HEADING,
   };
 
-  constructor(visited: Iterable<ShopId> = []) {
+  constructor(visited: Iterable<ShopId> = [], persistedSnapshot?: unknown) {
     this.visited = new Set(visited);
+    this.latestSnapshot = persistedSnapshot === undefined
+      ? null
+      : parseCityTravelSnapshot(persistedSnapshot, this.visited);
+    if (this.latestSnapshot) this.restore(this.latestSnapshot);
   }
 
   get state(): CityDriveState {
@@ -67,6 +79,10 @@ export class CityRouteMachine implements CityRouteController {
       : null;
   }
 
+  get restoredTravelSnapshot(): CityTravelSnapshot | null {
+    return this.latestSnapshot;
+  }
+
   hasVisited(shop: ShopId): boolean {
     return this.visited.has(shop);
   }
@@ -75,10 +91,40 @@ export class CityRouteMachine implements CityRouteController {
     return [...this.visited];
   }
 
+  createTravelSnapshot(
+    safeCarPose: CitySafeCarPose,
+    collectedCoinIds: readonly string[],
+  ): CityTravelSnapshot {
+    const state = this.current;
+    const candidate: CityTravelSnapshot = {
+      phase: state.phase,
+      destination: state.phase === "depart-ready"
+        || state.phase === "driving-outbound"
+        || state.phase === "arrived"
+        ? state.selected
+        : null,
+      visitedShop: state.phase === "return-board" || state.phase === "driving-home"
+        ? state.visited
+        : null,
+      returnRequired: state.phase === "destination-board" ? false : this.tripReturnRequired,
+      safeCarPose: state.phase === "destination-board" || state.phase === "depart-ready"
+        ? {
+            position: [CITY_GARAGE_POSITION[0], CITY_GARAGE_POSITION[1]],
+            headingRadians: CITY_GARAGE_HEADING,
+          }
+        : safeCarPose,
+      collectedRouteState: { coinIds: [...collectedCoinIds] },
+    };
+    this.latestSnapshot = parseCityTravelSnapshot(candidate, this.visited)
+      ?? createSafeBoardTravelSnapshot();
+    return this.latestSnapshot;
+  }
+
   selectDestination(shop: ShopId): void {
     if (this.current.phase !== "destination-board" && this.current.phase !== "depart-ready") {
       throw new Error("Destinations can only be selected while the car is parked at the destination board");
     }
+    this.tripReturnRequired = !this.visited.has(shop);
     this.current = { phase: "depart-ready", car: "parked", selected: shop };
   }
 
@@ -127,13 +173,12 @@ export class CityRouteMachine implements CityRouteController {
 
   openReturnBoard(): void {
     if (this.current.phase !== "arrived") throw new Error("Return board is available after a shop visit");
-    const firstVisit = !this.visited.has(this.current.selected);
     this.visited.add(this.current.selected);
     this.current = {
       phase: "return-board",
       car: "parked",
       visited: this.current.selected,
-      returnRequired: firstVisit,
+      returnRequired: this.tripReturnRequired,
     };
   }
 
@@ -151,12 +196,14 @@ export class CityRouteMachine implements CityRouteController {
     if (this.current.phase !== "return-board") throw new Error("Quick return is only available from the return board");
     if (this.current.returnRequired) throw new Error("The first visit requires the return drive");
     this.current = { phase: "destination-board", car: "parked", selected: null };
+    this.tripReturnRequired = false;
     this.resetSafePoseToGarage();
   }
 
   arriveHome(): void {
     if (this.current.phase !== "driving-home") throw new Error("Home arrival requires an active return drive");
     this.current = { phase: "destination-board", car: "parked", selected: null };
+    this.tripReturnRequired = false;
     this.resetSafePoseToGarage();
   }
 
@@ -175,6 +222,70 @@ export class CityRouteMachine implements CityRouteController {
     this.lastSafePose = { position, headingRadians };
   }
 
+  private restore(snapshot: CityTravelSnapshot): void {
+    this.tripReturnRequired = snapshot.returnRequired;
+    this.lastSafePose = {
+      position: [
+        snapshot.safeCarPose.position[0],
+        0.35,
+        snapshot.safeCarPose.position[1],
+      ],
+      headingRadians: snapshot.safeCarPose.headingRadians,
+    };
+    switch (snapshot.phase) {
+      case "destination-board":
+        this.current = { phase: "destination-board", car: "parked", selected: null };
+        return;
+      case "depart-ready":
+        this.current = {
+          phase: "depart-ready",
+          car: "parked",
+          selected: snapshot.destination as ShopId,
+        };
+        return;
+      case "driving-outbound": {
+        const selected = snapshot.destination as ShopId;
+        this.current = {
+          phase: "driving-outbound",
+          car: "auto-throttle",
+          selected,
+          controls: PARKED_CONTROLS,
+          marker: CITY_DESTINATION_MARKERS[selected],
+        };
+        return;
+      }
+      case "arrived":
+        this.current = {
+          phase: "arrived",
+          car: "parked",
+          selected: snapshot.destination as ShopId,
+          canEnter: true,
+        };
+        return;
+      case "return-board": {
+        const visited = snapshot.visitedShop as ShopId;
+        this.visited.add(visited);
+        this.current = {
+          phase: "return-board",
+          car: "parked",
+          visited,
+          returnRequired: snapshot.returnRequired,
+        };
+        return;
+      }
+      case "driving-home": {
+        const visited = snapshot.visitedShop as ShopId;
+        this.visited.add(visited);
+        this.current = {
+          phase: "driving-home",
+          car: "auto-throttle",
+          visited,
+          controls: PARKED_CONTROLS,
+        };
+      }
+    }
+  }
+
   private resetSafePoseToGarage(): void {
     this.lastSafePose = {
       position: [CITY_GARAGE_POSITION[0], 0.35, CITY_GARAGE_POSITION[1]],
@@ -185,6 +296,6 @@ export class CityRouteMachine implements CityRouteController {
 
 export const CITY_DRIVE_STUB = {
   title: "Gooby City",
-  controls: "Press and hold left/right steering; press and hold brake to slow auto-throttle.",
+  controls: "Hold A/D or left/right arrows to steer; hold Space, S, down arrow, or the brake button to slow auto-throttle.",
   destinationMarkers: CITY_DESTINATION_MARKERS,
 } as const;

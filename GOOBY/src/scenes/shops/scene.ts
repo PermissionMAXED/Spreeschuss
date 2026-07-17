@@ -17,11 +17,17 @@ import type { SaveState } from "../../core/contracts/save";
 import { ProceduralGooby } from "../../gooby";
 import type { GameRenderer } from "../../render/renderer";
 import {
+  getCatalogOwnershipMetadata,
   SHOP_CATALOGS,
   type CatalogItem,
   type CosmeticSlot,
 } from "../../data/catalog";
-import { purchaseCatalogItem, type PurchaseRequest, type PurchaseResult } from "./economy";
+import {
+  purchaseCatalogItem,
+  PurchaseRequestIdSource,
+  type PurchaseRequest,
+  type PurchaseResult,
+} from "./economy";
 import {
   consumeCityShopArrival,
   type CityShopArrival,
@@ -48,7 +54,7 @@ interface ShopTheme {
 
 const SHOP_THEMES: Readonly<Record<ShopId, ShopTheme>> = {
   "carrot-market": {
-    title: "Grocery",
+    title: "Carrot Market",
     subtitle: "Fresh bites for happy bellies",
     wall: 0xffd99a,
     floor: 0xc78d5d,
@@ -56,7 +62,7 @@ const SHOP_THEMES: Readonly<Record<ShopId, ShopTheme>> = {
     sky: 0xf7c870,
   },
   "cloud-boutique": {
-    title: "Furniture & Decor",
+    title: "Cloud Boutique",
     subtitle: "Cozy pieces for every room",
     wall: 0xcbd7b5,
     floor: 0xa47d60,
@@ -64,8 +70,8 @@ const SHOP_THEMES: Readonly<Record<ShopId, ShopTheme>> = {
     sky: 0xaec4a1,
   },
   "fluff-salon": {
-    title: "Boutique",
-    subtitle: "Try a look, keep what feels you",
+    title: "Fluff Salon",
+    subtitle: "Cosmetics to try before you buy",
     wall: 0xe2c7df,
     floor: 0xb494aa,
     fixture: 0x8a7291,
@@ -140,6 +146,7 @@ export class WalkableShopScene implements GameScene {
   private readonly tryOnSession: CosmeticTryOnSession | null;
   private readonly tryOnModels = new Group();
   private readonly arrival: CityShopArrival;
+  private readonly requestIds = new PurchaseRequestIdSource();
   private overlay: HTMLElement | null = null;
   private style: HTMLStyleElement | null = null;
   private selected: CatalogItem | null = null;
@@ -147,7 +154,6 @@ export class WalkableShopScene implements GameScene {
   private elapsed = 0;
   private walkX = 0;
   private walkY = 0;
-  private requestCounter = 0;
   private pointerStart: Readonly<{ x: number; y: number }> | null = null;
   private entered = false;
   private disposed = false;
@@ -415,6 +421,7 @@ export class WalkableShopScene implements GameScene {
       button.addEventListener("click", () => this.inspectItem(item.id));
       return button;
     }));
+    this.refreshCatalogMetadata();
     this.overlay.querySelector('[data-shop-action="town"]')?.addEventListener("click", () => {
       void this.leaveForTown();
     });
@@ -445,8 +452,10 @@ export class WalkableShopScene implements GameScene {
     const buy = panel.querySelector<HTMLButtonElement>('[data-shop-action="buy"]');
     if (heading) heading.textContent = item.name;
     if (description) description.textContent = item.description;
+    const ownership = getCatalogOwnershipMetadata(item, this.dependencies.getState().inventory);
     if (meta) {
       const details = [`${item.price} coins`, item.rarity, `level ${item.levelRequired}`];
+      details.push(`Owned: ${ownership.quantity}`, ownership.stackable ? "Stackable" : "Single ownership");
       if (item.kind === "food") details.push(`hunger +${item.hunger}`, `XP +${item.xp}`);
       if (item.kind === "furniture") details.push(item.zones.join(" · "));
       if (item.kind === "cosmetic") details.push(item.slot);
@@ -457,21 +466,36 @@ export class WalkableShopScene implements GameScene {
       }));
     }
     if (buy) {
-      const state = this.dependencies.getState();
-      const owned = !item.stackable && (state.inventory[item.id] ?? 0) > 0;
+      const owned = !item.stackable && ownership.owned;
       buy.textContent = owned ? "Owned" : `Buy · ${item.price}`;
       buy.disabled = owned;
+    }
+    this.refreshCatalogMetadata();
+  }
+
+  private refreshCatalogMetadata(): void {
+    if (!this.overlay) return;
+    const inventory = this.dependencies.getState().inventory;
+    for (const item of SHOP_CATALOGS[this.shopId]) {
+      const button = this.overlay.querySelector<HTMLButtonElement>(`[data-shop-item="${item.id}"]`);
+      if (!button) continue;
+      const metadata = getCatalogOwnershipMetadata(item, inventory);
+      button.dataset.owned = String(metadata.owned);
+      button.dataset.quantity = String(metadata.quantity);
+      button.dataset.stackable = String(metadata.stackable);
+      button.setAttribute(
+        "aria-label",
+        `${metadata.accessibilityLabel} ${item.price} coins. Requires level ${item.levelRequired}.`,
+      );
     }
   }
 
   private async purchaseSelected(): Promise<void> {
     const item = this.selected;
     if (!item) return;
-    this.requestCounter += 1;
-    const fallbackId = `${this.shopId.replaceAll("-", "")}-${this.requestCounter.toString().padStart(8, "0")}`;
     const request: PurchaseRequest = {
       itemId: item.id,
-      requestId: globalThis.crypto?.randomUUID?.() ?? fallbackId,
+      requestId: this.requestIds.next(this.shopId),
     };
     const purchase = this.dependencies.purchase ?? ((value: PurchaseRequest) =>
       purchaseCatalogItem(this.dependencies.getState(), value));

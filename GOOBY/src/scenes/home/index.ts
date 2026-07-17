@@ -53,7 +53,18 @@ export function createHomeZone(
 }
 
 export { Bathroom, Bedroom, Garden, Kitchen, LivingRoom };
-export type { HomeEvent, HomeSceneOptions } from "./base";
+export {
+  configureHomeCamera,
+  projectObjectToScreen,
+} from "./base";
+export type {
+  EssentialInteractionTarget,
+  HomeEvent,
+  HomeSceneOptions,
+  HomeViewport,
+  ScreenProjection,
+  SelectedDecorPlacementRequest,
+} from "./base";
 export { HomeZoneScene } from "./base";
 export * from "./state";
 export * from "../../data/home";
