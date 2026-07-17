@@ -1,0 +1,509 @@
+.dd-game {
+  --ink: #40382f;
+  --cream: #fff8df;
+  --coral: #e97858;
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+  width: 100%;
+  height: 100%;
+  min-height: 560px;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: "Trebuchet MS", "Avenir Next", system-ui, sans-serif;
+  background: linear-gradient(#b9e2dc, #87b96f 28%);
+  user-select: none;
+  touch-action: none;
+}
+
+.dd-game button {
+  font: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dd-topbar {
+  z-index: 3;
+  display: grid;
+  grid-template-columns: 1fr 1.5fr 1fr;
+  align-items: start;
+  padding: max(12px, env(safe-area-inset-top)) 17px 5px;
+}
+
+.dd-time,
+.dd-score {
+  display: flex;
+  flex-direction: column;
+}
+
+.dd-time small,
+.dd-score small {
+  color: #56736b;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .15em;
+}
+
+.dd-time strong,
+.dd-score strong {
+  font-size: clamp(1.5rem, 7vw, 2.3rem);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.dd-time strong {
+  color: #3f5550;
+}
+
+.dd-score {
+  align-items: center;
+}
+
+.dd-score span {
+  margin-top: 2px;
+  color: #56736b;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+.dd-icon-button {
+  justify-self: end;
+  width: 41px;
+  height: 41px;
+  border: 2px solid rgb(255 255 255 / 55%);
+  border-radius: 50%;
+  color: var(--ink);
+  font-weight: 900;
+  background: rgb(255 248 223 / 73%);
+  box-shadow: 0 4px 0 rgb(62 88 72 / 18%);
+}
+
+.dd-mission {
+  z-index: 3;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 9px;
+  margin: 0 14px 6px;
+  padding: 8px 11px;
+  border: 2px solid rgb(255 255 255 / 48%);
+  border-radius: 16px;
+  background: rgb(255 248 223 / 84%);
+  box-shadow: 0 4px 0 rgb(64 88 67 / 15%);
+}
+
+.dd-parcel-icon {
+  display: grid;
+  place-items: center;
+  width: 39px;
+  height: 39px;
+  border-radius: 11px;
+  font-size: 21px;
+  background: #f1d98e;
+}
+
+.dd-mission > div:nth-child(2) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dd-mission small {
+  color: #9b7551;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .13em;
+}
+
+.dd-mission b {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-mission > strong {
+  min-width: 43px;
+  color: #d26750;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.dd-map-wrap {
+  position: relative;
+  z-index: 1;
+  min-height: 270px;
+  margin: 0 10px;
+  overflow: hidden;
+  border: 5px solid #f4e9cb;
+  border-radius: 24px;
+  background: #83b66f;
+  box-shadow: 0 8px 0 #5b7f50, 0 13px 22px rgb(48 69 43 / 24%);
+}
+
+.dd-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.dd-chain,
+.dd-wrong-way {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #705327;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  background: rgb(255 234 137 / 88%);
+  box-shadow: 0 2px 4px rgb(55 60 41 / 20%);
+}
+
+.dd-chain {
+  left: 8px;
+}
+
+.dd-wrong-way {
+  right: 8px;
+  display: none;
+  color: #fff;
+  background: #dc685d;
+  animation: dd-warning .4s ease-in-out infinite alternate;
+}
+
+.dd-wrong-way.is-visible {
+  display: block;
+}
+
+.dd-callout {
+  z-index: 2;
+  justify-self: center;
+  max-width: calc(100% - 30px);
+  margin-top: -2px;
+  padding: 5px 13px;
+  overflow: hidden;
+  border-radius: 999px;
+  color: #5d6448;
+  font-size: 11px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgb(255 248 223 / 90%);
+  box-shadow: 0 3px 9px rgb(58 71 43 / 17%);
+}
+
+.dd-controls {
+  display: grid;
+  grid-template-columns: repeat(3, 48px);
+  grid-template-rows: repeat(3, 38px);
+  justify-content: center;
+  gap: 3px;
+  padding: 5px 0 3px;
+}
+
+.dd-controls button,
+.dd-wheel {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 13px;
+  color: #fff8dc;
+  font-size: 15px;
+  font-weight: 900;
+  background: #697c6d;
+  box-shadow: 0 4px 0 #46584b;
+  touch-action: none;
+}
+
+.dd-controls button:first-child {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.dd-controls button:nth-child(2) {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.dd-wheel {
+  grid-column: 2;
+  grid-row: 2;
+  border: 4px dashed #a7b49f;
+  color: #a7b49f;
+  background: #4e5e52;
+}
+
+.dd-controls button:nth-child(4) {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.dd-controls button:last-child {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.dd-controls button:active,
+.dd-controls button.is-pressed {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #46584b;
+  background: #e37b56;
+}
+
+.dd-footer {
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 15px max(10px, env(safe-area-inset-bottom));
+  color: rgb(255 255 255 / 78%);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .1em;
+}
+
+.dd-game.is-bump .dd-map-wrap {
+  animation: dd-bump .15s linear infinite alternate;
+}
+
+.dd-overlay {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: none;
+  place-items: center;
+  padding: 22px;
+  background: rgb(37 57 49 / 59%);
+  backdrop-filter: blur(7px);
+}
+
+.dd-overlay.is-visible {
+  display: grid;
+  animation: dd-fade-in .2s ease-out;
+}
+
+.dd-card {
+  width: min(100%, 390px);
+  max-height: 92%;
+  overflow: auto;
+  padding: 25px;
+  border: 3px solid #fff;
+  border-radius: 28px;
+  text-align: center;
+  background:
+    radial-gradient(circle at 92% 6%, #fff 0 4%, transparent 4.5%),
+    var(--cream);
+  box-shadow: 0 12px 0 rgb(55 65 47 / 22%), 0 24px 55px rgb(27 41 33 / 38%);
+}
+
+.dd-kicker {
+  color: #cc7359;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .16em;
+}
+
+.dd-card h2 {
+  margin: 8px 0;
+  font-size: clamp(1.5rem, 7vw, 2rem);
+  line-height: 1.08;
+}
+
+.dd-card p {
+  margin: 0 auto 18px;
+  max-width: 32ch;
+  color: #6e6254;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dd-tutorial-icon {
+  display: grid;
+  place-items: center;
+  width: 92px;
+  height: 92px;
+  margin: 15px auto 11px;
+  border: 4px solid #fff;
+  border-radius: 25px;
+  font-size: 44px;
+  background: linear-gradient(145deg, #9bd0c4, #65a790);
+  box-shadow: 0 6px 0 #4d896f;
+  transform: rotate(-4deg);
+}
+
+.dd-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.dd-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d5ccb7;
+}
+
+.dd-dots i.active {
+  width: 21px;
+  border-radius: 99px;
+  background: var(--coral);
+}
+
+.dd-card-actions {
+  display: flex;
+  gap: 9px;
+}
+
+.dd-primary,
+.dd-secondary,
+.dd-difficulty-list button {
+  min-height: 48px;
+  border: 0;
+  border-radius: 15px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.dd-primary {
+  flex: 1;
+  color: #fff;
+  background: linear-gradient(#ed8a66, #dc6a50);
+  box-shadow: 0 5px 0 #b55242;
+}
+
+.dd-primary:active {
+  transform: translateY(3px);
+  box-shadow: 0 2px 0 #b55242;
+}
+
+.dd-secondary {
+  flex: 1;
+  color: #685d4e;
+  background: #ebe3cd;
+  box-shadow: 0 4px 0 #cdc2a6;
+}
+
+.dd-wide {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.dd-text-button {
+  margin-top: 15px;
+  border: 0;
+  color: #917a64;
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: underline;
+  background: transparent;
+}
+
+.dd-difficulty-list {
+  display: grid;
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.dd-difficulty-list button {
+  display: grid;
+  grid-template-columns: 45px 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  padding: 10px 14px;
+  text-align: left;
+  color: #4f6948;
+  background: #e4efd1;
+  box-shadow: inset 0 0 0 2px #c9dba5, 0 3px 0 #b4c98c;
+}
+
+.dd-difficulty-list button:nth-child(2) {
+  color: #7f5a3e;
+  background: #f5e1bc;
+  box-shadow: inset 0 0 0 2px #e7ca92, 0 3px 0 #d4b375;
+}
+
+.dd-difficulty-list button:nth-child(3) {
+  color: #854c4c;
+  background: #f4cfca;
+  box-shadow: inset 0 0 0 2px #e7aaa4, 0 3px 0 #d48e88;
+}
+
+.dd-difficulty-list button > span {
+  grid-row: 1 / 3;
+  font-size: 27px;
+}
+
+.dd-difficulty-list b {
+  font-size: 15px;
+}
+
+.dd-difficulty-list small {
+  margin-top: 2px;
+  opacity: .77;
+}
+
+.dd-result-stamp {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  margin: 14px auto 0;
+  border: 5px double #fff9e2;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 54px;
+  font-weight: 1000;
+  background: linear-gradient(145deg, #8bc38e, #5b9d69);
+  box-shadow: 0 7px 0 #477f57;
+  transform: rotate(-5deg);
+}
+
+.dd-result-card h2 {
+  margin-bottom: 3px;
+  font-size: 2.7rem;
+}
+
+.dd-rewards {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.dd-rewards span {
+  padding: 7px 11px;
+  border-radius: 10px;
+  color: #705b32;
+  font-size: 13px;
+  font-weight: 900;
+  background: #f8e4a5;
+}
+
+@keyframes dd-warning {
+  to { transform: scale(1.07); }
+}
+
+@keyframes dd-bump {
+  from { transform: translateX(-3px) rotate(-.3deg); }
+  to { transform: translateX(3px) rotate(.3deg); }
+}
+
+@keyframes dd-fade-in {
+  from { opacity: 0; }
+}
+
+@media (max-height: 650px) {
+  .dd-game { min-height: 470px; }
+  .dd-topbar { padding-top: 6px; }
+  .dd-mission { padding-block: 4px; margin-bottom: 3px; }
+  .dd-parcel-icon { width: 31px; height: 31px; }
+  .dd-map-wrap { min-height: 225px; }
+  .dd-controls { grid-template-columns: repeat(3, 42px); grid-template-rows: repeat(3, 31px); }
+  .dd-footer { padding-bottom: 3px; }
+}

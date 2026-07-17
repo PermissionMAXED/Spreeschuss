@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.app.json",
+  "compilerOptions": {
+    "composite": false
+  },
+  "include": [
+    "../audio/**/*.ts",
+    "../fx/**/*.ts",
+    "../haptics/**/*.ts"
+  ]
+}

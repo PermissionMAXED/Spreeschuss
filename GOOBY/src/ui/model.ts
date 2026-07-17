@@ -6,10 +6,11 @@ import {
   type ShopId,
 } from "../core/contracts/scenes";
 import type { Needs } from "../core/contracts/simulation";
-import { MINIGAME_COPY, WARDROBE_COPY } from "../data/strings";
+import { CATALOG_BY_ID, COSMETIC_SLOTS, type CosmeticSlot } from "../data/catalog";
+import { MINIGAME_COPY } from "../data/strings";
 
 export type PanelId = "places" | "play" | "wardrobe" | "items" | "settings";
-export type WardrobeSlot = keyof typeof WARDROBE_COPY;
+export type WardrobeSlot = CosmeticSlot;
 export type PreferenceKey = "audio" | "haptics" | "reducedMotion" | "notifications";
 
 export interface UiPreferences {
@@ -21,7 +22,7 @@ export interface UiPreferences {
 
 export interface UiPersistedState {
   readonly version: 1;
-  readonly equipped: Readonly<Record<WardrobeSlot, string>>;
+  readonly equipped: Readonly<Partial<Record<WardrobeSlot, string>>>;
   readonly preferences: UiPreferences;
   readonly highScores: Readonly<Partial<Record<MinigameId, number>>>;
   readonly sleepRationaleSeen: boolean;
@@ -59,7 +60,7 @@ export const UI_STORAGE_KEY = "gooby.ui.v1";
 
 const DEFAULT_STATE: UiPersistedState = {
   version: 1,
-  equipped: { head: "none", neck: "none", body: "none" },
+  equipped: {},
   preferences: {
     audio: true,
     haptics: true,
@@ -82,14 +83,16 @@ function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
 }
 
-function parseEquipped(value: unknown): Record<WardrobeSlot, string> {
+function parseEquipped(value: unknown): Partial<Record<WardrobeSlot, string>> {
   if (typeof value !== "object" || value === null) return { ...DEFAULT_STATE.equipped };
   const candidate = value as Partial<Record<WardrobeSlot, unknown>>;
-  return {
-    head: typeof candidate.head === "string" ? candidate.head : DEFAULT_STATE.equipped.head,
-    neck: typeof candidate.neck === "string" ? candidate.neck : DEFAULT_STATE.equipped.neck,
-    body: typeof candidate.body === "string" ? candidate.body : DEFAULT_STATE.equipped.body,
-  };
+  const equipped: Partial<Record<WardrobeSlot, string>> = {};
+  for (const slot of COSMETIC_SLOTS) {
+    const itemId = candidate[slot];
+    const item = typeof itemId === "string" ? CATALOG_BY_ID.get(itemId) : null;
+    if (item?.kind === "cosmetic" && item.slot === slot) equipped[slot] = item.id;
+  }
+  return equipped;
 }
 
 function parsePreferences(value: unknown): UiPreferences {
@@ -226,12 +229,15 @@ export class UiModel {
     };
   }
 
-  equip(slot: WardrobeSlot, itemId: string): void {
-    const valid = WARDROBE_COPY[slot].some((item) => item.id === itemId);
-    if (!valid) return;
+  equip(slot: WardrobeSlot, itemId: string | null): void {
+    const item = itemId ? CATALOG_BY_ID.get(itemId) : null;
+    if (itemId && (item?.kind !== "cosmetic" || item.slot !== slot)) return;
+    const equipped = { ...this.state.equipped };
+    if (itemId) equipped[slot] = itemId;
+    else delete equipped[slot];
     this.state = {
       ...this.state,
-      equipped: { ...this.state.equipped, [slot]: itemId },
+      equipped,
     };
     this.persist();
   }
@@ -297,7 +303,7 @@ export class UiModel {
   }
 
   requestLivingRoom(message: string): NavigationDecision {
-    if (this.firstTripActive && this.cityPhase !== "driving-home") {
+    if (this.firstTripActive) {
       return {
         allowed: false,
         destination: { kind: "home", zone: "living-room" },

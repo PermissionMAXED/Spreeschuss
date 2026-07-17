@@ -57,6 +57,8 @@ describe("portrait UI model", () => {
     model.markCityArrival();
     model.openReturnBoard();
     model.beginReturnTrip();
+    expect(model.requestLivingRoom("Finish the trip").allowed).toBe(false);
+    model.completeReturnTrip();
     expect(model.requestLivingRoom("Finish the trip").allowed).toBe(true);
   });
 
@@ -82,13 +84,13 @@ describe("portrait UI model", () => {
     const storage = new MemoryStorage();
     const model = new UiModel(storage);
 
-    model.equip("head", "sunhat");
+    model.equip("head", "sunny-bucket-hat");
     model.setPreference("reducedMotion", true);
     expect(model.recordResult("carrot-catch", 420)).toEqual({ isNewBest: true, best: 420 });
     expect(model.recordResult("carrot-catch", 120)).toEqual({ isNewBest: false, best: 420 });
 
     const restored = new UiModel(storage);
-    expect(restored.persisted.equipped.head).toBe("sunhat");
+    expect(restored.persisted.equipped.head).toBe("sunny-bucket-hat");
     expect(restored.persisted.preferences.reducedMotion).toBe(true);
     expect(restored.persisted.highScores["carrot-catch"]).toBe(420);
     expect(storage.values.has(UI_STORAGE_KEY)).toBe(true);

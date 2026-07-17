@@ -1,13 +1,18 @@
 import type { Economy } from "../core/contracts/economy";
 import type { MinigamePayout } from "../core/contracts/minigame";
-import type { MinigameId, ShopId } from "../core/contracts/scenes";
+import type { HomeZoneId, MinigameId, ShopId } from "../core/contracts/scenes";
 import { NEED_KEYS, SLEEP_DURATION_MS, type Needs } from "../core/contracts/simulation";
 import {
-  FURNITURE_COPY,
+  COSMETIC_CATALOG,
+  COSMETIC_SLOTS,
+  FURNITURE_CATALOG,
+  type CosmeticSlot,
+} from "../data/catalog";
+import { HOME_ZONE_BLUEPRINTS } from "../data/home";
+import {
   MINIGAME_COPY,
   SHOP_COPY,
   STRINGS,
-  WARDROBE_COPY,
 } from "../data/strings";
 import {
   MINIGAME_CARDS,
@@ -17,14 +22,20 @@ import {
   getLevelProgress,
   type PanelId,
   type PreferenceKey,
-  type WardrobeSlot,
 } from "./model";
 
 export interface UiActions {
   feed(): void;
+  bathe(): void;
   sleep(): void;
   wake(): void;
-  navigate(label: string): void;
+  navigateHome(zone: HomeZoneId): void;
+  openCity(): void;
+  startMinigame(game: MinigameId): void;
+  pauseMinigame(): void;
+  equipCosmetic(slot: CosmeticSlot, itemId: string | null): void;
+  placeFurniture(itemId: string): void;
+  preferenceChanged(key: PreferenceKey, enabled: boolean): void;
   onboardingComplete(): void;
 }
 
@@ -54,16 +65,17 @@ function panelHeader(title: string, subtitle: string): string {
   `;
 }
 
-function avatarMarkup(equipped: Readonly<Record<WardrobeSlot, string>>): string {
+function avatarMarkup(equipped: Readonly<Partial<Record<CosmeticSlot, string>>>): string {
   return `
     <div class="outfit-preview" aria-label="${STRINGS.wardrobe.preview}">
       <div class="preview-halo"></div>
       <div class="preview-gooby">
         <i class="preview-ear left"></i><i class="preview-ear right"></i>
         <i class="preview-face"></i>
-        <i class="outfit-layer outfit-head ${equipped.head}"></i>
-        <i class="outfit-layer outfit-neck ${equipped.neck}"></i>
-        <i class="outfit-layer outfit-body ${equipped.body}"></i>
+        <i class="outfit-layer outfit-head ${equipped.head ?? "none"}"></i>
+        <i class="outfit-layer outfit-ears ${equipped.ears ?? "none"}"></i>
+        <i class="outfit-layer outfit-neck ${equipped.neck ?? "none"}"></i>
+        <i class="outfit-layer outfit-body ${equipped.back ?? "none"}"></i>
       </div>
       <span>${STRINGS.wardrobe.preview}</span>
     </div>
@@ -88,7 +100,9 @@ export class GameUI {
   private currentPanel: PanelId | null = null;
   private selectedGame: MinigameId | null = null;
   private itemsTab: "food" | "furniture" = "food";
-  private wardrobeDraft: Record<WardrobeSlot, string>;
+  private wardrobeDraft: Partial<Record<CosmeticSlot, string>> = {};
+  private equippedCosmetics: Partial<Record<CosmeticSlot, string>> = {};
+  private lastInventory: Readonly<Record<string, number>> = {};
   private lastNeeds: Needs | null = null;
   private lastEconomy: Economy = { coins: 0, xp: 0, level: 1 };
   private lastCarrots = 0;
@@ -100,7 +114,6 @@ export class GameUI {
     private readonly actions: UiActions,
   ) {
     this.model = new UiModel(typeof localStorage === "undefined" ? undefined : localStorage);
-    this.wardrobeDraft = { ...this.model.persisted.equipped };
     root.innerHTML = `
       <main class="game-shell">
         <canvas id="game-canvas" aria-label="${STRINGS.home}"></canvas>
@@ -161,6 +174,10 @@ export class GameUI {
               <span class="action-icon">☾</span>
               <span><b>${STRINGS.actions.sleep}</b><small>${STRINGS.actions.sleepHint}</small></span>
             </button>
+            <button class="action-button bathe-button" data-ui-action="bathe" data-testid="bathe" hidden>
+              <span class="action-icon">◌</span>
+              <span><b>Bathe</b><small>Scrub with bubbles</small></span>
+            </button>
           </div>
           <nav class="tab-bar glass" aria-label="Main">
             ${NAV_ITEMS.map(({ id, label, icon }) => `
@@ -196,6 +213,7 @@ export class GameUI {
           </div>
           <div class="coach-card glass" hidden data-coach-card></div>
         </section>
+        <div class="minigame-mount" data-minigame-mount hidden></div>
       </main>
     `;
 
@@ -215,12 +233,21 @@ export class GameUI {
     this.applyPreferences();
   }
 
-  update(needs: Needs, economy: Economy, carrots: number): void {
+  update(
+    needs: Needs,
+    economy: Economy,
+    inventory: Readonly<Record<string, number>>,
+    equipped: Readonly<Partial<Record<CosmeticSlot, string>>> = {},
+  ): void {
+    const carrots = inventory.carrot ?? 0;
     const levelChanged = this.lastEconomy.level !== economy.level;
     const carrotsChanged = this.lastCarrots !== carrots;
     this.lastNeeds = { ...needs };
     this.lastEconomy = economy;
     this.lastCarrots = carrots;
+    this.lastInventory = inventory;
+    this.equippedCosmetics = { ...equipped };
+    if (this.currentPanel !== "wardrobe") this.wardrobeDraft = { ...equipped };
     for (const key of NEED_KEYS) {
       const need = this.root.querySelector<HTMLElement>(`[data-need="${key}"]`);
       const meter = need?.querySelector<HTMLElement>(".meter i");
@@ -272,14 +299,17 @@ export class GameUI {
     chrome.hidden = scene.kind === "home";
     if (scene.kind === "home") {
       sceneLabel.textContent = scene.label ?? STRINGS.home;
+      const bath = this.root.querySelector<HTMLButtonElement>("[data-ui-action='bathe']");
+      if (bath) bath.hidden = scene.label !== HOME_ZONE_BLUEPRINTS.bathroom.title;
       return;
     }
+    const bath = this.root.querySelector<HTMLButtonElement>("[data-ui-action='bathe']");
+    if (bath) bath.hidden = true;
     if (scene.kind === "city") {
       const destination = scene.destination ? SHOP_COPY[scene.destination].title : STRINGS.chrome.town;
       sceneLabel.textContent = STRINGS.chrome.town;
       chrome.innerHTML = `
         <span><i>⌁</i>${scene.phase === "driving" ? `${STRINGS.chrome.driving} ${destination}` : destination}</span>
-        <button data-panel="places">${STRINGS.chrome.town}</button>
       `;
       return;
     }
@@ -308,6 +338,28 @@ export class GameUI {
         <button class="primary-button compact" data-ui-action="results-again" data-game="${gameId}">${STRINGS.results.again}</button>
       </div>
     `);
+  }
+
+  get minigameMount(): HTMLElement {
+    return this.root.querySelector<HTMLElement>("[data-minigame-mount]") as HTMLElement;
+  }
+
+  get equipped(): Readonly<Partial<Record<CosmeticSlot, string>>> {
+    return this.model.persisted.equipped;
+  }
+
+  get preferences(): Readonly<ReturnType<typeof this.preferenceSnapshot>> {
+    return this.preferenceSnapshot();
+  }
+
+  setMinigameVisible(visible: boolean): void {
+    this.minigameMount.hidden = !visible;
+    if (!visible) this.minigameMount.replaceChildren();
+  }
+
+  closeTransientUi(): void {
+    this.closePanel();
+    this.closeModal();
   }
 
   toast(message: string): void {
@@ -339,6 +391,8 @@ export class GameUI {
       this.closePanel();
     } else if (action === "feed") {
       this.actions.feed();
+    } else if (action === "bathe") {
+      this.actions.bathe();
     } else if (action === "sleep") {
       this.requestSleep();
     } else if (action === "wake") {
@@ -355,25 +409,17 @@ export class GameUI {
     } else if (action === "living-room") {
       const decision = this.model.requestLivingRoom(STRINGS.places.returnBlocked);
       if (!decision.allowed && decision.message) this.toast(decision.message);
-      else this.actions.navigate(STRINGS.nav.Places);
+      else this.actions.navigateHome("living-room");
     } else if (action === "home-zone") {
       const decision = this.model.requestLivingRoom(STRINGS.places.returnBlocked);
       if (!decision.allowed && decision.message) this.toast(decision.message);
       else {
         this.closePanel();
-        this.actions.navigate(STRINGS.nav.Places);
+        this.actions.navigateHome(button.dataset.zone as HomeZoneId);
       }
-    } else if (action === "select-shop") {
-      this.selectShop(button.dataset.shop as ShopId);
-    } else if (action === "start-trip") {
-      this.model.beginCityTrip();
-      this.setSceneChrome({
-        kind: "city",
-        phase: "driving",
-        ...(this.model.city.selectedShop ? { destination: this.model.city.selectedShop } : {}),
-      });
+    } else if (action === "city-board") {
       this.closePanel();
-      this.actions.navigate(STRINGS.nav.Places);
+      this.actions.openCity();
     } else if (action === "select-game") {
       this.selectedGame = button.dataset.game as MinigameId;
       this.renderPanel();
@@ -382,31 +428,36 @@ export class GameUI {
       this.selectedGame = game;
       this.closeModal();
       this.closePanel();
-      this.actions.navigate(STRINGS.nav.Play);
+      this.actions.startMinigame(game);
     } else if (action === "results-done" || action === "close-modal") {
       this.closeModal();
       if (action === "results-done") this.openPanel("play");
     } else if (action === "wardrobe-preview") {
-      const slot = button.dataset.slot as WardrobeSlot;
+      const slot = button.dataset.slot as CosmeticSlot;
       const item = button.dataset.item;
       if (item) this.wardrobeDraft[slot] = item;
+      else delete this.wardrobeDraft[slot];
       this.renderPanel();
     } else if (action === "wardrobe-equip") {
-      const slot = button.dataset.slot as WardrobeSlot;
-      this.model.equip(slot, this.wardrobeDraft[slot]);
-      this.toast(STRINGS.toasts.outfitSaved);
+      const slot = button.dataset.slot as CosmeticSlot;
+      const itemId = this.wardrobeDraft[slot] ?? null;
+      this.model.equip(slot, itemId);
+      this.equippedCosmetics = { ...this.model.persisted.equipped };
+      this.actions.equipCosmetic(slot, itemId);
       this.renderPanel();
+      this.toast(STRINGS.toasts.outfitSaved);
     } else if (action === "items-tab") {
       this.itemsTab = button.dataset.tab === "furniture" ? "furniture" : "food";
       this.renderPanel();
     } else if (action === "place-item") {
-      const item = button.dataset.itemName ?? "";
+      const item = button.dataset.item ?? "";
       this.closePanel();
-      this.actions.navigate(STRINGS.nav.Items);
-      this.toast(STRINGS.items.placeHandoff(item));
+      this.actions.placeFurniture(item);
     } else if (action === "toggle-setting") {
       const key = button.dataset.preference as PreferenceKey;
-      this.model.setPreference(key, !this.model.persisted.preferences[key]);
+      const enabled = !this.model.persisted.preferences[key];
+      this.model.setPreference(key, enabled);
+      this.actions.preferenceChanged(key, enabled);
       this.applyPreferences();
       this.renderPanel();
       this.toast(STRINGS.toasts.settingSaved);
@@ -417,7 +468,7 @@ export class GameUI {
     } else if (action === "wake-celebration") {
       this.closeModal();
     } else if (action === "pause") {
-      this.actions.navigate(STRINGS.nav.Play);
+      this.actions.pauseMinigame();
     }
   };
 
@@ -455,27 +506,21 @@ export class GameUI {
   }
 
   private renderPlaces(): void {
-    const city = this.model.city;
-    const selected = city.selectedShop ? SHOP_COPY[city.selectedShop] : null;
     this.sheetBody.innerHTML = `
       ${panelHeader(STRINGS.places.title, STRINGS.places.subtitle)}
       <div class="sheet-content">
         <section class="panel-section">
           <h3>${STRINGS.places.homeGroup}</h3>
-          <button class="place-card home-card" data-ui-action="home-zone">
-            <span class="place-icon home">⌂</span>
-            <span><b>${STRINGS.places.livingRoom}</b><small>${STRINGS.places.livingRoomHint}</small></span>
-            <i>›</i>
-          </button>
-          <div class="home-zones" aria-label="${STRINGS.places.homeGroup}">
-            ${[
-              ["♨", STRINGS.places.kitchen],
-              ["◌", STRINGS.places.bathroom],
-              ["☾", STRINGS.places.bedroom],
-              ["❀", STRINGS.places.garden],
-            ].map(([icon, label]) => `
-              <button disabled><i>${icon}</i><span>${label}<small>${STRINGS.places.comingSoon}</small></span></button>
-            `).join("")}
+          <div class="destination-list" aria-label="${STRINGS.places.homeGroup}">
+            ${(Object.keys(HOME_ZONE_BLUEPRINTS) as HomeZoneId[]).map((zone) => {
+              const home = HOME_ZONE_BLUEPRINTS[zone];
+              const icon = zone === "living-room" ? "⌂" : zone === "kitchen" ? "♨" : zone === "bathroom" ? "◌" : zone === "bedroom" ? "☾" : "❀";
+              return `
+                <button class="destination-card" data-ui-action="home-zone" data-zone="${zone}" data-testid="home-zone-${zone}">
+                  <span class="destination-icon">${icon}</span>
+                  <span><b>${home.title}</b><small>${home.subtitle}</small></span><i>›</i>
+                </button>`;
+            }).join("")}
           </div>
         </section>
         <section class="panel-section city-board">
@@ -483,33 +528,14 @@ export class GameUI {
             <div><h3>${STRINGS.places.cityGroup}</h3><p>${STRINGS.places.boardBody}</p></div>
             <span class="tiny-car" aria-hidden="true">◒</span>
           </div>
-          <div class="destination-list">
-            ${(Object.keys(SHOP_COPY) as ShopId[]).map((shop) => {
-              const copy = SHOP_COPY[shop];
-              return `
-                <button class="destination-card ${city.selectedShop === shop ? "selected" : ""}" data-ui-action="select-shop" data-shop="${shop}">
-                  <span class="destination-icon">${copy.icon}</span>
-                  <span><b>${copy.title}</b><small>${copy.description}</small></span>
-                  <i>${city.selectedShop === shop ? "✓" : "›"}</i>
-                </button>
-              `;
-            }).join("")}
-          </div>
+          <button class="place-card home-card" data-ui-action="city-board" data-testid="open-city-board">
+            <span class="place-icon home">◒</span>
+            <span><b>Go to the parked car</b><small>Choose a shop at the garage board</small></span><i>›</i>
+          </button>
           <p class="route-note"><i>⌁</i>${STRINGS.places.travelNote}</p>
         </section>
       </div>
-      ${selected && city.phase === "depart-ready" ? `
-        <footer class="sheet-cta">
-          <span><small>${STRINGS.places.selected}</small><b>${selected.icon} ${selected.title}</b></span>
-          <button class="primary-button compact" data-ui-action="start-trip">${STRINGS.actions.startTrip}</button>
-        </footer>
-      ` : ""}
     `;
-  }
-
-  private selectShop(shop: ShopId): void {
-    this.model.selectCityDestination(shop);
-    this.renderPanel();
   }
 
   private renderPlay(): void {
@@ -560,22 +586,32 @@ export class GameUI {
   }
 
   private renderWardrobe(): void {
+    const slotLabels: Readonly<Record<CosmeticSlot, string>> = {
+      head: "Head",
+      ears: "Ears",
+      neck: "Neck",
+      back: "Back",
+    };
     this.sheetBody.innerHTML = `
       ${panelHeader(STRINGS.wardrobe.title, STRINGS.wardrobe.subtitle)}
       <div class="sheet-content wardrobe-content">
         ${avatarMarkup(this.wardrobeDraft)}
         <h3>${STRINGS.wardrobe.slots}</h3>
-        ${(Object.keys(WARDROBE_COPY) as WardrobeSlot[]).map((slot) => {
-          const items = WARDROBE_COPY[slot];
-          const equipped = this.model.persisted.equipped[slot];
+        ${COSMETIC_SLOTS.map((slot) => {
+          const items = COSMETIC_CATALOG.filter((item) =>
+            item.slot === slot && (this.lastInventory[item.id] ?? 0) > 0);
+          const equipped = this.equippedCosmetics[slot];
           const selected = this.wardrobeDraft[slot];
           return `
             <section class="wardrobe-slot">
-              <div class="slot-title"><span>${slot === "head" ? "☀" : slot === "neck" ? "⌁" : "♧"}</span><b>${STRINGS.wardrobe[slot]}</b></div>
+              <div class="slot-title"><span>${slot === "head" ? "☀" : slot === "ears" ? "❀" : slot === "neck" ? "⌁" : "♧"}</span><b>${slotLabels[slot]}</b></div>
               <div class="wardrobe-options">
+                <button class="${selected === undefined ? "selected" : ""}" data-ui-action="wardrobe-preview" data-slot="${slot}">
+                  <i>·</i><small>${STRINGS.wardrobe.none}</small>
+                </button>
                 ${items.map((item) => `
                   <button class="${selected === item.id ? "selected" : ""}" data-ui-action="wardrobe-preview" data-slot="${slot}" data-item="${item.id}">
-                    <i>${item.icon}</i><small>${item.name}</small>
+                    <i>${slot === "head" ? "☀" : slot === "ears" ? "❀" : slot === "neck" ? "⌁" : "♧"}</i><small>${item.name}</small>
                   </button>
                 `).join("")}
               </div>
@@ -607,13 +643,13 @@ export class GameUI {
           </div>
         ` : `
           <div class="inventory-list">
-            ${FURNITURE_COPY.map((item) => `
+            ${FURNITURE_CATALOG.filter((item) => (this.lastInventory[item.id] ?? 0) > 0).map((item) => `
               <article class="inventory-card">
-                <span class="inventory-art furniture-art">${item.icon}</span>
-                <div><b>${item.name}</b><small>${STRINGS.items.owned(item.count)}</small></div>
-                <button class="mini-action" data-ui-action="place-item" data-item-name="${item.name}">${STRINGS.actions.place}</button>
+                <span class="inventory-art furniture-art">▱</span>
+                <div><b>${item.name}</b><small>${STRINGS.items.owned(this.lastInventory[item.id] ?? 0)}</small></div>
+                <button class="mini-action" data-ui-action="place-item" data-item="${item.id}">${STRINGS.actions.place}</button>
               </article>
-            `).join("")}
+            `).join("") || '<p class="empty-state">Find cozy furniture at Cloud Boutique.</p>'}
           </div>
         `}
       </div>
@@ -723,6 +759,15 @@ export class GameUI {
     this.root.classList.toggle("reduce-motion", preferences.reducedMotion);
     this.root.dataset.audio = preferences.audio ? "on" : "off";
     this.root.dataset.haptics = preferences.haptics ? "on" : "off";
+  }
+
+  private preferenceSnapshot(): {
+    readonly audio: boolean;
+    readonly haptics: boolean;
+    readonly reducedMotion: boolean;
+    readonly notifications: boolean;
+  } {
+    return { ...this.model.persisted.preferences };
   }
 
   private setText(selector: string, value: string): void {

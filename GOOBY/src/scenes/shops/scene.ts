@@ -14,6 +14,7 @@ import {
 } from "three";
 import type { GameScene, SceneContext, ShopId } from "../../core/contracts/scenes";
 import type { SaveState } from "../../core/contracts/save";
+import { ProceduralGooby } from "../../gooby";
 import type { GameRenderer } from "../../render/renderer";
 import {
   SHOP_CATALOGS,
@@ -130,6 +131,7 @@ export class WalkableShopScene implements GameScene {
   private readonly displayRoots: Group[] = [];
   private readonly keys = new Set<string>();
   private readonly shopkeeper: ProceduralShopkeeper;
+  private readonly gooby = new ProceduralGooby();
   private readonly tryOnSession: CosmeticTryOnSession | null;
   private readonly tryOnModels = new Group();
   private readonly arrival: CityShopArrival;
@@ -181,6 +183,7 @@ export class WalkableShopScene implements GameScene {
   update(deltaSeconds: number): void {
     if (!this.entered || this.disposed) return;
     this.elapsed += deltaSeconds;
+    this.gooby.update(deltaSeconds, this.elapsed);
     this.shopkeeper.update(deltaSeconds, this.elapsed);
     this.updateWalking(deltaSeconds);
     if (this.preview) {
@@ -217,6 +220,7 @@ export class WalkableShopScene implements GameScene {
     canvas.removeEventListener("pointerdown", this.onCanvasPointerDown);
     canvas.removeEventListener("pointerup", this.onCanvasPointerUp);
     this.tryOnSession?.dispose();
+    this.gooby.dispose();
     this.clearPreview();
     disposeObjectTree(this.root);
     this.overlay?.remove();
@@ -344,38 +348,11 @@ export class WalkableShopScene implements GameScene {
   }
 
   private createTryOnMannequin(): Group {
-    const mannequin = new Group();
-    mannequin.name = "Live Gooby cosmetic try-on";
-    const body = new Mesh(
-      new SphereGeometry(0.7, 18, 14),
-      new MeshStandardMaterial({ color: 0xf2d0a8, roughness: 0.88 }),
-    );
-    body.scale.set(1.05, 1.2, 0.88);
-    body.position.y = 0.92;
-    const head = new Mesh(
-      new SphereGeometry(0.48, 18, 14),
-      new MeshStandardMaterial({ color: 0xf6dbb6, roughness: 0.88 }),
-    );
-    head.position.y = 1.8;
-    const ears = [-0.22, 0.22].map((x) => {
-      const ear = new Mesh(
-        new CylinderGeometry(0.14, 0.19, 0.85, 12),
-        new MeshStandardMaterial({ color: 0xf6dbb6, roughness: 0.88 }),
-      );
-      ear.position.set(x, 2.45, 0);
-      return ear;
-    });
-    const eyes = [-0.17, 0.17].map((x) => {
-      const eye = new Mesh(
-        new SphereGeometry(0.055, 10, 8),
-        new MeshStandardMaterial({ color: 0x43383b, roughness: 0.72 }),
-      );
-      eye.position.set(x, 1.88, 0.46);
-      return eye;
-    });
+    this.gooby.root.name = "Live Gooby cosmetic try-on";
+    this.gooby.root.scale.setScalar(0.62);
     this.tryOnModels.position.set(0, 0, 0.56);
-    mannequin.add(body, head, ...ears, ...eyes);
-    return mannequin;
+    this.gooby.root.add(this.tryOnModels);
+    return this.gooby.root;
   }
 
   private renderTryOn(equipped: EquippedCosmetics): void {

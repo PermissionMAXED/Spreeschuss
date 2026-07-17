@@ -1,0 +1,861 @@
+{
+  "schemaVersion": 1,
+  "generator": "scripts/assets-fetch.mjs",
+  "constraints": {
+    "maxTotalBytes": 157286400,
+    "maxFileBytes": 10485760,
+    "runtimeAudioExtensions": [
+      ".m4a",
+      ".mp3",
+      ".wav"
+    ]
+  },
+  "totalBytes": 1447930,
+  "packs": [
+    {
+      "id": "furniture-kit",
+      "title": "Furniture Kit",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/furniture-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/furniture-kit/440e0608a4-1677580847/kenney_furniture-kit.zip",
+      "archiveBytes": 5130729,
+      "archiveSha256": "e67652d0932cee41683f74711c03d3e192a2af9979ef8e6b237711f5482d46b0",
+      "license": {
+        "path": "assets/vendor/furniture-kit/License.txt",
+        "bytes": 614,
+        "sha256": "bc0de1a0742cb490f9ed4bae0bd284286ebb27e23149b9917c7d8c0d590b8b29",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/furniture-kit/sofa.glb",
+          "bytes": 9644,
+          "sha256": "1886b811c0d3ad0d8525a4fd43adf4112c497c8e0ed906f06877ca3517f4c7dd",
+          "sourceEntry": "Models/GLTF format/loungeSofa.glb",
+          "kind": "model",
+          "purpose": "Living-room sofa"
+        },
+        {
+          "path": "assets/vendor/furniture-kit/armchair.glb",
+          "bytes": 9648,
+          "sha256": "ddfe6bc4b3451bca61666d7b614552d6ed2a03d82fc76244b72ae3155874dc6c",
+          "sourceEntry": "Models/GLTF format/loungeChair.glb",
+          "kind": "model",
+          "purpose": "Living-room armchair"
+        },
+        {
+          "path": "assets/vendor/furniture-kit/coffee-table.glb",
+          "bytes": 8256,
+          "sha256": "e38bea760fbd514efbb75528d09b4752c91af44677bbb97e6d4386c263525179",
+          "sourceEntry": "Models/GLTF format/tableCoffee.glb",
+          "kind": "model",
+          "purpose": "Coffee table"
+        },
+        {
+          "path": "assets/vendor/furniture-kit/rug.glb",
+          "bytes": 10876,
+          "sha256": "2ef5cc634bb1060a1a5774cfcaf6e11c235791c99d6b59da5fdbc09edfb95a68",
+          "sourceEntry": "Models/GLTF format/rugRounded.glb",
+          "kind": "model",
+          "purpose": "Rounded rug"
+        },
+        {
+          "path": "assets/vendor/furniture-kit/lamp.glb",
+          "bytes": 6600,
+          "sha256": "50fe1b5b588edf15bfa9cc880f71a02a4fda6036350b24733d0ef4de5cc5e908",
+          "sourceEntry": "Models/GLTF format/lampRoundFloor.glb",
+          "kind": "model",
+          "purpose": "Floor lamp"
+        },
+        {
+          "path": "assets/vendor/furniture-kit/bookshelf.glb",
+          "bytes": 18020,
+          "sha256": "750702218d68c062b15dfef6ab06a4014d1cfa8bd05f02e57c53b7e13bec157c",
+          "sourceEntry": "Models/GLTF format/bookcaseOpen.glb",
+          "kind": "model",
+          "purpose": "Open bookshelf"
+        },
+        {
+          "path": "assets/vendor/furniture-kit/bed.glb",
+          "bytes": 18636,
+          "sha256": "ca00c63f9a12da3138d902b2f5f18e0360fb6e8a5ac42ccb4bc3f185724b65d1",
+          "sourceEntry": "Models/GLTF format/bedSingle.glb",
+          "kind": "model",
+          "purpose": "Single bed"
+        },
+        {
+          "path": "assets/vendor/furniture-kit/bathtub.glb",
+          "bytes": 35500,
+          "sha256": "54c405c7035aab63dc41e709dc3c50fc5bcfbc4cddc91ffc54188075a6d25d01",
+          "sourceEntry": "Models/GLTF format/bathtub.glb",
+          "kind": "model",
+          "purpose": "Bathtub"
+        },
+        {
+          "path": "assets/vendor/furniture-kit/kitchen-counter.glb",
+          "bytes": 10444,
+          "sha256": "7238c57778935ae25db5e57e9f7af3ba7068c71b005ff7cfbff3b6f3b1a13200",
+          "sourceEntry": "Models/GLTF format/kitchenCabinet.glb",
+          "kind": "model",
+          "purpose": "Kitchen counter"
+        }
+      ]
+    },
+    {
+      "id": "food-kit",
+      "title": "Food Kit",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/food-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip",
+      "archiveBytes": 4606270,
+      "archiveSha256": "cdad90853682499b94c9fda2f87678b24bfd8f3264e0ed323f6b6a27fd7c6f6f",
+      "license": {
+        "path": "assets/vendor/food-kit/License.txt",
+        "bytes": 711,
+        "sha256": "32a081c2035dd4db47d850c83244da048165f0e53d71c076b76c1afc0590bc7f",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/food-kit/carrot.glb",
+          "bytes": 16364,
+          "sha256": "621949f7fb7947a810a3f6adca7d6166c8f7ef5a1016737cd0d245d12d60ab4e",
+          "sourceEntry": "Models/GLB format/carrot.glb",
+          "kind": "model",
+          "purpose": "Carrot food and icon source"
+        },
+        {
+          "path": "assets/vendor/food-kit/apple.glb",
+          "bytes": 14376,
+          "sha256": "2a80ab65d5bc2cb4f2bca1e8176cbb591849a288596d4b2e76e411338761a526",
+          "sourceEntry": "Models/GLB format/apple.glb",
+          "kind": "model",
+          "purpose": "Apple food"
+        },
+        {
+          "path": "assets/vendor/food-kit/pancake.glb",
+          "bytes": 42592,
+          "sha256": "75550fb0eae1169ce4f59b054b0bbaa3de3be67765cd457a7e3e99488e93546e",
+          "sourceEntry": "Models/GLB format/pancakes.glb",
+          "kind": "model",
+          "purpose": "Pancake stack"
+        },
+        {
+          "path": "assets/vendor/food-kit/Textures/colormap.png",
+          "bytes": 10715,
+          "sha256": "75baf74d9483a0fc56ac21ceba346fbe16fc24a2a1bf0524c53e6bbe802e1153",
+          "sourceEntry": "Models/GLB format/Textures/colormap.png",
+          "kind": "image",
+          "purpose": "Shared embedded-model palette"
+        }
+      ]
+    },
+    {
+      "id": "city-kit-roads",
+      "title": "City Kit (Roads)",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/city-kit-roads",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/city-kit-roads/74288c9459-1741864740/kenney_city-kit-roads.zip",
+      "archiveBytes": 1716227,
+      "archiveSha256": "2c1644a293a85d98837ef788b0cbc4b9d53dffb1280fbe9a4f927b644aaba4b0",
+      "license": {
+        "path": "assets/vendor/city-kit-roads/License.txt",
+        "bytes": 717,
+        "sha256": "70d0b4ef26a341070faf76b058bcc5753925d6cf118420fd51c73957573f7b4d",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/city-kit-roads/road.glb",
+          "bytes": 5264,
+          "sha256": "c3d524d39ff60ae4ca418aa99e83af25ee87ddbdc3c1a021774f30314bf73ca4",
+          "sourceEntry": "Models/GLB format/road-straight.glb",
+          "kind": "model",
+          "purpose": "Straight city road"
+        },
+        {
+          "path": "assets/vendor/city-kit-roads/street-lamp.glb",
+          "bytes": 9496,
+          "sha256": "e9ff06ead9d9b14eddd7bf40fa20e31b898fde2d59ade940eebe60685d335f6d",
+          "sourceEntry": "Models/GLB format/light-curved.glb",
+          "kind": "model",
+          "purpose": "Curved street lamp"
+        },
+        {
+          "path": "assets/vendor/city-kit-roads/Textures/colormap.png",
+          "bytes": 8658,
+          "sha256": "ebbdaadf298f684ee534d0e63e2bdb223f7501da9fc13eb7bcdc94489162aca5",
+          "sourceEntry": "Models/GLB format/Textures/colormap.png",
+          "kind": "image",
+          "purpose": "Shared embedded-model palette"
+        }
+      ]
+    },
+    {
+      "id": "city-kit-commercial",
+      "title": "City Kit (Commercial)",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/city-kit-commercial",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/city-kit-commercial/a742d900eb-1753115042/kenney_city-kit-commercial_2.1.zip",
+      "archiveBytes": 4096974,
+      "archiveSha256": "f8b09b081c2bb88bcc126e2dec1cb40fd0dad7e7e591b6c26aaefe96fb35276b",
+      "license": {
+        "path": "assets/vendor/city-kit-commercial/License.txt",
+        "bytes": 708,
+        "sha256": "c38cee408d022e57e44e49f1cd655c2fe0dc881a07b881276b795215cdc0de69",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/city-kit-commercial/carrot-market.glb",
+          "bytes": 108936,
+          "sha256": "5cf220f90ee3f21e7abe38055ca409a48aa8ef1d5ffab6e2deb99e5a5e1ed5e0",
+          "sourceEntry": "Models/GLB format/building-a.glb",
+          "kind": "model",
+          "purpose": "Market facade base"
+        },
+        {
+          "path": "assets/vendor/city-kit-commercial/fluff-salon.glb",
+          "bytes": 106408,
+          "sha256": "3b5d3ac0799c024781d92bb15971d42f4f8e380554dc5cf6a40c2f07d948947a",
+          "sourceEntry": "Models/GLB format/building-b.glb",
+          "kind": "model",
+          "purpose": "Salon facade base"
+        },
+        {
+          "path": "assets/vendor/city-kit-commercial/Textures/colormap.png",
+          "bytes": 11002,
+          "sha256": "191bec3889aaaca5018380038fecc129ebb5c2182879a099b7b538b3fa050b5d",
+          "sourceEntry": "Models/GLB format/Textures/colormap.png",
+          "kind": "image",
+          "purpose": "Shared embedded-model palette"
+        }
+      ]
+    },
+    {
+      "id": "city-kit-suburban",
+      "title": "City Kit (Suburban)",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/city-kit-suburban",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/city-kit-suburban/2c871b7af2-1745479373/kenney_city-kit-suburban_20.zip",
+      "archiveBytes": 3038740,
+      "archiveSha256": "5869c35cf30b1c87bdb2d197b6d325eebadd2ef08ea27f04797e8e08d77a9a39",
+      "license": {
+        "path": "assets/vendor/city-kit-suburban/License.txt",
+        "bytes": 706,
+        "sha256": "d778fa769a89a7d9f167bc337fdf8fc2144e47d9abb0c35eb6ad897c0ee24d0a",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/city-kit-suburban/cloud-boutique.glb",
+          "bytes": 98604,
+          "sha256": "49f32e20b9dcd24b1c8f6d6488807b8c8cb684cbb595bfb0bb36ad903e470faa",
+          "sourceEntry": "Models/GLB format/building-type-a.glb",
+          "kind": "model",
+          "purpose": "Boutique facade base"
+        },
+        {
+          "path": "assets/vendor/city-kit-suburban/Textures/colormap.png",
+          "bytes": 11784,
+          "sha256": "9b5de86078c25ef02351a80d35ff3c978693a1044565b73eedd9ae9b5b80665d",
+          "sourceEntry": "Models/GLB format/Textures/colormap.png",
+          "kind": "image",
+          "purpose": "Shared embedded-model palette"
+        }
+      ]
+    },
+    {
+      "id": "car-kit",
+      "title": "Car Kit",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/car-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/car-kit/1a312ec241-1775131960/kenney_car-kit.zip",
+      "archiveBytes": 4814237,
+      "archiveSha256": "fac7dacac5c7874348cf19729af3ef205f3d366493edaf0a827d93f4fdf3d0c4",
+      "license": {
+        "path": "assets/vendor/car-kit/License.txt",
+        "bytes": 696,
+        "sha256": "c33b7f6453d134deae7b1b8493717d9ccfa754c25ab97f6de89b88f8fda19b00",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/car-kit/gooby-car.glb",
+          "bytes": 172216,
+          "sha256": "b532ea7d2c59f7f6b22b138cf1955218a2c1898f1cea932af4d3fd563c3959b7",
+          "sourceEntry": "Models/GLB format/sedan.glb",
+          "kind": "model",
+          "purpose": "Gooby car base"
+        },
+        {
+          "path": "assets/vendor/car-kit/traffic-car.glb",
+          "bytes": 197804,
+          "sha256": "bd5c9d4c3b4bdd254a66b8426563a68b1487ae7a5076df3a2488e6ffed7be64f",
+          "sourceEntry": "Models/GLB format/hatchback-sports.glb",
+          "kind": "model",
+          "purpose": "Traffic-car variation"
+        },
+        {
+          "path": "assets/vendor/car-kit/Textures/colormap.png",
+          "bytes": 12371,
+          "sha256": "f3622a03a20c6696065cae9cbe391351be873508af190c2ebd1d420c055787a5",
+          "sourceEntry": "Models/GLB format/Textures/colormap.png",
+          "kind": "image",
+          "purpose": "Shared embedded-model palette"
+        }
+      ]
+    },
+    {
+      "id": "racing-kit",
+      "title": "Racing Kit",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/racing-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/racing-kit/933b8fd9fd-1677580949/kenney_racing-kit.zip",
+      "archiveBytes": 6082755,
+      "archiveSha256": "8a71ea16219315a01d00d5a90c4f6b5c090faddbc56d80ecf727e2b3b853c6c0",
+      "license": {
+        "path": "assets/vendor/racing-kit/License.txt",
+        "bytes": 611,
+        "sha256": "905627df4313a9eb7fa9337129e572979ef51cc3857c8d2942e57ae84736096c",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/racing-kit/garage.glb",
+          "bytes": 13028,
+          "sha256": "db73d2ebd70763380ef872ffd2a399eb72c979f96c5a3c1ab377d93670204a23",
+          "sourceEntry": "Models/GLTF format/pitsGarage.glb",
+          "kind": "model",
+          "purpose": "City garage and driving set dressing"
+        },
+        {
+          "path": "assets/vendor/racing-kit/checkered-flag.glb",
+          "bytes": 10604,
+          "sha256": "a66a124e0e25ce9bfe9eb6229f57363a96683f8f88606c901d11565638e096df",
+          "sourceEntry": "Models/GLTF format/flagCheckersSmall.glb",
+          "kind": "model",
+          "purpose": "Driving finish marker"
+        }
+      ]
+    },
+    {
+      "id": "nature-kit",
+      "title": "Nature Kit",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/nature-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/nature-kit/37ac38a37b-1677698939/kenney_nature-kit.zip",
+      "archiveBytes": 10537521,
+      "archiveSha256": "fa7974a0d342bfe63c38664ba9f8ec1a4aab8ea25f099bdc56870e33588c4d9d",
+      "license": {
+        "path": "assets/vendor/nature-kit/License.txt",
+        "bytes": 611,
+        "sha256": "cb96b75e3560ac78d7a53ce6f083f4cdb5c53faea6141b62d63458dcfe1e4b9d",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/nature-kit/tree.glb",
+          "bytes": 9428,
+          "sha256": "562d29638c902de3c7bee465d3a53bb77117efbc392ae04ed894faf6b5dc691d",
+          "sourceEntry": "Models/GLTF format/tree_default.glb",
+          "kind": "model",
+          "purpose": "City tree"
+        },
+        {
+          "path": "assets/vendor/nature-kit/flower.glb",
+          "bytes": 7120,
+          "sha256": "8a3b08cd2ca411c21f9c581d5bda651d78b13c50cba45ad8fa0389398ead6d1d",
+          "sourceEntry": "Models/GLTF format/flower_yellowA.glb",
+          "kind": "model",
+          "purpose": "Warm garden accent"
+        }
+      ]
+    },
+    {
+      "id": "minigolf-kit",
+      "title": "Minigolf Kit",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/minigolf-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/minigolf-kit/3ae60d8b01-1741163874/kenney_minigolf-kit.zip",
+      "archiveBytes": 3163116,
+      "archiveSha256": "74b7bf5cf82bf8a5225319ade1284600c64f9482ae66f0ccf1f22d2212d5a952",
+      "license": {
+        "path": "assets/vendor/minigolf-kit/License.txt",
+        "bytes": 715,
+        "sha256": "1921de0377e3912e14fd2b9c76f92c530bd63794caabc3e411b97672d5a3951c",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/minigolf-kit/ball.glb",
+          "bytes": 58356,
+          "sha256": "37f1d03972f29dcba708f6fcf2fbc186292200fd8774ca1fee85ffbb266a53be",
+          "sourceEntry": "Models/GLB format/ball-red.glb",
+          "kind": "model",
+          "purpose": "Toy-box ball prop"
+        },
+        {
+          "path": "assets/vendor/minigolf-kit/flag.glb",
+          "bytes": 9384,
+          "sha256": "8ecd3bda0bf3908b1e4cad753a79be815083ef1c2cf2bec0856ab59e89542167",
+          "sourceEntry": "Models/GLB format/flag-red.glb",
+          "kind": "model",
+          "purpose": "Toy-box activity marker"
+        },
+        {
+          "path": "assets/vendor/minigolf-kit/Textures/colormap.png",
+          "bytes": 8706,
+          "sha256": "0d4947d34ff32acf4a359c7f22ca784e057e7e72f622170a9a77b6fc88fdb70e",
+          "sourceEntry": "Models/GLB format/Textures/colormap.png",
+          "kind": "image",
+          "purpose": "Shared embedded-model palette"
+        }
+      ]
+    },
+    {
+      "id": "ui-pack",
+      "title": "UI Pack",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/ui-pack",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/ui-pack/f651646eab-1718203990/kenney_ui-pack.zip",
+      "archiveBytes": 1229750,
+      "archiveSha256": "a8a14a234911eb648c062622915c93e79e94e97cb7f9f375a70f6617f1174318",
+      "license": {
+        "path": "assets/vendor/ui-pack/License.txt",
+        "bytes": 565,
+        "sha256": "69f7eaa5e05913b4d09cf5848f75390b5c3c9a409ef8555777803d9ca0c171fb",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/ui-pack/round-button.png",
+          "bytes": 1023,
+          "sha256": "b42114cc62bc588905f91962e5601f06de22d97bd2fe5ed4aa8763541f8b2430",
+          "sourceEntry": "PNG/Yellow/Default/button_round_flat.png",
+          "kind": "image",
+          "purpose": "Warm icon backing plate"
+        }
+      ]
+    },
+    {
+      "id": "game-icons",
+      "title": "Game Icons",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/game-icons",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/game-icons/1ebf9c14af-1677661579/kenney_game-icons.zip",
+      "archiveBytes": 1045980,
+      "archiveSha256": "7a86d8d58e0b851e22004b3c70bf90b003632bbf9ac633424daa3bb17d9e7e4e",
+      "license": {
+        "path": "assets/vendor/game-icons/License.txt",
+        "bytes": 481,
+        "sha256": "68a86b3a620be3366d6dc28a4a8ffb8d5de12e0b86b5199c86e51fc617e29a49",
+        "archiveEntry": "license.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/game-icons/star.png",
+          "bytes": 15648,
+          "sha256": "8e10578b82d6d46aff27a9939f4c1adccd1be6dc93c8302c9e28d281e126aae2",
+          "sourceEntry": "PNG/White/2x/star.png",
+          "kind": "image",
+          "purpose": "Sleep and sparkle accent"
+        }
+      ]
+    },
+    {
+      "id": "mobile-controls",
+      "title": "Mobile Controls (Onscreen Controls)",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/mobile-controls",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/mobile-controls/0d047b3be4-1754738457/mobile-controls-1.zip",
+      "archiveBytes": 3146863,
+      "archiveSha256": "7331c648651858fb3186a8c76e0e360e4d3ea71cfec9b502eb5cbb04a02e192b",
+      "license": {
+        "path": "assets/vendor/mobile-controls/License.txt",
+        "bytes": 699,
+        "sha256": "4c4c9d0d74f9b98ae42cb8413ded43a2a657b555f31ada2f6214d138b23e6c25",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/mobile-controls/hand.png",
+          "bytes": 427,
+          "sha256": "64b338e8b2242a5770a3aff98923cbb10c8ee432358fb8818b904d31b03307a2",
+          "sourceEntry": "Sprites/Icons/Default/icon_hand.png",
+          "kind": "image",
+          "purpose": "Touch interaction affordance"
+        },
+        {
+          "path": "assets/vendor/mobile-controls/touch-button.png",
+          "bytes": 1549,
+          "sha256": "1d76f94cd758abb649a781e895ed08984648d5c21464f773bd8eea6e4e7b4d15",
+          "sourceEntry": "Sprites/Style A/Default/button_circle.png",
+          "kind": "image",
+          "purpose": "Onscreen touch target"
+        }
+      ]
+    },
+    {
+      "id": "particle-pack",
+      "title": "Particle Pack",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/particle-pack",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/particle-pack/f8fe0f8cb8-1677578741/kenney_particle-pack.zip",
+      "archiveBytes": 15001764,
+      "archiveSha256": "b631d4b07f7002549fdcf155f01141ad482f79f3440e4e301eed49ce5f1d8958",
+      "license": {
+        "path": "assets/vendor/particle-pack/License.txt",
+        "bytes": 651,
+        "sha256": "f9e70b81d8cc07c4e07c9f2eff1d94fd371a06070b18cb67c651c41158ec2975",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/particle-pack/sparkle.png",
+          "bytes": 79574,
+          "sha256": "90f322bebe5facea2f60afe88d98dd80a21479ed3212e605d61e88a896f3e1db",
+          "sourceEntry": "PNG (Transparent)/spark_03.png",
+          "kind": "image",
+          "purpose": "Sparkle particle"
+        },
+        {
+          "path": "assets/vendor/particle-pack/bubble.png",
+          "bytes": 72952,
+          "sha256": "ed6c6f082e666c16bcaca89f15aefb55df9bf69450090518bcae1d3d61f82936",
+          "sourceEntry": "PNG (Transparent)/circle_03.png",
+          "kind": "image",
+          "purpose": "Bubble particle"
+        },
+        {
+          "path": "assets/vendor/particle-pack/magic.png",
+          "bytes": 86500,
+          "sha256": "6443e90834abcae4c3848d7ebca99ff0d9fcad19a07f49f77ad64710a3e39b36",
+          "sourceEntry": "PNG (Transparent)/magic_02.png",
+          "kind": "image",
+          "purpose": "Happy reaction accent"
+        }
+      ]
+    },
+    {
+      "id": "interface-sounds",
+      "title": "Interface Sounds",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/interface-sounds",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip",
+      "archiveBytes": 834536,
+      "archiveSha256": "f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232",
+      "license": {
+        "path": "assets/vendor/interface-sounds/License.txt",
+        "bytes": 574,
+        "sha256": "f7966c773bbed0eca6a9c75081c44a178b38eae112724dbb5fdfbd4192d118a9",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/interface-sounds/tap.wav",
+          "bytes": 8644,
+          "sha256": "bb518366184cdc8a33bfcfaac732a4372484525011a8a1981dd1152d0d8eea4f",
+          "sourceEntry": "Audio/click_001.ogg",
+          "kind": "audio",
+          "purpose": "Tap sound",
+          "transform": "ogg-to-wav"
+        }
+      ]
+    },
+    {
+      "id": "music-jingles",
+      "title": "Music Jingles",
+      "status": "vendored",
+      "pageUrl": "https://kenney.nl/assets/music-jingles",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/music-jingles/f37e530b9e-1677590399/kenney_music-jingles.zip",
+      "archiveBytes": 1239525,
+      "archiveSha256": "b729ba57959bd58793d2c5cafa348aaf2655d354f3da35ec4729e03ec77197b8",
+      "license": {
+        "path": "assets/vendor/music-jingles/License.txt",
+        "bytes": 482,
+        "sha256": "373b1c880ee6c7a83c1ccf209f251cf45fc9ea9b1f0330844fa7be64a401adc4",
+        "archiveEntry": "License.txt"
+      },
+      "files": [
+        {
+          "path": "assets/vendor/music-jingles/happy.wav",
+          "bytes": 101232,
+          "sha256": "efb1b69dfa2ab5f07cfbd331797a51c58024e790793f681f54425614dac0f256",
+          "sourceEntry": "Audio/Pizzicato jingles/jingles_PIZZI03.ogg",
+          "kind": "audio",
+          "purpose": "Happy reward jingle",
+          "transform": "ogg-to-wav"
+        }
+      ]
+    }
+  ],
+  "keys": {
+    "gooby.body": {
+      "fallback": "gooby-body",
+      "vendored": []
+    },
+    "gooby.eye": {
+      "fallback": "gooby-eye",
+      "vendored": []
+    },
+    "food.carrot": {
+      "fallback": "carrot",
+      "vendored": [
+        {
+          "path": "assets/vendor/food-kit/carrot.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "food.apple": {
+      "fallback": "apple",
+      "vendored": [
+        {
+          "path": "assets/vendor/food-kit/apple.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "food.pancake": {
+      "fallback": "pancake",
+      "vendored": [
+        {
+          "path": "assets/vendor/food-kit/pancake.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "furniture.sofa": {
+      "fallback": "sofa",
+      "vendored": [
+        {
+          "path": "assets/vendor/furniture-kit/sofa.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "furniture.armchair": {
+      "fallback": "armchair",
+      "vendored": [
+        {
+          "path": "assets/vendor/furniture-kit/armchair.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "furniture.coffee-table": {
+      "fallback": "coffee-table",
+      "vendored": [
+        {
+          "path": "assets/vendor/furniture-kit/coffee-table.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "furniture.rug": {
+      "fallback": "rug",
+      "vendored": [
+        {
+          "path": "assets/vendor/furniture-kit/rug.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "furniture.lamp": {
+      "fallback": "floor-lamp",
+      "vendored": [
+        {
+          "path": "assets/vendor/furniture-kit/lamp.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "furniture.bookshelf": {
+      "fallback": "bookshelf",
+      "vendored": [
+        {
+          "path": "assets/vendor/furniture-kit/bookshelf.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "furniture.bed": {
+      "fallback": "bed",
+      "vendored": [
+        {
+          "path": "assets/vendor/furniture-kit/bed.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "furniture.bathtub": {
+      "fallback": "bathtub",
+      "vendored": [
+        {
+          "path": "assets/vendor/furniture-kit/bathtub.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "furniture.kitchen-counter": {
+      "fallback": "kitchen-counter",
+      "vendored": [
+        {
+          "path": "assets/vendor/furniture-kit/kitchen-counter.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "city.road": {
+      "fallback": "toy-road",
+      "vendored": [
+        {
+          "path": "assets/vendor/city-kit-roads/road.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "city.tree": {
+      "fallback": "flowering-tree",
+      "vendored": [
+        {
+          "path": "assets/vendor/nature-kit/tree.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "city.lamp": {
+      "fallback": "street-lamp",
+      "vendored": [
+        {
+          "path": "assets/vendor/city-kit-roads/street-lamp.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "city.car": {
+      "fallback": "gooby-car",
+      "vendored": [
+        {
+          "path": "assets/vendor/car-kit/gooby-car.glb",
+          "role": "primary"
+        },
+        {
+          "path": "assets/vendor/car-kit/traffic-car.glb",
+          "role": "variant"
+        }
+      ]
+    },
+    "building.carrot-market": {
+      "fallback": "carrot-market",
+      "vendored": [
+        {
+          "path": "assets/vendor/city-kit-commercial/carrot-market.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "building.cloud-boutique": {
+      "fallback": "cloud-boutique",
+      "vendored": [
+        {
+          "path": "assets/vendor/city-kit-suburban/cloud-boutique.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "building.fluff-salon": {
+      "fallback": "fluff-salon",
+      "vendored": [
+        {
+          "path": "assets/vendor/city-kit-commercial/fluff-salon.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "icon.heart": {
+      "fallback": "heart-icon",
+      "vendored": [
+        {
+          "path": "assets/vendor/ui-pack/round-button.png",
+          "role": "backplate"
+        }
+      ]
+    },
+    "icon.carrot": {
+      "fallback": "carrot-icon",
+      "vendored": [
+        {
+          "path": "assets/vendor/food-kit/carrot.glb",
+          "role": "primary"
+        }
+      ]
+    },
+    "icon.coin": {
+      "fallback": "coin-icon",
+      "vendored": []
+    },
+    "icon.sleep": {
+      "fallback": "sleep-icon",
+      "vendored": [
+        {
+          "path": "assets/vendor/game-icons/star.png",
+          "role": "accent"
+        }
+      ]
+    },
+    "particle.heart": {
+      "fallback": "heart-particle",
+      "vendored": []
+    },
+    "particle.sparkle": {
+      "fallback": "sparkle-particle",
+      "vendored": [
+        {
+          "path": "assets/vendor/particle-pack/sparkle.png",
+          "role": "primary"
+        }
+      ]
+    },
+    "particle.bubble": {
+      "fallback": "bubble-particle",
+      "vendored": [
+        {
+          "path": "assets/vendor/particle-pack/bubble.png",
+          "role": "primary"
+        }
+      ]
+    },
+    "audio.happy": {
+      "fallback": "happy-chime",
+      "vendored": [
+        {
+          "path": "assets/vendor/music-jingles/happy.wav",
+          "role": "primary"
+        }
+      ]
+    },
+    "audio.munch": {
+      "fallback": "munch-crunch",
+      "vendored": []
+    },
+    "audio.sleep": {
+      "fallback": "sleep-chime",
+      "vendored": []
+    },
+    "audio.wake": {
+      "fallback": "wake-chime",
+      "vendored": []
+    },
+    "audio.tap": {
+      "fallback": "tap-pop",
+      "vendored": [
+        {
+          "path": "assets/vendor/interface-sounds/tap.wav",
+          "role": "primary"
+        }
+      ]
+    }
+  }
+}

@@ -77,6 +77,19 @@ button:focus-visible {
   touch-action: none;
 }
 
+.minigame-mount {
+  position: absolute;
+  z-index: 8;
+  inset: 0;
+  overflow: hidden;
+  background: #f4d7a9;
+}
+
+.minigame-mount > * {
+  width: 100%;
+  height: 100%;
+}
+
 .sun-glow {
   position: absolute;
   z-index: 1;
@@ -387,6 +400,10 @@ button:focus-visible {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   padding: 0 6px 7px;
+}
+
+.quick-actions:has(.bathe-button:not([hidden])) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .action-button {
@@ -1351,8 +1368,7 @@ button:focus-visible {
   display: none;
 }
 
-.outfit-head.sunhat,
-.outfit-head.cloud-cap {
+.outfit-head:not(.none) {
   top: -29px;
   left: 17px;
   display: block;
@@ -1363,14 +1379,27 @@ button:focus-visible {
   box-shadow: 0 -17px 0 -4px #efbd70;
 }
 
-.outfit-head.cloud-cap {
+.outfit-head.raincloud-cap,
+.outfit-head.starlight-crown {
   width: 76px;
   background: #9d92c6;
   box-shadow: 0 -15px 0 -3px #c3b8df;
 }
 
-.outfit-neck.berry-scarf,
-.outfit-neck.daisy-collar {
+.outfit-ears:not(.none) {
+  z-index: 4;
+  top: -31px;
+  left: 20px;
+  display: block;
+  width: 17px;
+  height: 17px;
+  border: 4px solid #fff0bf;
+  border-radius: 50%;
+  background: #7dab72;
+  box-shadow: 62px 4px 0 -4px #7dab72, 62px 4px 0 0 #fff0bf;
+}
+
+.outfit-neck:not(.none) {
   z-index: 3;
   top: 55px;
   left: 15px;
@@ -1382,13 +1411,13 @@ button:focus-visible {
   box-shadow: 0 8px 0 -3px #8d4257;
 }
 
-.outfit-neck.daisy-collar {
+.outfit-neck.bluebell-ribbon,
+.outfit-neck.pearl-dewdrop-necklace {
   background: repeating-radial-gradient(circle at 7px 7px, #fff3c6 0 4px, #e29c69 5px 6px, transparent 7px 14px);
   box-shadow: none;
 }
 
-.outfit-body.meadow-vest,
-.outfit-body.apricot-overalls {
+.outfit-body:not(.none) {
   z-index: 2;
   right: 11px;
   bottom: 0;
@@ -1400,7 +1429,8 @@ button:focus-visible {
   opacity: 0.9;
 }
 
-.outfit-body.apricot-overalls {
+.outfit-body.rainbow-capelet,
+.outfit-body.cloud-dream-cape {
   background:
     linear-gradient(90deg, transparent 0 13%, #d77954 14% 24%, transparent 25% 75%, #d77954 76% 86%, transparent 87%),
     #e99b64;

@@ -63,8 +63,8 @@ async function closePanel(page: Page): Promise<void> {
 
 async function exerciseSurfaces(page: Page, viewportName: string, capture: boolean): Promise<void> {
   await assertPanelLayout(page, "places");
-  await page.locator('[data-ui-action="select-shop"]').first().click();
-  await expect(page.getByText("Destination selected")).toBeVisible();
+  await expect(page.locator('[data-ui-action="home-zone"]')).toHaveCount(5);
+  await expect(page.getByTestId("open-city-board")).toBeVisible();
   if (capture && viewportName === "ipad-portrait") {
     await page.screenshot({ path: "/opt/cursor/artifacts/sol_ui_places_ipad_final.png" });
   }
@@ -78,9 +78,8 @@ async function exerciseSurfaces(page: Page, viewportName: string, capture: boole
   await closePanel(page);
 
   await assertPanelLayout(page, "wardrobe");
-  await page.locator('[data-slot="head"][data-item="sunhat"]').click();
-  await page.locator('[data-ui-action="wardrobe-equip"][data-slot="head"]').click();
-  await expect(page.locator(".preview-gooby .sunhat")).toBeVisible();
+  await expect(page.locator(".wardrobe-slot")).toHaveCount(4);
+  await expect(page.locator('[data-ui-action="wardrobe-preview"][data-item]')).toHaveCount(0);
   if (capture && viewportName === "iphone-se") {
     await page.waitForTimeout(2_500);
     await page.screenshot({ path: "/opt/cursor/artifacts/sol_ui_wardrobe_se_v3.png" });
@@ -89,7 +88,7 @@ async function exerciseSurfaces(page: Page, viewportName: string, capture: boole
 
   await assertPanelLayout(page, "items");
   await page.getByRole("tab", { name: "Furniture" }).click();
-  await expect(page.locator(".inventory-card")).toHaveCount(4);
+  await expect(page.locator(".empty-state")).toContainText("Cloud Boutique");
   if (capture && viewportName === "iphone-portrait") {
     await page.screenshot({ path: "/opt/cursor/artifacts/sol_ui_items_390_final.png" });
   }
