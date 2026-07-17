@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.tsbuildinfo
+playwright-report/
+test-results/
+.env
+.env.*
+!.env.example
+ios/App/Pods/
+ios/App/App/public/
