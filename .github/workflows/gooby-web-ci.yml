@@ -24,7 +24,7 @@ jobs:
   web:
     name: Lint, test, build, and every browser suite
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: GOOBY

@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export const ROOT_E2E_TIMEOUT_MS = 180_000;
 export const ROOT_E2E_CITY_TIMEOUT_MARGIN_MS = 30_000;
-export const ROOT_E2E_CI_WORKERS = 2;
+export const ROOT_E2E_CI_WORKERS = 1;
 
 export default defineConfig({
   testDir: "./e2e",
