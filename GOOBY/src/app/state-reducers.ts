@@ -16,6 +16,68 @@ import type { ReplayableSaveReducer } from "./save-coordinator";
 const INTERNAL_INVENTORY_PREFIX = "__";
 const SETTLED_RUN_PREFIX = "__minigame.settled.v1|";
 const TRAVEL_SNAPSHOT_PREFIX = "__city.travel.v1|";
+const HARVEST_DAY_KEY = "__home.harvest.day";
+const HARVEST_COUNT_KEY = "__home.harvest.count";
+const HARVEST_RECEIPT_PREFIX = "__home.harvest.receipt.v1|";
+const DAILY_HARVEST_QUOTA = 3;
+
+interface HarvestLedger {
+  readonly day: number | null;
+  readonly count: number;
+}
+
+interface HarvestOperation {
+  readonly day: number;
+  readonly grants: number;
+  readonly receiptKey: string;
+}
+
+function harvestLedger(state: CanonicalSaveState): HarvestLedger {
+  const canonicalDay = state.dailyHarvest.day ?? -1;
+  const legacyDay = state.inventory[HARVEST_DAY_KEY] ?? -1;
+  const day = Math.max(canonicalDay, legacyDay);
+  if (day < 0) return { day: null, count: 0 };
+  const canonicalCount = canonicalDay === day ? state.dailyHarvest.count : 0;
+  const legacyCount = legacyDay === day ? (state.inventory[HARVEST_COUNT_KEY] ?? 0) : 0;
+  return { day, count: Math.max(canonicalCount, legacyCount) };
+}
+
+function harvestReceiptId(): string {
+  const crypto = globalThis.crypto;
+  if (crypto && typeof crypto.randomUUID === "function") {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      // Restricted webviews can expose crypto while rejecting randomUUID.
+    }
+  }
+  return Array.from({ length: 4 }, () =>
+    Math.floor(Math.random() * 0x1_0000_0000).toString(36).padStart(7, "0")).join("");
+}
+
+function semanticHarvestOperation(
+  before: CanonicalSaveState,
+  next: CanonicalSaveState,
+): HarvestOperation | null {
+  const previous = harvestLedger(before);
+  const proposed = harvestLedger(next);
+  if (proposed.day === null) return null;
+  const previousDay = previous.day ?? -1;
+  const countIncrease = proposed.day > previousDay
+    ? proposed.count
+    : proposed.day === previous.day
+      ? proposed.count - previous.count
+      : 0;
+  const carrotIncrease = (next.inventory.carrot ?? 0) - (before.inventory.carrot ?? 0);
+  const grants = Math.min(Math.max(0, countIncrease), Math.max(0, carrotIncrease));
+  if (grants === 0) return null;
+  const receiptId = harvestReceiptId();
+  return {
+    day: proposed.day,
+    grants,
+    receiptKey: `${HARVEST_RECEIPT_PREFIX}${proposed.day}|${grants}|${receiptId}`,
+  };
+}
 
 function same(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -52,14 +114,15 @@ export function migrateLegacyUiReducer(legacy: UiPersistedState): ReplayableSave
         highScores[game] = Math.max(highScores[game] ?? 0, score);
       }
     }
+    const legacyEquipped = ownedEquipped(state, legacy.equipped);
     return SaveStateSchema.parse({
       ...state,
       settings: {
         ...state.settings,
-        muted: !legacy.preferences.audio,
-        haptics: legacy.preferences.haptics,
-        reducedMotion: legacy.preferences.reducedMotion,
-        notifications: legacy.preferences.notifications,
+        ...(legacy.preferences.audio ? {} : { muted: true }),
+        ...(legacy.preferences.haptics ? {} : { haptics: false }),
+        ...(legacy.preferences.reducedMotion ? { reducedMotion: true } : {}),
+        ...(legacy.preferences.notifications ? {} : { notifications: false }),
       },
       notificationPolicy: legacy.quietHours === undefined
         ? state.notificationPolicy
@@ -68,7 +131,10 @@ export function migrateLegacyUiReducer(legacy: UiPersistedState): ReplayableSave
             quietHours: legacy.quietHours,
           },
       ui: {
-        equipped: ownedEquipped(state, legacy.equipped),
+        equipped: ownedEquipped(state, {
+          ...state.ui.equipped,
+          ...legacyEquipped,
+        }),
         highScores,
         sleepRationaleSeen: state.ui.sleepRationaleSeen || legacy.sleepRationaleSeen,
       },
@@ -174,6 +240,7 @@ export function reconcileExternalState(
   proposed: SaveState,
 ): ReplayableSaveReducer {
   const next = SaveStateSchema.parse(proposed);
+  const harvest = semanticHarvestOperation(before, next);
   const coinDelta = next.economy.coins - before.economy.coins;
   const xpDelta = next.economy.xp - before.economy.xp;
   const inventoryKeys = new Set([
@@ -181,12 +248,15 @@ export function reconcileExternalState(
     ...Object.keys(next.inventory),
   ]);
   const inventoryChanges = [...inventoryKeys]
+    .filter((key) => key !== HARVEST_DAY_KEY && key !== HARVEST_COUNT_KEY)
     .filter((key) => (before.inventory[key] ?? 0) !== (next.inventory[key] ?? 0))
     .map((key) => ({
       key,
-      delta: (next.inventory[key] ?? 0) - (before.inventory[key] ?? 0),
+      delta: (next.inventory[key] ?? 0) - (before.inventory[key] ?? 0)
+        - (key === "carrot" ? (harvest?.grants ?? 0) : 0),
       exact: next.inventory[key] ?? 0,
-    }));
+    }))
+    .filter(({ delta }) => delta !== 0);
   const needDeltas = Object.fromEntries(
     (["hunger", "energy", "hygiene", "fun"] as const).map((key) => [
       key,
@@ -202,6 +272,29 @@ export function reconcileExternalState(
         : Math.max(0, (inventory[change.key] ?? 0) + change.delta);
       if (value === 0 && change.exact === 0) delete inventory[change.key];
       else inventory[change.key] = value;
+    }
+    let dailyHarvest = state.dailyHarvest;
+    if (harvest) {
+      const current = harvestLedger(state);
+      let day = current.day;
+      let count = current.count;
+      if ((inventory[harvest.receiptKey] ?? 0) === 0) {
+        if (day === null || harvest.day > day) {
+          day = harvest.day;
+          count = 0;
+        }
+        if (day === harvest.day) {
+          const granted = Math.min(harvest.grants, Math.max(0, DAILY_HARVEST_QUOTA - count));
+          inventory.carrot = (inventory.carrot ?? 0) + granted;
+          count += granted;
+        }
+        inventory[harvest.receiptKey] = 1;
+      }
+      if (day !== null) {
+        dailyHarvest = { day, count };
+        inventory[HARVEST_DAY_KEY] = day;
+        inventory[HARVEST_COUNT_KEY] = count;
+      }
     }
     const xp = Math.max(0, state.economy.xp + xpDelta);
     const simulationChanged = !same(before.simulation, next.simulation);
@@ -233,9 +326,7 @@ export function reconcileExternalState(
       settings: same(before.settings, next.settings) ? state.settings : next.settings,
       ui: same(before.ui, next.ui) ? state.ui : next.ui,
       travel: same(before.travel, next.travel) ? state.travel : next.travel,
-      dailyHarvest: same(before.dailyHarvest, next.dailyHarvest)
-        ? state.dailyHarvest
-        : next.dailyHarvest,
+      dailyHarvest,
       notificationPolicy: same(before.notificationPolicy, next.notificationPolicy)
         ? state.notificationPolicy
         : next.notificationPolicy,

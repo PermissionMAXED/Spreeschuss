@@ -18,6 +18,12 @@ import {
   MAX_TOTAL_BYTES,
   PACKS,
 } from "./assets/catalog.mjs";
+import {
+  LICENSE_NOTICE_BUNDLED_PATH,
+  LICENSE_NOTICE_CANONICAL_PATH,
+  licenseNoticeDocument,
+  licenseNoticeRecord,
+} from "./assets/license-notice.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const ASSETS_ROOT = join(ROOT, "assets");
@@ -250,27 +256,6 @@ async function retainPreviousPack(pack, previous, stageRoot, error) {
   };
 }
 
-function markdownLink(text, url) {
-  return `[${text}](${url})`;
-}
-
-function licenseDocument(packs) {
-  const rows = packs.map((pack) => {
-    const source = markdownLink("official page", pack.pageUrl);
-    const license = pack.license ? markdownLink("verbatim License.txt", `vendor/${pack.id}/License.txt`) : "not vendored";
-    const checksum = pack.archiveSha256 ? `\`${pack.archiveSha256}\`` : "unavailable";
-    return `| ${pack.title} | ${pack.status} | ${source} | ${checksum} | ${license} |`;
-  });
-  return `# Third-party asset licenses
-
-Every linked \`License.txt\` is copied byte-for-byte from the corresponding downloaded Kenney archive. This index does not substitute, paraphrase, or invent license terms.
-
-| Pack | Status | Source | Archive SHA-256 | Genuine license |
-| --- | --- | --- | --- | --- |
-${rows.join("\n")}
-`;
-}
-
 function vendoredDocument(packs) {
   const sections = packs.map((pack) => {
     if (pack.status === "failed") {
@@ -349,6 +334,13 @@ async function main() {
     const totalBytes = results.reduce((sum, pack) =>
       sum + (pack.license?.bytes ?? 0) + pack.files.reduce((files, file) => files + file.bytes, 0), 0);
     if (totalBytes > MAX_TOTAL_BYTES) throw new Error("Curated asset output exceeds the 150 MB total limit");
+    const licenseSources = new Map(await Promise.all(results
+      .filter(({ license }) => license)
+      .map(async (pack) => [
+        pack.id,
+        await readFile(join(stageRoot, pack.license.path), "utf8"),
+      ])));
+    const licenseDocument = licenseNoticeDocument(results, licenseSources);
 
     const manifest = {
       schemaVersion: 1,
@@ -361,12 +353,16 @@ async function main() {
       totalBytes,
       packs: results,
       keys,
+      notices: [licenseNoticeRecord(licenseDocument, results)],
     };
 
     await replaceDirectory(join(stageRoot, "assets/vendor"), join(ASSETS_ROOT, "vendor"));
     await replaceDirectory(join(stageRoot, "public/assets/vendor"), join(PUBLIC_ROOT, "assets/vendor"));
+    await mkdir(dirname(join(ROOT, LICENSE_NOTICE_CANONICAL_PATH)), { recursive: true });
+    await mkdir(dirname(join(PUBLIC_ROOT, LICENSE_NOTICE_BUNDLED_PATH)), { recursive: true });
+    await writeFile(join(ROOT, LICENSE_NOTICE_CANONICAL_PATH), licenseDocument);
+    await writeFile(join(PUBLIC_ROOT, LICENSE_NOTICE_BUNDLED_PATH), licenseDocument);
     await writeFile(MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
-    await writeFile(join(ASSETS_ROOT, "LICENSES.md"), licenseDocument(results));
     await writeFile(join(ASSETS_ROOT, "VENDORED.md"), vendoredDocument(results));
 
     const failed = results.filter(({ status }) => status === "failed");

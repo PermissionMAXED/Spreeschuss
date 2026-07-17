@@ -14,6 +14,12 @@ import {
   runtimeReferenceViolations,
   sha256,
 } from "./assets/audit-lib.mjs";
+import {
+  LICENSE_NOTICE_BUNDLED_PATH,
+  licenseNoticeDocument,
+  licenseNoticeRecord,
+  licenseNoticeViolations,
+} from "./assets/license-notice.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PUBLIC_ROOT = join(ROOT, "public");
@@ -45,6 +51,22 @@ function sorted(values) {
 
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+async function isDirectory(path) {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function optionalText(path) {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 async function main() {
@@ -85,6 +107,7 @@ async function main() {
   const expectedPublicFiles = new Set();
   const expectedLicenseFiles = new Set();
   const modelDependencies = [];
+  const licenseSources = new Map();
   let recordedBytes = 0;
 
   for (const pack of PACKS) {
@@ -131,6 +154,7 @@ async function main() {
           if (bytes.length < 100) violations.push(`${pack.id}: License.txt is unexpectedly short`);
           if (bytes.length !== record.license.bytes) violations.push(`${pack.id}: License.txt byte count mismatch`);
           if (sha256(bytes) !== record.license.sha256) violations.push(`${pack.id}: License.txt checksum mismatch`);
+          licenseSources.set(pack.id, bytes.toString("utf8"));
         } catch {
           violations.push(`${pack.id}: missing License.txt`);
         }
@@ -256,7 +280,7 @@ async function main() {
     if (!actualLicenses.has(path)) violations.push(`${path}: missing genuine license file`);
   }
 
-  for (const document of ["LICENSES.md", "VENDORED.md"]) {
+  for (const document of ["VENDORED.md"]) {
     const source = await readFile(join(ASSET_ROOT, document), "utf8");
     for (const pack of manifest.packs ?? []) {
       if (!source.includes(pack.title) || !source.includes(pack.pageUrl)) {
@@ -264,6 +288,35 @@ async function main() {
       }
     }
   }
+
+  let expectedLicenseDocument = "";
+  try {
+    expectedLicenseDocument = licenseNoticeDocument(manifest.packs ?? [], licenseSources);
+  } catch (error) {
+    violations.push(`Cannot generate the bundled license notice: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const expectedLicenseRecord = licenseNoticeRecord(expectedLicenseDocument, manifest.packs ?? []);
+  const distRoot = join(ROOT, "dist");
+  const nativeRoot = join(ROOT, "ios/App/App/public");
+  const builtDocument = await isDirectory(distRoot)
+    ? await optionalText(join(distRoot, LICENSE_NOTICE_BUNDLED_PATH))
+    : process.argv.includes("--require-built") ? null : undefined;
+  const nativeDocument = await isDirectory(nativeRoot)
+    ? await optionalText(join(nativeRoot, LICENSE_NOTICE_BUNDLED_PATH))
+    : process.argv.includes("--require-native") ? null : undefined;
+  violations.push(...licenseNoticeViolations({
+    expectedDocument: expectedLicenseDocument,
+    expectedRecord: expectedLicenseRecord,
+    canonicalDocument: await optionalText(join(ROOT, expectedLicenseRecord.canonicalPath)),
+    bundledDocument: await optionalText(join(PUBLIC_ROOT, expectedLicenseRecord.bundledPath)),
+    manifestNotices: manifest.notices,
+    runtimeManifestSource,
+    viteConfigSource: await readFile(join(ROOT, "vite.config.ts"), "utf8"),
+    requiredPackIds: expectedPackIds,
+    requiredFiles: PACKS.flatMap((pack) => pack.files.map(({ output }) => output)),
+    builtDocument,
+    nativeDocument,
+  }));
 
   const sourceRuntimeFiles = await filesBelow(join(ROOT, "src"));
   const runtimeFiles = [
@@ -324,7 +377,8 @@ async function main() {
   const vendoredCount = (manifest.packs ?? []).filter(({ status }) => status !== "failed").length;
   console.log(
     `Asset audit passed: ${contractKeys.length} keys mapped, ${vendoredCount}/${PACKS.length} packs available, `
-    + `${expectedPublicFiles.size} curated files, ${actualTotalBytes} bytes, offline runtime enforced.`,
+    + `${expectedPublicFiles.size} curated files, bundled license notice verified, `
+    + `${actualTotalBytes} bytes, offline runtime enforced.`,
   );
 }
 

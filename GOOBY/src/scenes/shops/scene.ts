@@ -17,6 +17,7 @@ import type { SaveState } from "../../core/contracts/save";
 import { ProceduralGooby } from "../../gooby";
 import type { GameRenderer } from "../../render/renderer";
 import {
+  COSMETIC_SLOTS,
   getCatalogOwnershipMetadata,
   SHOP_CATALOGS,
   type CatalogItem,
@@ -144,7 +145,7 @@ export class WalkableShopScene implements GameScene {
   private readonly shopkeeper: ProceduralShopkeeper;
   private readonly gooby = new ProceduralGooby();
   private readonly tryOnSession: CosmeticTryOnSession | null;
-  private readonly tryOnModels = new Group();
+  private readonly tryOnModels = new Map<CosmeticSlot, Group>();
   private readonly arrival: CityShopArrival;
   private readonly requestIds = new PurchaseRequestIdSource();
   private overlay: HTMLElement | null = null;
@@ -231,6 +232,7 @@ export class WalkableShopScene implements GameScene {
     canvas.removeEventListener("pointerdown", this.onCanvasPointerDown);
     canvas.removeEventListener("pointerup", this.onCanvasPointerUp);
     this.tryOnSession?.dispose();
+    this.clearTryOnModels();
     this.gooby.dispose();
     this.clearPreview();
     disposeObjectTree(this.root);
@@ -307,7 +309,6 @@ export class WalkableShopScene implements GameScene {
     if (this.shopId === "fluff-salon") {
       const mannequin = this.createTryOnMannequin();
       mannequin.position.set(1, 0, 0);
-      mannequin.add(this.tryOnModels);
       this.root.add(mannequin);
       this.renderTryOn(this.tryOnSession?.equipped ?? {});
     }
@@ -361,28 +362,27 @@ export class WalkableShopScene implements GameScene {
   private createTryOnMannequin(): Group {
     this.gooby.root.name = "Live Gooby cosmetic try-on";
     this.gooby.root.scale.setScalar(0.62);
-    this.tryOnModels.position.set(0, 0, 0.56);
-    this.gooby.root.add(this.tryOnModels);
     return this.gooby.root;
   }
 
   private renderTryOn(equipped: EquippedCosmetics): void {
-    for (const child of [...this.tryOnModels.children]) disposeObjectTree(child);
-    const positions: Readonly<Record<CosmeticSlot, readonly [number, number, number]>> = {
-      head: [0, 2.25, 0],
-      ears: [0, 2.5, 0],
-      neck: [0, 1.5, 0],
-      back: [0, 1.12, -0.56],
-    };
-    for (const itemId of Object.values(equipped)) {
+    if (this.disposed) return;
+    this.clearTryOnModels();
+    for (const slot of COSMETIC_SLOTS) {
+      const itemId = equipped[slot];
       if (!itemId) continue;
       const item = SHOP_CATALOGS["fluff-salon"].find((candidate) => candidate.id === itemId);
-      if (!item || item.kind !== "cosmetic") continue;
+      if (!item || item.kind !== "cosmetic" || item.slot !== slot) continue;
       const model = createCosmeticModel(item);
-      model.position.set(...positions[item.slot]);
-      model.scale.setScalar(item.slot === "back" ? 0.68 : 0.58);
-      this.tryOnModels.add(model);
+      model.name = `try-on:${slot}:${item.id}`;
+      this.gooby.getCosmeticSocket(slot).add(model);
+      this.tryOnModels.set(slot, model);
     }
+  }
+
+  private clearTryOnModels(): void {
+    for (const model of this.tryOnModels.values()) disposeObjectTree(model);
+    this.tryOnModels.clear();
   }
 
   private buildOverlay(): void {

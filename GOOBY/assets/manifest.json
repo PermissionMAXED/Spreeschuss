@@ -301,5 +301,28 @@
       "fallback": "tap-pop",
       "vendored": []
     }
-  }
+  },
+  "notices": [
+    {
+      "id": "kenney-asset-licenses",
+      "canonicalPath": "assets/LICENSES.md",
+      "bundledPath": "assets/LICENSES.md",
+      "bytes": 5579,
+      "sha256": "45907b9ef7152eb28eb03e71000eb92495b9f792a14f7ce0cca370c078616d85",
+      "packIds": [
+        "city-kit-commercial",
+        "city-kit-suburban",
+        "car-kit"
+      ],
+      "files": [
+        "assets/vendor/city-kit-commercial/carrot-market.glb",
+        "assets/vendor/city-kit-commercial/fluff-salon.glb",
+        "assets/vendor/city-kit-commercial/Textures/colormap.png",
+        "assets/vendor/city-kit-suburban/cloud-boutique.glb",
+        "assets/vendor/city-kit-suburban/Textures/colormap.png",
+        "assets/vendor/car-kit/gooby-car.glb",
+        "assets/vendor/car-kit/Textures/colormap.png"
+      ]
+    }
+  ]
 }

@@ -82,14 +82,6 @@ export function hapticForAudioEvent<Key extends keyof AudioEvents>(
     if (action === "pickup") return "success";
     return action === "brake" || action === "engine-start" ? "light" : null;
   }
-  if (event === "audio:minigame") {
-    const action = (payload as AudioEvents["audio:minigame"]).action;
-    if (action === "combo") return "combo";
-    if (action === "miss" || action === "lose") return "warning";
-    if (action === "win" || action === "go") return "success";
-    if (action === "countdown") return "tension";
-    return action === "hit" || action === "score" ? "light" : null;
-  }
   return null;
 }
 
@@ -132,7 +124,6 @@ export class HapticDirector {
       bus.on("audio:gooby", (payload) => this.playMapped("audio:gooby", payload)),
       bus.on("audio:economy", (payload) => this.playMapped("audio:economy", payload)),
       bus.on("audio:car", (payload) => this.playMapped("audio:car", payload)),
-      bus.on("audio:minigame", (payload) => this.playMapped("audio:minigame", payload)),
     ];
     this.removeListeners.push(...removers);
     return () => this.remove(removers);

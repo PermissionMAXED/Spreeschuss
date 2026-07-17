@@ -19,6 +19,7 @@ import type {
   SavePort,
   SaveRecord,
 } from "../../core/contracts/platform";
+import { migrateSave, SaveStateSchema } from "../../core/contracts/save";
 
 const SAVE_KEY = "gooby.save.v2";
 const LEGACY_SAVE_KEYS = ["gooby.save.v1", "gooby.save"] as const;
@@ -98,7 +99,7 @@ function coordinationFor(preferences: PreferencesClient): NativeSaveCoordination
   return created;
 }
 
-function parseCurrentRecord(raw: string | null): SaveRecord | null {
+function parseRevisionedRecord(raw: string | null): SaveRecord | null {
   if (!raw) return null;
   try {
     const value: unknown = JSON.parse(raw);
@@ -118,9 +119,16 @@ function parseCurrentRecord(raw: string | null): SaveRecord | null {
   return null;
 }
 
+function parseCurrentRecord(record: SaveRecord | null): SaveRecord | null {
+  if (!record) return null;
+  const payload = SaveStateSchema.safeParse(record.payload);
+  return payload.success ? { revision: record.revision, payload: payload.data } : null;
+}
+
 function parseLegacyRecord(raw: string): SaveRecord | null {
   try {
     const value: unknown = JSON.parse(raw);
+    let record: SaveRecord;
     if (
       typeof value === "object" &&
       value !== null &&
@@ -129,11 +137,14 @@ function parseLegacyRecord(raw: string): SaveRecord | null {
       (value.revision as number) >= 0 &&
       "payload" in value
     ) {
-      return { revision: value.revision as number, payload: value.payload };
+      record = { revision: value.revision as number, payload: value.payload };
+    } else if (typeof value === "object" && value !== null) {
+      record = { revision: 0, payload: value };
+    } else {
+      return null;
     }
-    return typeof value === "object" && value !== null
-      ? { revision: 0, payload: value }
-      : null;
+    const migrated = migrateSave(record.payload);
+    return migrated ? { revision: record.revision, payload: migrated } : null;
   } catch {
     return null;
   }
@@ -176,7 +187,8 @@ export class NativeSaveAdapter implements SavePort {
   private async loadUnlocked(): Promise<SaveRecord | null> {
     await this.ensureMigrated();
     const current = (await this.preferences.get({ key: SAVE_KEY })).value;
-    const currentRecord = parseCurrentRecord(current);
+    const currentEnvelope = parseRevisionedRecord(current);
+    const currentRecord = parseCurrentRecord(currentEnvelope);
     if (currentRecord) return currentRecord;
 
     for (const key of LEGACY_SAVE_KEYS) {
@@ -184,11 +196,19 @@ export class NativeSaveAdapter implements SavePort {
       if (legacy === null) continue;
       const record = parseLegacyRecord(legacy);
       if (!record) continue;
-      await this.preferences.set({ key: SAVE_KEY, value: JSON.stringify(record) });
+      const promoted = {
+        revision: Math.max(currentEnvelope?.revision ?? 0, record.revision),
+        payload: record.payload,
+      };
+      await this.preferences.set({ key: SAVE_KEY, value: JSON.stringify(promoted) });
       await this.preferences.remove({ key });
-      return record;
+      return promoted;
     }
-    return current === null ? null : { revision: 0, payload: null };
+    return currentEnvelope
+      ? { revision: currentEnvelope.revision, payload: null }
+      : current === null
+        ? null
+        : { revision: 0, payload: null };
   }
 
   private ensureMigrated(): Promise<void> {

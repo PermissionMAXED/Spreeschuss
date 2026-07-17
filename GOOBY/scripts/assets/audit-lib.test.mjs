@@ -11,6 +11,12 @@ import {
   licenseMetadataViolations,
   runtimeReferenceViolations,
 } from "./audit-lib.mjs";
+import { PACKS } from "./catalog.mjs";
+import {
+  licenseNoticeDocument,
+  licenseNoticeRecord,
+  licenseNoticeViolations,
+} from "./license-notice.mjs";
 import { networkReferenceViolations } from "../audit/no-network-scan.mjs";
 
 const MODEL = "assets/vendor/pack/model.glb";
@@ -32,6 +38,43 @@ function consumerFixture(overrides = {}) {
     runtimeRequests: new Map([["city.car", new Set(["src/scenes/city/assets.ts"])]]),
     sourceFiles: new Map([["src/scenes/city/world.ts", 'assets.clone("city.car")']]),
     declaredAssetKeys: new Map([[MODEL, new Set(["city.car"])]]),
+    ...overrides,
+  };
+}
+
+const NOTICE_PACKS = [{
+  id: "test-pack",
+  title: "Test Pack",
+  pageUrl: "https://kenney.nl/assets/test-pack",
+  archiveSha256: "a".repeat(64),
+  license: {
+    archiveEntry: "License.txt",
+    sha256: "b".repeat(64),
+  },
+  files: [{
+    path: "assets/vendor/test-pack/model.glb",
+    sourceEntry: "Models/model.glb",
+    sha256: "c".repeat(64),
+  }],
+}];
+const NOTICE_DOCUMENT = licenseNoticeDocument(
+  NOTICE_PACKS,
+  new Map([["test-pack", "License: Creative Commons Zero (CC0)"]]),
+);
+const NOTICE_RECORD = licenseNoticeRecord(NOTICE_DOCUMENT, NOTICE_PACKS);
+
+function noticeFixture(overrides = {}) {
+  return {
+    expectedDocument: NOTICE_DOCUMENT,
+    expectedRecord: NOTICE_RECORD,
+    canonicalDocument: NOTICE_DOCUMENT,
+    bundledDocument: NOTICE_DOCUMENT,
+    manifestNotices: [NOTICE_RECORD],
+    runtimeManifestSource:
+      'export const ASSET_LICENSE_NOTICE = { path: "assets/LICENSES.md", packCount: 1, fileCount: 1 };',
+    viteConfigSource: "export default defineConfig({ build: {} });",
+    requiredPackIds: ["test-pack"],
+    requiredFiles: ["assets/vendor/test-pack/model.glb"],
     ...overrides,
   };
 }
@@ -79,6 +122,53 @@ test("missing genuine licenses and oversized files are fatal violations", () => 
   assert.deepEqual(fileSizeViolations("huge.glb", 10 * 1024 * 1024 + 1, 10 * 1024 * 1024), [
     "huge.glb: exceeds 10 MB",
   ]);
+});
+
+test("license notice generation covers genuine three-pack, seven-file provenance", () => {
+  const packs = PACKS.map((pack, packIndex) => ({
+    ...pack,
+    archiveSha256: String(packIndex + 1).repeat(64),
+    license: {
+      archiveEntry: "License.txt",
+      sha256: String(packIndex + 4).repeat(64),
+    },
+    files: pack.files.map((file, fileIndex) => ({
+      ...file,
+      path: file.output,
+      sourceEntry: file.source,
+      sha256: String(packIndex + fileIndex + 7).repeat(64),
+    })),
+  }));
+  const sources = new Map(packs.map(({ id }) => [
+    id,
+    "License: Creative Commons Zero (CC0)\nSupport by crediting Kenney (this is not a requirement)",
+  ]));
+  const document = licenseNoticeDocument(packs, sources);
+  assert.match(document, /Provenance: \*\*3 packs \/ 7 curated files\*\*/u);
+  assert.match(document, /attribution is not required/u);
+  for (const pack of packs) {
+    assert.match(document, new RegExp(pack.title.replace(/[()]/gu, "\\$&"), "u"));
+    for (const file of pack.files) assert.ok(document.includes(file.path));
+  }
+});
+
+test("license notice audit rejects missing and stale bundled copies", () => {
+  assert.ok(licenseNoticeViolations(noticeFixture({ bundledDocument: null }))
+    .some((violation) => violation.includes("bundled license notice is missing")));
+  assert.ok(licenseNoticeViolations(noticeFixture({ bundledDocument: `${NOTICE_DOCUMENT}stale` }))
+    .some((violation) => violation.includes("bundled license notice is stale")));
+});
+
+test("license notice audit rejects unlisted and build-excluded notices", () => {
+  assert.ok(licenseNoticeViolations(noticeFixture({ manifestNotices: [] }))
+    .some((violation) => violation.includes("must list exactly one")));
+  assert.ok(licenseNoticeViolations(noticeFixture({
+    runtimeManifestSource: '// path: "assets/LICENSES.md"',
+  })).some((violation) => violation.includes("does not list")));
+  assert.ok(licenseNoticeViolations(noticeFixture({
+    viteConfigSource: "export default { build: { copyPublicDir: false } };",
+    builtDocument: null,
+  })).some((violation) => violation.includes("production build excluded")));
 });
 
 test("manifest-only references never count as source consumers", () => {

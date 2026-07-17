@@ -2,6 +2,11 @@ import { ImpactStyle, NotificationType } from "@capacitor/haptics";
 import { describe, expect, it } from "vitest";
 import { FakeClock } from "../../core/contracts/clock";
 import {
+  createDefaultSave,
+  SaveStateSchema,
+  type CanonicalSaveState,
+} from "../../core/contracts/save";
+import {
   NativeHapticsAdapter,
   NativeNotificationsAdapter,
   NativeSaveAdapter,
@@ -37,10 +42,18 @@ class MemoryPreferences {
   }
 }
 
+function canonical(name = "Gooby"): CanonicalSaveState {
+  const initial = createDefaultSave(1_000);
+  return SaveStateSchema.parse({
+    ...initial,
+    profile: { ...initial.profile, name },
+  });
+}
+
 describe("native save adapter", () => {
   it("moves a legacy raw save into the revisioned Preferences key", async () => {
     const preferences = new MemoryPreferences();
-    const legacy = { version: 1, name: "Gooby" };
+    const legacy = canonical("Legacy Gooby");
     preferences.values.set("gooby.save.v1", JSON.stringify(legacy));
     preferences.migrationResult = { migrated: ["gooby.save.v1"], existing: [] };
     const adapter = new NativeSaveAdapter(preferences);
@@ -56,12 +69,20 @@ describe("native save adapter", () => {
 
   it("serializes compare-and-commit operations", async () => {
     const adapter = new NativeSaveAdapter(new MemoryPreferences());
-    const first = adapter.commit(0, { coins: 1 });
-    const stale = adapter.commit(0, { coins: 2 });
+    const firstState = SaveStateSchema.parse({
+      ...canonical(),
+      economy: { ...canonical().economy, coins: 41 },
+    });
+    const staleState = SaveStateSchema.parse({
+      ...canonical(),
+      economy: { ...canonical().economy, coins: 42 },
+    });
+    const first = adapter.commit(0, firstState);
+    const stale = adapter.commit(0, staleState);
 
-    await expect(first).resolves.toEqual({ revision: 1, payload: { coins: 1 } });
+    await expect(first).resolves.toEqual({ revision: 1, payload: firstState });
     await expect(stale).rejects.toThrow("Save changed since it was loaded");
-    await expect(adapter.load()).resolves.toEqual({ revision: 1, payload: { coins: 1 } });
+    await expect(adapter.load()).resolves.toEqual({ revision: 1, payload: firstState });
   });
 
   it("allows one winner across adapters sharing a Preferences client", async () => {
@@ -70,8 +91,8 @@ describe("native save adapter", () => {
     const secondAdapter = new NativeSaveAdapter(preferences);
 
     const results = await Promise.allSettled([
-      firstAdapter.commit(0, { source: "first" }),
-      secondAdapter.commit(0, { source: "second" }),
+      firstAdapter.commit(0, canonical("First")),
+      secondAdapter.commit(0, canonical("Second")),
     ]);
 
     expect(results.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
@@ -81,7 +102,7 @@ describe("native save adapter", () => {
 
   it("falls through from a corrupt current record to a valid legacy save", async () => {
     const preferences = new MemoryPreferences();
-    const legacy = { version: 1, name: "Legacy Gooby" };
+    const legacy = canonical("Legacy Gooby");
     preferences.values.set("gooby.save.v2", "{ corrupt");
     preferences.values.set("gooby.save.v1", JSON.stringify(legacy));
 
@@ -91,6 +112,31 @@ describe("native save adapter", () => {
     expect(preferences.values.has("gooby.save.v1")).toBe(false);
     expect(JSON.parse(preferences.values.get("gooby.save.v2") ?? "")).toEqual({
       revision: 0,
+      payload: legacy,
+    });
+  });
+
+  it("falls through from a revision-valid schema-invalid current payload to valid legacy", async () => {
+    const preferences = new MemoryPreferences();
+    const invalidCurrent = {
+      revision: 7,
+      payload: {
+        ...canonical("Broken Gooby"),
+        settings: {
+          ...canonical().settings,
+          muted: "not-a-boolean",
+        },
+      },
+    };
+    const legacy = canonical("Recovered Gooby");
+    preferences.values.set("gooby.save.v2", JSON.stringify(invalidCurrent));
+    preferences.values.set("gooby.save.v1", JSON.stringify(legacy));
+    const adapter = new NativeSaveAdapter(preferences);
+
+    await expect(adapter.load()).resolves.toEqual({ revision: 7, payload: legacy });
+    expect(preferences.values.has("gooby.save.v1")).toBe(false);
+    expect(JSON.parse(preferences.values.get("gooby.save.v2") ?? "")).toEqual({
+      revision: 7,
       payload: legacy,
     });
   });

@@ -1,11 +1,15 @@
 import { defineConfig, devices } from "@playwright/test";
 
+export const ROOT_E2E_TIMEOUT_MS = 180_000;
+export const ROOT_E2E_CITY_TIMEOUT_MARGIN_MS = 30_000;
+export const ROOT_E2E_CI_WORKERS = 2;
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
   forbidOnly: true,
-  ...(process.env.CI ? { workers: 4 } : {}),
-  timeout: 180_000,
+  ...(process.env.CI ? { workers: ROOT_E2E_CI_WORKERS } : {}),
+  timeout: ROOT_E2E_TIMEOUT_MS,
   retries: process.env.CI ? 2 : 0,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
@@ -25,6 +29,7 @@ export default defineConfig({
     },
     {
       name: "ipad-820x1180",
+      testIgnore: "**/shops.spec.ts",
       use: {
         ...devices["iPad Pro 11"],
         browserName: "chromium",

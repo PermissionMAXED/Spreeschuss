@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FakeClock } from "../core/contracts/clock";
 import type { MinigameSettlementReceipt } from "../core/contracts/minigame";
 import type { SavePort, SaveRecord } from "../core/contracts/platform";
 import {
@@ -9,10 +10,12 @@ import {
 } from "../core/contracts/save";
 import { RevisionConflictError } from "../core/platform";
 import { CityRouteMachine } from "../scenes/city";
-import type { UiPersistedState } from "../ui/model";
+import { harvestCarrot } from "../scenes/home/state";
+import { parseUiState, type UiPersistedState } from "../ui/model";
 import { ReplayableSaveCoordinator } from "./save-coordinator";
 import {
   migrateLegacyUiReducer,
+  reconcileExternalState,
   savedTravelSnapshot,
   sanitizeCanonicalUi,
   setQuietHoursReducer,
@@ -54,6 +57,35 @@ class ConflictSave implements SavePort {
     if (this.conflictWinner) {
       this.record = { revision: 1, payload: this.conflictWinner };
       this.conflictWinner = null;
+      return Promise.reject(new RevisionConflictError());
+    }
+    if (expectedRevision !== this.record.revision) return Promise.reject(new RevisionConflictError());
+    this.record = { revision: expectedRevision + 1, payload };
+    return Promise.resolve(this.record);
+  }
+
+  clear(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+class RepeatedConflictSave implements SavePort {
+  record: SaveRecord;
+  private readonly winners: CanonicalSaveState[];
+
+  constructor(initial: CanonicalSaveState, winners: readonly CanonicalSaveState[]) {
+    this.record = { revision: 0, payload: initial };
+    this.winners = [...winners];
+  }
+
+  load(): Promise<SaveRecord> {
+    return Promise.resolve(this.record);
+  }
+
+  commit(expectedRevision: number, payload: unknown): Promise<SaveRecord> {
+    const winner = this.winners.shift();
+    if (winner) {
+      this.record = { revision: this.record.revision + 1, payload: winner };
       return Promise.reject(new RevisionConflictError());
     }
     if (expectedRevision !== this.record.revision) return Promise.reject(new RevisionConflictError());
@@ -160,6 +192,73 @@ describe("replayable canonical save integration", () => {
     expect(settlementReceiptForRun(replayed, SECOND_RECEIPT.runId)).toMatchObject(SECOND_RECEIPT);
   });
 
+  it("merges two writers' daily harvests as distinct grants under one canonical ledger", async () => {
+    const dayMs = 24 * 60 * 60 * 1_000;
+    const clock = new FakeClock(dayMs * 42 + 500);
+    const initial = canonical(clock.now());
+    const firstHarvest = SaveStateSchema.parse(harvestCarrot(initial, clock).save);
+    const secondHarvest = SaveStateSchema.parse(harvestCarrot(initial, clock).save);
+    const firstWriter = reconcileExternalState(initial, firstHarvest);
+    const secondWriter = reconcileExternalState(initial, secondHarvest);
+    const winner = firstWriter(initial);
+    const port = new ConflictSave(initial, winner);
+    let applied = initial;
+    const coordinator = new ReplayableSaveCoordinator(
+      port,
+      () => clock.now(),
+      initial,
+      0,
+      (state) => {
+        applied = state;
+      },
+    );
+
+    await coordinator.apply(secondWriter);
+
+    expect(applied.inventory.carrot).toBe(5);
+    expect(applied.dailyHarvest).toEqual({ day: 42, count: 2 });
+    expect(applied.inventory["__home.harvest.count"]).toBe(2);
+    expect(Object.keys(applied.inventory).filter((key) =>
+      key.startsWith("__home.harvest.receipt.v1|"))).toHaveLength(2);
+  });
+
+  it("replays one harvest through repeated conflicts idempotently and enforces the daily quota", async () => {
+    const dayMs = 24 * 60 * 60 * 1_000;
+    const clock = new FakeClock(dayMs * 7 + 100);
+    const initial = canonical(clock.now());
+    const harvested = SaveStateSchema.parse(harvestCarrot(initial, clock).save);
+    const firstWriter = reconcileExternalState(initial, harvested);
+    const secondWriter = reconcileExternalState(initial, harvested);
+    const thirdWriter = reconcileExternalState(initial, harvested);
+    const localWriter = reconcileExternalState(initial, harvested);
+    const firstWinner = firstWriter(initial);
+    const secondWinner = secondWriter(firstWinner);
+    const thirdWinner = thirdWriter(secondWinner);
+    const port = new RepeatedConflictSave(initial, [firstWinner, secondWinner, thirdWinner]);
+    let applied = initial;
+    const coordinator = new ReplayableSaveCoordinator(
+      port,
+      () => clock.now(),
+      initial,
+      0,
+      (state) => {
+        applied = state;
+      },
+    );
+
+    await coordinator.apply(localWriter);
+
+    expect(applied.inventory.carrot).toBe(6);
+    expect(applied.dailyHarvest).toEqual({ day: 7, count: 3 });
+    expect(applied.inventory["__home.harvest.count"]).toBe(3);
+    expect(Object.keys(applied.inventory).filter((key) =>
+      key.startsWith("__home.harvest.receipt.v1|"))).toHaveLength(4);
+    expect(coordinator.revision).toBe(4);
+    const replayedAgain = localWriter(applied);
+    expect(replayedAgain.inventory.carrot).toBe(6);
+    expect(replayedAgain.dailyHarvest).toEqual({ day: 7, count: 3 });
+  });
+
   it("migrates a webview-shaped legacy UI record into canonical fields and rejects unowned outfits", () => {
     const legacy: UiPersistedState = {
       version: 1,
@@ -192,6 +291,29 @@ describe("replayable canonical save integration", () => {
       ui: { equipped: { head: "sunny-bucket-hat", neck: "not-a-real-item" }, highScores: {}, sleepRationaleSeen: false },
     });
     expect(sanitizeCanonicalUi(owned).ui.equipped).toEqual({ head: "sunny-bucket-hat" });
+  });
+
+  it("does not let a corrupt legacy UI sidecar reset canonical settings or equipment", () => {
+    const state = SaveStateSchema.parse({
+      ...canonical(),
+      inventory: { carrot: 3, "sunny-bucket-hat": 1 },
+      settings: {
+        muted: true,
+        haptics: false,
+        reducedMotion: true,
+        notifications: false,
+      },
+      ui: {
+        equipped: { head: "sunny-bucket-hat" },
+        highScores: { "carrot-catch": 50 },
+        sleepRationaleSeen: true,
+      },
+    });
+
+    const migrated = migrateLegacyUiReducer(parseUiState("{ corrupt"))(state);
+
+    expect(migrated.settings).toEqual(state.settings);
+    expect(migrated.ui).toEqual(state.ui);
   });
 
   it("round-trips quiet-hour edits and the disabled toggle through a canonical save adapter", async () => {

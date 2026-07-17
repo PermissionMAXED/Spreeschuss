@@ -77,19 +77,19 @@ describe("haptic patterns", () => {
 });
 
 describe("event-driven haptics", () => {
-  it("maps care, economy, driving, and all minigame feedback", () => {
+  it("maps home and UI feedback but leaves minigame haptics explicit", () => {
     expect(hapticForAudioEvent("audio:gooby", { action: "tickle" })).toBe("combo");
     expect(hapticForAudioEvent("audio:gooby", { action: "bathe" })).toBe("success");
     expect(hapticForAudioEvent("audio:economy", { action: "purchase" })).toBe("success");
     expect(hapticForAudioEvent("audio:car", { action: "skid" })).toBe("tension");
     expect(hapticForAudioEvent("audio:car", { action: "engine-loop" })).toBeNull();
-    expect(hapticForAudioEvent("audio:minigame", { action: "hit" })).toBe("light");
-    expect(hapticForAudioEvent("audio:minigame", { action: "miss" })).toBe("warning");
-    expect(hapticForAudioEvent("audio:minigame", { action: "combo", combo: 5 })).toBe("combo");
-    expect(hapticForAudioEvent("audio:minigame", { action: "win" })).toBe("success");
+    expect(hapticForAudioEvent("audio:minigame", { action: "hit" })).toBeNull();
+    expect(hapticForAudioEvent("audio:minigame", { action: "miss" })).toBeNull();
+    expect(hapticForAudioEvent("audio:minigame", { action: "combo", combo: 5 })).toBeNull();
+    expect(hapticForAudioEvent("audio:minigame", { action: "win" })).toBeNull();
   });
 
-  it("binds typed events while keeping haptic preference independent from audio mute", () => {
+  it("keeps UI haptics independent from audio mute without deriving minigame impacts", () => {
     const driver = new SpyHaptics();
     const scheduler = new ManualScheduler();
     const director = new HapticDirector(driver, scheduler);
@@ -101,6 +101,6 @@ describe("event-driven haptics", () => {
     events.emit("audio:minigame", { action: "win", score: 12 });
     director.setMuted(true);
     events.emit("audio:economy", { action: "coin", amount: 4 });
-    expect(driver.impacts).toEqual(["light", "light"]);
+    expect(driver.impacts).toEqual(["light"]);
   });
 });

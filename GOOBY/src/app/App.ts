@@ -4,7 +4,6 @@ import { grantReward } from "../core/contracts/economy";
 import { EventBus, type GameEvents } from "../core/contracts/events";
 import type { Gesture } from "../core/contracts/input";
 import type {
-  MinigameFeedback,
   MinigameSettlementReceipt,
 } from "../core/contracts/minigame";
 import { SeededRng } from "../core/contracts/rng";
@@ -430,7 +429,6 @@ export class GoobyApp {
                 settlementReceiptForRun(this.requireState(), runId),
               settle: (receipt) => this.settleMinigame(receipt),
             },
-            feedback: this.minigameFeedback(),
             audio: {
               emit: (action, value) => {
                 this.audioEvents.emit("audio:minigame", {
@@ -442,11 +440,10 @@ export class GoobyApp {
             },
             haptics: {
               impact: (pattern) => {
-                if (this.requireState().settings.haptics) {
-                  void this.platform.haptics.impact(pattern).catch(() => undefined);
-                }
+                void this.platform.haptics.impact(pattern).catch(() => undefined);
               },
             },
+            hapticsEnabled: () => this.requireState().settings.haptics,
             reducedMotion: this.requireState().settings.reducedMotion,
             onSettled: (receipt) => this.finishMinigame(game, receipt),
             ...(this.fakeClock
@@ -688,23 +685,6 @@ export class GoobyApp {
     const committed = this.applyReducer(settleMinigameReducer(receipt));
     this.settlementCommits.set(receipt.runId, committed);
     return settlementReceiptForRun(this.requireState(), receipt.runId) ?? receipt;
-  }
-
-  private minigameFeedback(): MinigameFeedback {
-    return {
-      emit: (event) => {
-        if (event.kind === "run-began") {
-          this.audioEvents.emit("audio:minigame", { action: "go" });
-        } else if (event.kind === "run-completed") {
-          this.audioEvents.emit("audio:minigame", {
-            action: "win",
-            score: event.receipt.payout.score,
-          });
-        } else {
-          this.audioEvents.emit("audio:ui", { action: "back" });
-        }
-      },
-    };
   }
 
   private async finishMinigame(

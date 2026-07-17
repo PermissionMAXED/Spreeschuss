@@ -31,17 +31,74 @@ export interface SharedMinigameServices {
 
 export interface MinigameSceneOptions {
   readonly persistence: MinigameSettlementPersistence;
-  readonly feedback: MinigameFeedback;
   readonly audio: SharedMinigameServices["audio"];
   readonly haptics: SharedMinigameServices["haptics"];
+  readonly hapticsEnabled: () => boolean;
   readonly reducedMotion: boolean;
   readonly onSettled: (receipt: MinigameSettlementReceipt) => void | Promise<void>;
   readonly advanceClock?: (durationMs: number) => void;
 }
 
+type MinigameAudioAction = Parameters<SharedMinigameServices["audio"]["emit"]>[0];
+type MinigameAudioValue = Parameters<SharedMinigameServices["audio"]["emit"]>[1];
+
+/**
+ * Minigames explicitly own their immediate audio and haptic feedback. Lifecycle
+ * events only provide a success fallback for games that do not announce a
+ * terminal outcome themselves.
+ */
+export class MinigameFeedbackRouter {
+  private activeRunId: MinigameRunId | null = null;
+  private completedRunId: MinigameRunId | null = null;
+  private readonly terminalRuns = new Set<MinigameRunId>();
+
+  constructor(
+    private readonly audio: SharedMinigameServices["audio"],
+    private readonly haptics: SharedMinigameServices["haptics"],
+    private readonly hapticsEnabled: () => boolean,
+  ) {}
+
+  handleLifecycle(event: MinigameFeedbackEvent): void {
+    if (event.kind === "run-began") {
+      this.activeRunId = event.runId;
+      this.completedRunId = null;
+      return;
+    }
+    if (event.kind === "run-exited") {
+      if (this.activeRunId === event.runId) this.activeRunId = null;
+      if (this.completedRunId === event.runId) this.completedRunId = null;
+      this.terminalRuns.delete(event.runId);
+      return;
+    }
+
+    const { runId } = event.receipt;
+    if (this.activeRunId === runId) this.activeRunId = null;
+    this.completedRunId = runId;
+    queueMicrotask(() => {
+      if (this.terminalRuns.has(runId)) return;
+      this.terminalRuns.add(runId);
+      this.audio.emit("win", event.receipt.payout.score);
+    });
+  }
+
+  emitAudio(action: MinigameAudioAction, value?: MinigameAudioValue): void {
+    if (action === "win" || action === "lose") {
+      const runId = this.activeRunId ?? this.completedRunId;
+      if (runId && this.terminalRuns.has(runId)) return;
+      if (runId) this.terminalRuns.add(runId);
+    }
+    this.audio.emit(action, value);
+  }
+
+  impact(pattern: HapticPattern): void {
+    if (this.hapticsEnabled()) this.haptics.impact(pattern);
+  }
+}
+
 export class MinigameScene implements GameScene {
   readonly id;
   readonly lifecycle: MinigameLifecycle;
+  private readonly feedbackRouter: MinigameFeedbackRouter;
   private mounted = false;
   private finished = false;
   private disposed = false;
@@ -55,13 +112,18 @@ export class MinigameScene implements GameScene {
     private readonly options: MinigameSceneOptions,
   ) {
     this.id = `minigame:${module.id}` as const;
+    this.feedbackRouter = new MinigameFeedbackRouter(
+      options.audio,
+      options.haptics,
+      options.hapticsEnabled,
+    );
     this.lifecycle = createMinigameLifecycle(
       module.id,
       clock,
       options.persistence,
       {
         emit: (event) => {
-          options.feedback.emit(event);
+          this.feedbackRouter.handleLifecycle(event);
           if (event.kind === "run-completed") this.handleCompleted(event);
         },
       },
@@ -72,11 +134,14 @@ export class MinigameScene implements GameScene {
     void context;
     if (this.disposed) throw new Error(`Cannot enter disposed minigame: ${this.module.id}`);
     this.mountPoint.hidden = false;
-    this.beginRun();
     const shared: SharedMinigameServices = {
       feedback: this.lifecycle.feedback,
-      audio: this.options.audio,
-      haptics: this.options.haptics,
+      audio: {
+        emit: (action, value) => this.feedbackRouter.emitAudio(action, value),
+      },
+      haptics: {
+        impact: (pattern) => this.feedbackRouter.impact(pattern),
+      },
       bestScore: this.lifecycle.persistedBest,
       reducedMotion: this.options.reducedMotion,
     };
@@ -109,7 +174,7 @@ export class MinigameScene implements GameScene {
   }
 
   completeRun(payout: MinigamePayout): MinigameSettlementReceipt {
-    if (!this.runId) throw new Error("Cannot complete a minigame before beginning its run");
+    if (!this.runId) this.runId = this.lifecycle.beginRun();
     return this.lifecycle.completeRun(this.runId, payout);
   }
 

@@ -7,7 +7,7 @@ import {
 import { RevisionConflictError } from "../core/platform";
 
 export type ReplayableSaveReducer = (state: CanonicalSaveState) => CanonicalSaveState;
-export type SaveApplyReason = "optimistic" | "conflict-replay";
+export type SaveApplyReason = "optimistic" | "conflict-replay" | "persistence-rollback";
 
 interface PendingMutation {
   readonly reduce: ReplayableSaveReducer;
@@ -28,6 +28,7 @@ function isRevisionConflict(error: unknown): boolean {
 export class ReplayableSaveCoordinator {
   private pending: PendingMutation[] = [];
   private running: Promise<void> | null = null;
+  private committedState: CanonicalSaveState;
 
   constructor(
     private readonly port: SavePort,
@@ -35,7 +36,9 @@ export class ReplayableSaveCoordinator {
     private currentState: CanonicalSaveState,
     private currentRevision: number,
     private readonly onApplied: (state: CanonicalSaveState, reason: SaveApplyReason) => void,
-  ) {}
+  ) {
+    this.committedState = currentState;
+  }
 
   get state(): CanonicalSaveState {
     return this.currentState;
@@ -84,16 +87,31 @@ export class ReplayableSaveCoordinator {
       const candidate = this.currentState;
       try {
         this.currentRevision = await commitSave(this.port, this.currentRevision, candidate);
+        this.committedState = candidate;
         const committed = this.pending.splice(0, batchSize);
         for (const mutation of committed) mutation.resolve();
       } catch (error) {
         if (!isRevisionConflict(error)) {
+          let rollbackState = this.committedState;
+          let rollbackRevision = this.currentRevision;
+          try {
+            const persisted = await loadSave(this.port, this.now());
+            rollbackState = persisted.state;
+            rollbackRevision = persisted.revision;
+          } catch {
+            // The last known committed snapshot is safer than leaking optimism.
+          }
           const failed = this.pending.splice(0);
+          this.currentState = rollbackState;
+          this.currentRevision = rollbackRevision;
+          this.committedState = rollbackState;
+          this.onApplied(rollbackState, "persistence-rollback");
           for (const mutation of failed) mutation.reject(error);
           throw error;
         }
         const winner = await loadSave(this.port, this.now());
         this.currentRevision = winner.revision;
+        this.committedState = winner.state;
         this.currentState = this.pending.reduce(
           (state, mutation) => mutation.reduce(state),
           winner.state,

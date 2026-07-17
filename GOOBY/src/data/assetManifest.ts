@@ -20,6 +20,12 @@ export interface AssetCredit {
   readonly source: string;
 }
 
+export interface AssetLicenseNotice {
+  readonly path: "assets/LICENSES.md";
+  readonly packCount: 3;
+  readonly fileCount: 7;
+}
+
 const file = (
   path: VendoredAssetReference["path"],
   role: VendoredAssetRole = "primary",
@@ -96,6 +102,12 @@ export const ASSET_CREDITS = [
     source: "kenney.nl/assets/car-kit",
   },
 ] as const satisfies readonly AssetCredit[];
+
+export const ASSET_LICENSE_NOTICE = {
+  path: "assets/LICENSES.md",
+  packCount: 3,
+  fileCount: 7,
+} as const satisfies AssetLicenseNotice;
 
 export function assetManifestEntry(key: AssetKey): RuntimeAssetManifestEntry {
   return ASSET_MANIFEST[key];

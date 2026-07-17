@@ -1,6 +1,10 @@
+import { Box3, PerspectiveCamera, Scene, Vector3, type Object3D } from "three";
 import { describe, expect, it, vi } from "vitest";
 import type { SavePort, SaveRecord } from "../../core/contracts/platform";
 import { createDefaultSave, SaveStateSchema, type SaveState } from "../../core/contracts/save";
+import { COSMETIC_ATTACHMENTS } from "../../gooby/attachments";
+import type { ProceduralGooby } from "../../gooby";
+import type { GameRenderer } from "../../render/renderer";
 import {
   ALL_CATALOG_ITEMS,
   CATALOG_BALANCE,
@@ -27,8 +31,113 @@ import {
   ShopVisitHistory,
   type CityShopArrival,
 } from "./routes";
-import { SHOP_CONTROL_LAYOUT } from "./scene";
-import { CosmeticTryOnSession } from "./try-on";
+import { SHOP_CONTROL_LAYOUT, WalkableShopScene } from "./scene";
+import { CosmeticTryOnSession, type EquippedCosmetics } from "./try-on";
+
+const PORTRAIT_VIEWPORT = { width: 390, height: 844 } as const;
+
+interface SalonSceneInternals {
+  readonly gooby: ProceduralGooby;
+  buildInterior(): void;
+  renderTryOn(equipped: EquippedCosmetics): void;
+}
+
+function salonScene(): {
+  readonly scene: WalkableShopScene;
+  readonly renderer: GameRenderer;
+  readonly internals: SalonSceneInternals;
+} {
+  const camera = new PerspectiveCamera(36, PORTRAIT_VIEWPORT.width / PORTRAIT_VIEWPORT.height, 0.1, 120);
+  const domElement = {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getBoundingClientRect: () => ({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: PORTRAIT_VIEWPORT.width,
+      bottom: PORTRAIT_VIEWPORT.height,
+      width: PORTRAIT_VIEWPORT.width,
+      height: PORTRAIT_VIEWPORT.height,
+      toJSON: () => ({}),
+    }),
+  };
+  const renderer = {
+    scene: new Scene(),
+    camera,
+    renderer: { domElement },
+    resize: vi.fn(),
+  } as unknown as GameRenderer;
+  const arrival = issueCityShopArrival({
+    phase: "arrived",
+    car: "parked",
+    selected: "fluff-salon",
+    canEnter: true,
+  });
+  const scene = new WalkableShopScene("fluff-salon", arrival, {
+    renderer,
+    mount: {} as HTMLElement,
+    getState: () => createDefaultSave(100),
+    setState: () => undefined,
+    visitHistory: new ShopVisitHistory(),
+    onTownExit: () => undefined,
+  });
+  const internals = scene as unknown as SalonSceneInternals;
+  internals.buildInterior();
+  scene.resize({ viewport: { ...PORTRAIT_VIEWPORT, pixelRatio: 1 } });
+  return { scene, renderer, internals };
+}
+
+function modelResources(root: Object3D): Set<{ addEventListener(type: "dispose", listener: () => void): void }> {
+  const resources = new Set<{ addEventListener(type: "dispose", listener: () => void): void }>();
+  root.traverse((object) => {
+    const renderable = object as Object3D & {
+      geometry?: { addEventListener(type: "dispose", listener: () => void): void };
+      material?: { addEventListener(type: "dispose", listener: () => void): void };
+    };
+    if (renderable.geometry) resources.add(renderable.geometry);
+    if (renderable.material) resources.add(renderable.material);
+  });
+  return resources;
+}
+
+function projectedBounds(object: Object3D, camera: PerspectiveCamera): {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+  readonly centerX: number;
+  readonly centerY: number;
+} {
+  object.updateWorldMatrix(true, true);
+  camera.updateWorldMatrix(true, false);
+  const bounds = new Box3().setFromObject(object);
+  const points = [
+    new Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+    new Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+    new Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+    new Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+    new Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+    new Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+    new Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+    new Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+  ].map((point) => point.project(camera));
+  const xs = points.map(({ x }) => (x + 1) * PORTRAIT_VIEWPORT.width / 2);
+  const ys = points.map(({ y }) => (1 - y) * PORTRAIT_VIEWPORT.height / 2);
+  const left = Math.min(...xs);
+  const right = Math.max(...xs);
+  const top = Math.min(...ys);
+  const bottom = Math.max(...ys);
+  return {
+    left,
+    right,
+    top,
+    bottom,
+    centerX: (left + right) / 2,
+    centerY: (top + bottom) / 2,
+  };
+}
 
 function saveWithEconomy(coins: number, level: number): SaveState {
   const state = createDefaultSave(100);
@@ -292,6 +401,156 @@ describe("cosmetic preview and city handoff", () => {
       neck: "gingham-neck-scarf",
     });
     expect(applied).toHaveLength(2);
+  });
+
+  it("attaches all eighteen salon cosmetics to the same authoritative animated sockets as home", () => {
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      devicePixelRatio: 1,
+    });
+    const { scene, internals } = salonScene();
+    try {
+      expect(COSMETIC_CATALOG).toHaveLength(18);
+      expect(new Set(COSMETIC_CATALOG.map(({ slot }) => slot))).toEqual(new Set(COSMETIC_SLOTS));
+      for (const item of COSMETIC_CATALOG) {
+        internals.renderTryOn({ [item.slot]: item.id });
+        for (const slot of COSMETIC_SLOTS) {
+          const anchor = internals.gooby.getCosmeticSocket(slot);
+          expect(anchor.children, `${item.id}/${slot}`).toHaveLength(slot === item.slot ? 1 : 0);
+        }
+        const anchor = internals.gooby.getCosmeticSocket(item.slot);
+        const model = anchor.children[0];
+        const descriptor = COSMETIC_ATTACHMENTS[item.slot];
+        expect(model?.name).toBe(`try-on:${item.slot}:${item.id}`);
+        expect(model?.parent).toBe(anchor);
+        expect(model?.userData.cosmeticSocket).toBe(item.slot);
+        expect(model?.position.toArray()).toEqual([...descriptor.modelPosition]);
+        expect(model?.rotation.toArray().slice(0, 3)).toEqual([...descriptor.modelRotation]);
+        expect(model?.scale.toArray()).toEqual([
+          descriptor.modelScale,
+          descriptor.modelScale,
+          descriptor.modelScale,
+        ]);
+      }
+
+      internals.renderTryOn({ head: "sunny-bucket-hat" });
+      const headAnchor = internals.gooby.getCosmeticSocket("head");
+      const hat = headAnchor.children[0];
+      headAnchor.updateWorldMatrix(true, true);
+      const anchorBefore = headAnchor.matrixWorld.clone();
+      const hatBefore = hat?.matrixWorld.clone();
+      internals.gooby.react("tickle");
+      internals.gooby.update(0.18, 0.18);
+      headAnchor.updateWorldMatrix(true, true);
+      expect(headAnchor.matrixWorld.equals(anchorBefore)).toBe(false);
+      expect(hat?.matrixWorld.equals(hatBefore!)).toBe(false);
+      expect(hat?.parent).toBe(headAnchor);
+      expect(hat?.matrixWorld.equals(headAnchor.matrixWorld.clone().multiply(hat.matrix))).toBe(true);
+    } finally {
+      scene.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("disposes every replaced try-on model without growing active resources", () => {
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      devicePixelRatio: 1,
+    });
+    const { scene, internals } = salonScene();
+    try {
+      let stableResourceCount: number | null = null;
+      for (let index = 0; index < COSMETIC_CATALOG.length * 2; index += 1) {
+        const item = COSMETIC_CATALOG[index % COSMETIC_CATALOG.length]!;
+        const previous = COSMETIC_SLOTS.flatMap((slot) =>
+          internals.gooby.getCosmeticSocket(slot).children)[0];
+        const previousResources: ReturnType<typeof modelResources> = previous
+          ? modelResources(previous)
+          : new Set();
+        let disposals = 0;
+        for (const resource of previousResources) {
+          resource.addEventListener("dispose", () => disposals += 1);
+        }
+
+        internals.renderTryOn({ [item.slot]: item.id });
+
+        expect(disposals, item.id).toBe(previousResources.size);
+        const active = COSMETIC_SLOTS.flatMap((slot) =>
+          internals.gooby.getCosmeticSocket(slot).children);
+        expect(active, item.id).toHaveLength(1);
+        const activeResourceCount = modelResources(active[0]!).size;
+        stableResourceCount ??= activeResourceCount;
+        expect(activeResourceCount, item.id).toBe(stableResourceCount);
+      }
+
+      const final = COSMETIC_SLOTS.flatMap((slot) =>
+        internals.gooby.getCosmeticSocket(slot).children)[0]!;
+      const finalResources = modelResources(final);
+      let finalDisposals = 0;
+      for (const resource of finalResources) {
+        resource.addEventListener("dispose", () => finalDisposals += 1);
+      }
+      scene.dispose();
+      expect(finalDisposals).toBe(finalResources.size);
+      for (const slot of COSMETIC_SLOTS) {
+        expect(internals.gooby.getCosmeticSocket(slot).children).toHaveLength(0);
+      }
+      internals.renderTryOn({ head: "sunny-bucket-hat" });
+      expect(internals.gooby.getCosmeticSocket("head").children).toHaveLength(0);
+      scene.dispose();
+      expect(finalDisposals).toBe(finalResources.size);
+    } finally {
+      scene.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps head, ear, neck, and back try-ons aligned and visible at 390×844", () => {
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      devicePixelRatio: 1,
+    });
+    const { scene, renderer, internals } = salonScene();
+    try {
+      internals.renderTryOn({
+        head: "sunny-bucket-hat",
+        ears: "clover-ear-clips",
+        neck: "gingham-neck-scarf",
+        back: "picnic-mini-backpack",
+      });
+      renderer.scene.updateMatrixWorld(true);
+      const cosmetics = Object.fromEntries(COSMETIC_SLOTS.map((slot) => {
+        const model = internals.gooby.getCosmeticSocket(slot).children[0];
+        if (!model) throw new Error(`Missing ${slot} portrait try-on`);
+        return [slot, projectedBounds(model, renderer.camera)];
+      })) as Record<(typeof COSMETIC_SLOTS)[number], ReturnType<typeof projectedBounds>>;
+      const belly = internals.gooby.root.getObjectByName("Gooby.belly");
+      if (!belly) throw new Error("Salon mannequin belly is missing");
+      const torso = projectedBounds(belly, renderer.camera);
+
+      for (const [slot, bounds] of Object.entries(cosmetics)) {
+        expect(bounds.left, `${slot} left`).toBeGreaterThanOrEqual(0);
+        expect(bounds.right, `${slot} right`).toBeLessThanOrEqual(PORTRAIT_VIEWPORT.width);
+        expect(bounds.top, `${slot} top`).toBeGreaterThanOrEqual(0);
+        expect(bounds.bottom, `${slot} bottom`).toBeLessThanOrEqual(PORTRAIT_VIEWPORT.height);
+        expect(bounds.right - bounds.left, `${slot} width`).toBeGreaterThan(8);
+        expect(bounds.bottom - bounds.top, `${slot} height`).toBeGreaterThan(8);
+      }
+      expect(cosmetics.head.centerY).toBeLessThan(torso.centerY - 45);
+      expect(cosmetics.ears.centerY).toBeLessThan(torso.centerY - 45);
+      expect(Math.abs(cosmetics.head.centerX - torso.centerX)).toBeLessThan(20);
+      expect(Math.abs(cosmetics.neck.centerX - torso.centerX)).toBeLessThan(20);
+      expect(Math.abs(cosmetics.back.centerX - torso.centerX)).toBeLessThan(20);
+      expect(cosmetics.neck.centerY).toBeLessThan(torso.centerY);
+      expect(cosmetics.back.centerY).toBeGreaterThan(torso.top);
+      expect(cosmetics.back.centerY).toBeLessThan(torso.bottom);
+    } finally {
+      scene.dispose();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("requires a city arrival and returns to matching parking", () => {
