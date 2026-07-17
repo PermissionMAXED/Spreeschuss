@@ -1,5 +1,9 @@
 import { Capacitor } from "@capacitor/core";
 import type { Clock } from "./contracts/clock";
+import {
+  nextAllowedNotificationTime,
+  shouldSuppressNotification,
+} from "./contracts/platform";
 import type {
   HapticPattern,
   HapticsPort,
@@ -17,6 +21,8 @@ import {
 } from "../platform/native";
 
 const SAVE_KEY = "gooby.save.v2";
+const WEB_SAVE_LOCK_NAME = `${SAVE_KEY}.exclusive`;
+let webSaveTail: Promise<void> = Promise.resolve();
 
 export class RevisionConflictError extends Error {
   constructor() {
@@ -43,22 +49,46 @@ function parseRecord(raw: string | null): SaveRecord | null {
   return { revision: 0, payload: null };
 }
 
+function serializeWebSave<T>(operation: () => Promise<T>): Promise<T> {
+  const result = webSaveTail.then(operation, operation);
+  webSaveTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+async function withSameOriginSaveLock<T>(operation: () => Promise<T>): Promise<T> {
+  const locks = globalThis.navigator?.locks;
+  return locks
+    ? locks.request(WEB_SAVE_LOCK_NAME, { mode: "exclusive" }, operation)
+    : operation();
+}
+
 export class WebSaveAdapter implements SavePort {
+  constructor(private readonly storage: Storage = localStorage) {}
+
   load(): Promise<SaveRecord | null> {
-    return Promise.resolve(parseRecord(localStorage.getItem(SAVE_KEY)));
+    return Promise.resolve(parseRecord(this.storage.getItem(SAVE_KEY)));
   }
 
-  async commit(expectedRevision: number, payload: unknown): Promise<SaveRecord> {
-    const current = await this.load();
-    if ((current?.revision ?? 0) !== expectedRevision) throw new RevisionConflictError();
-    const next = { revision: expectedRevision + 1, payload };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(next));
-    return next;
+  commit(expectedRevision: number, payload: unknown): Promise<SaveRecord> {
+    return serializeWebSave(() => withSameOriginSaveLock(() => {
+      const current = parseRecord(this.storage.getItem(SAVE_KEY));
+      if ((current?.revision ?? 0) !== expectedRevision) {
+        throw new RevisionConflictError();
+      }
+      const next = { revision: expectedRevision + 1, payload };
+      this.storage.setItem(SAVE_KEY, JSON.stringify(next));
+      return Promise.resolve(next);
+    }));
   }
 
   clear(): Promise<void> {
-    localStorage.removeItem(SAVE_KEY);
-    return Promise.resolve();
+    return serializeWebSave(() => withSameOriginSaveLock(() => {
+      this.storage.removeItem(SAVE_KEY);
+      return Promise.resolve();
+    }));
   }
 }
 
@@ -70,8 +100,9 @@ class WebHaptics implements HapticsPort {
   }
 }
 
-class WebNotifications implements NotificationsPort {
+export class WebNotifications implements NotificationsPort {
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
+  private isForeground = false;
 
   constructor(private readonly clock: Clock) {}
 
@@ -82,11 +113,17 @@ class WebNotifications implements NotificationsPort {
 
   async schedule(request: NotificationRequest): Promise<void> {
     await this.cancel(request.id);
-    const delay = Math.max(0, request.at - this.clock.now());
+    const at = nextAllowedNotificationTime(request.at, request.policy?.quietHours ?? null);
+    const delay = Math.max(0, at - this.clock.now());
     this.timers.set(
       request.id,
       setTimeout(() => {
-        if (Notification.permission === "granted") new Notification(request.title, { body: request.body });
+        if (
+          Notification.permission === "granted" &&
+          !shouldSuppressNotification(request.policy, this.isForeground)
+        ) {
+          new Notification(request.title, { body: request.body });
+        }
         this.timers.delete(request.id);
       }, delay),
     );
@@ -97,6 +134,10 @@ class WebNotifications implements NotificationsPort {
     if (timer) clearTimeout(timer);
     this.timers.delete(id);
     return Promise.resolve();
+  }
+
+  setForeground(isForeground: boolean): void {
+    this.isForeground = isForeground;
   }
 }
 

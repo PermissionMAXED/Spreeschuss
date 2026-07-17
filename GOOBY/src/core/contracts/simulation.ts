@@ -43,23 +43,50 @@ export function createSimulation(now: number): SimulationState {
   };
 }
 
+function decayNeed(value: number, amount: number, floor: number): number {
+  return clampNeed(Math.max(Math.min(value, floor), value - amount));
+}
+
 function decayAwake(needs: Needs, elapsedMs: number, floor: number): Needs {
   const hours = elapsedMs / 3_600_000;
   return Object.fromEntries(
-    NEED_KEYS.map((key) => [key, Math.max(floor, needs[key] - AWAKE_DECAY_PER_HOUR[key] * hours)]),
+    NEED_KEYS.map((key) => [
+      key,
+      decayNeed(needs[key], AWAKE_DECAY_PER_HOUR[key] * hours, floor),
+    ]),
   ) as unknown as Needs;
 }
 
-function advanceSleeping(needs: Needs, elapsedMs: number, sleep: SleepState, from: number): Needs {
+function advanceSleeping(
+  needs: Needs,
+  elapsedMs: number,
+  sleep: SleepState,
+  from: number,
+  floor: number,
+): Needs {
   const hours = elapsedMs / 3_600_000;
   const progressBefore = Math.max(0, (from - sleep.startedAt) / SLEEP_DURATION_MS);
   const progressAfter = Math.min(1, (from + elapsedMs - sleep.startedAt) / SLEEP_DURATION_MS);
   const energy = needs.energy + (NEED_MAX - needs.energy) * ((progressAfter - progressBefore) / (1 - progressBefore || 1));
   return {
-    hunger: clampNeed(needs.hunger - SLEEP_DECAY_PER_HOUR.hunger * hours),
+    hunger: decayNeed(needs.hunger, SLEEP_DECAY_PER_HOUR.hunger * hours, floor),
     energy: clampNeed(energy),
-    hygiene: clampNeed(needs.hygiene - SLEEP_DECAY_PER_HOUR.hygiene * hours),
-    fun: clampNeed(needs.fun - SLEEP_DECAY_PER_HOUR.fun * hours),
+    hygiene: decayNeed(needs.hygiene, SLEEP_DECAY_PER_HOUR.hygiene * hours, floor),
+    fun: decayNeed(needs.fun, SLEEP_DECAY_PER_HOUR.fun * hours, floor),
+  };
+}
+
+function rebaseForClockRollback(state: SimulationState, targetTime: number): SimulationState {
+  const rollbackMs = state.lastSimulatedAt - targetTime;
+  return {
+    ...state,
+    lastSimulatedAt: targetTime,
+    sleep: state.sleep
+      ? {
+          startedAt: state.sleep.startedAt - rollbackMs,
+          completesAt: state.sleep.completesAt - rollbackMs,
+        }
+      : null,
   };
 }
 
@@ -72,7 +99,9 @@ export function advanceSimulation(
   targetTime: number,
   options: { offline?: boolean } = {},
 ): SimulationState {
-  if (targetTime <= state.lastSimulatedAt) return state;
+  if (!Number.isFinite(targetTime)) throw new RangeError("Simulation target time must be finite");
+  if (targetTime < state.lastSimulatedAt) return rebaseForClockRollback(state, targetTime);
+  if (targetTime === state.lastSimulatedAt) return state;
   const floor = options.offline === true ? OFFLINE_NEED_FLOOR : NEED_MIN;
   let cursor = state.lastSimulatedAt;
   let needs = { ...state.needs };
@@ -80,7 +109,7 @@ export function advanceSimulation(
 
   if (sleep && cursor < sleep.completesAt) {
     const sleepEnd = Math.min(targetTime, sleep.completesAt);
-    needs = advanceSleeping(needs, sleepEnd - cursor, sleep, cursor);
+    needs = advanceSleeping(needs, sleepEnd - cursor, sleep, cursor, floor);
     cursor = sleepEnd;
     if (cursor >= sleep.completesAt) {
       needs.energy = NEED_MAX;
@@ -89,9 +118,6 @@ export function advanceSimulation(
   }
 
   if (cursor < targetTime) needs = decayAwake(needs, targetTime - cursor, floor);
-  if (options.offline === true) {
-    for (const key of NEED_KEYS) needs[key] = Math.max(OFFLINE_NEED_FLOOR, needs[key]);
-  }
 
   return { needs, sleep, lastSimulatedAt: targetTime };
 }

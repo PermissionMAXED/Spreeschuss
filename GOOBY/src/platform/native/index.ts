@@ -5,6 +5,10 @@ import { Preferences } from "@capacitor/preferences";
 import { SplashScreen } from "@capacitor/splash-screen";
 import { StatusBar, Style } from "@capacitor/status-bar";
 import type { Clock } from "../../core/contracts/clock";
+import {
+  nextAllowedNotificationTime,
+  shouldSuppressNotification,
+} from "../../core/contracts/platform";
 import type {
   AudioPort,
   HapticPattern,
@@ -76,6 +80,24 @@ export interface NativeLifecycleHandlers {
   readonly onForeground: () => void;
 }
 
+interface NativeSaveCoordination {
+  tail: Promise<void>;
+  migration: Promise<void> | null;
+}
+
+const nativeSaveCoordination = new WeakMap<PreferencesClient, NativeSaveCoordination>();
+
+function coordinationFor(preferences: PreferencesClient): NativeSaveCoordination {
+  const existing = nativeSaveCoordination.get(preferences);
+  if (existing) return existing;
+  const created: NativeSaveCoordination = {
+    tail: Promise.resolve(),
+    migration: null,
+  };
+  nativeSaveCoordination.set(preferences, created);
+  return created;
+}
+
 function parseCurrentRecord(raw: string | null): SaveRecord | null {
   if (!raw) return null;
   try {
@@ -91,12 +113,12 @@ function parseCurrentRecord(raw: string | null): SaveRecord | null {
       return { revision: value.revision as number, payload: value.payload };
     }
   } catch {
-    // Preserve corruption as an invalid payload so the save contract can recover.
+    // A valid legacy key may still provide a recoverable save.
   }
-  return { revision: 0, payload: null };
+  return null;
 }
 
-function parseLegacyRecord(raw: string): SaveRecord {
+function parseLegacyRecord(raw: string): SaveRecord | null {
   try {
     const value: unknown = JSON.parse(raw);
     if (
@@ -109,20 +131,23 @@ function parseLegacyRecord(raw: string): SaveRecord {
     ) {
       return { revision: value.revision as number, payload: value.payload };
     }
-    return { revision: 0, payload: value };
+    return typeof value === "object" && value !== null
+      ? { revision: 0, payload: value }
+      : null;
   } catch {
-    return { revision: 0, payload: null };
+    return null;
   }
 }
 
 export class NativeSaveAdapter implements SavePort {
-  private tail: Promise<void> = Promise.resolve();
-  private migration: Promise<void> | null = null;
+  private readonly coordination: NativeSaveCoordination;
 
   constructor(
     private readonly preferences: PreferencesClient = Preferences,
     private readonly revisionConflict: () => Error = () => new Error("Save changed since it was loaded"),
-  ) {}
+  ) {
+    this.coordination = coordinationFor(preferences);
+  }
 
   load(): Promise<SaveRecord | null> {
     return this.serialize(() => this.loadUnlocked());
@@ -151,32 +176,34 @@ export class NativeSaveAdapter implements SavePort {
   private async loadUnlocked(): Promise<SaveRecord | null> {
     await this.ensureMigrated();
     const current = (await this.preferences.get({ key: SAVE_KEY })).value;
-    if (current !== null) return parseCurrentRecord(current);
+    const currentRecord = parseCurrentRecord(current);
+    if (currentRecord) return currentRecord;
 
     for (const key of LEGACY_SAVE_KEYS) {
       const legacy = (await this.preferences.get({ key })).value;
       if (legacy === null) continue;
       const record = parseLegacyRecord(legacy);
+      if (!record) continue;
       await this.preferences.set({ key: SAVE_KEY, value: JSON.stringify(record) });
       await this.preferences.remove({ key });
       return record;
     }
-    return null;
+    return current === null ? null : { revision: 0, payload: null };
   }
 
   private ensureMigrated(): Promise<void> {
-    this.migration ??= (async () => {
+    this.coordination.migration ??= (async () => {
       const result = await this.preferences.migrate();
       if (result.migrated.length > 0 || result.existing.length > 0) {
         await this.preferences.removeOld();
       }
     })();
-    return this.migration;
+    return this.coordination.migration;
   }
 
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.tail.then(operation, operation);
-    this.tail = result.then(
+    const result = this.coordination.tail.then(operation, operation);
+    this.coordination.tail = result.then(
       () => undefined,
       () => undefined,
     );
@@ -203,6 +230,7 @@ export class NativeHapticsAdapter implements HapticsPort {
 export class NativeNotificationsAdapter implements NotificationsPort {
   private cancellationVersion = 0;
   private permissionVersion = 0;
+  private isForeground = false;
 
   constructor(
     private readonly notifications: NotificationsClient = LocalNotifications,
@@ -230,12 +258,14 @@ export class NativeNotificationsAdapter implements NotificationsPort {
     if (this.permissionVersion !== version) return;
     await this.notifications.cancel({ notifications: [{ id: request.id }] });
     if (this.cancellationVersion !== version) return;
+    if (shouldSuppressNotification(request.policy, this.isForeground)) return;
+    const at = nextAllowedNotificationTime(request.at, request.policy?.quietHours ?? null);
     await this.notifications.schedule({
       notifications: [{
         id: request.id,
         title: request.title,
         body: request.body,
-        schedule: { at: new Date(request.at) },
+        schedule: { at: new Date(at) },
       }],
     });
   }
@@ -243,6 +273,10 @@ export class NativeNotificationsAdapter implements NotificationsPort {
   async cancel(id: number): Promise<void> {
     this.cancellationVersion += 1;
     await this.notifications.cancel({ notifications: [{ id }] });
+  }
+
+  setForeground(isForeground: boolean): void {
+    this.isForeground = isForeground;
   }
 }
 
@@ -268,17 +302,16 @@ export async function configureNativeShell(
     statusBar: StatusBar,
   },
 ): Promise<() => void> {
-  await Promise.all([
-    clients.splash.hide(),
-    clients.statusBar.setStyle({ style: Style.Light }),
-  ]);
-
   let backgrounded = false;
-  const listener = await clients.app.addListener("appStateChange", ({ isActive }) => {
+  const listenerPromise = clients.app.addListener("appStateChange", ({ isActive }) => {
     if (!isActive && !backgrounded) handlers.onBackground();
     if (isActive && backgrounded) handlers.onForeground();
     backgrounded = !isActive;
   });
+  const splash = clients.splash.hide().catch(() => undefined);
+  const statusBar = clients.statusBar.setStyle({ style: Style.Light }).catch(() => undefined);
+  const listener = await listenerPromise;
+  await Promise.all([splash, statusBar]);
   return () => {
     void listener.remove();
   };

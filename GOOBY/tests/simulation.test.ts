@@ -20,6 +20,19 @@ describe("simulation", () => {
     expect(split.lastSimulatedAt).toBe(whole.lastSimulatedAt);
   });
 
+  it("rebases a rolled-back clock without decay and resumes immediately", () => {
+    const initial = createSimulation(10_000);
+    const forwarded = advanceSimulation(initial, 3_610_000);
+    const rolledBack = advanceSimulation(forwarded, 20_000);
+
+    expect(rolledBack.needs).toEqual(forwarded.needs);
+    expect(rolledBack.lastSimulatedAt).toBe(20_000);
+
+    const resumed = advanceSimulation(rolledBack, 3_620_000);
+    expect(resumed.needs.hunger).toBeCloseTo(forwarded.needs.hunger - 4);
+    expect(resumed.lastSimulatedAt).toBe(3_620_000);
+  });
+
   it("uses a real 30 minute sleep and completes with full energy", () => {
     const initial = { ...createSimulation(2_000), needs: { hunger: 70, energy: 20, hygiene: 70, fun: 70 } };
     const sleeping = startSleep(initial, 2_000);
@@ -80,6 +93,23 @@ describe("simulation", () => {
     expect(awake.needs.energy).toBeCloseTo(40);
   });
 
+  it("preserves sleep remaining duration across a clock rollback", () => {
+    const sleeping = startSleep(
+      { ...createSimulation(10_000), needs: { hunger: 70, energy: 10, hygiene: 70, fun: 70 } },
+      10_000,
+    );
+    const halfway = advanceSimulation(sleeping, 10_000 + SLEEP_DURATION_MS / 2);
+    const rolledBackAt = 25_000;
+    const rolledBack = advanceSimulation(halfway, rolledBackAt);
+
+    expect(rolledBack.needs).toEqual(halfway.needs);
+    expect((rolledBack.sleep?.completesAt ?? 0) - rolledBackAt).toBe(SLEEP_DURATION_MS / 2);
+
+    const resumed = advanceSimulation(rolledBack, rolledBackAt + 1_000);
+    expect(resumed.needs.energy).toBeGreaterThan(rolledBack.needs.energy);
+    expect(resumed.sleep).not.toBeNull();
+  });
+
   it("never decays offline needs below the floor", () => {
     const initial = {
       ...createSimulation(0),
@@ -89,15 +119,38 @@ describe("simulation", () => {
     expect(Object.values(caughtUp.needs).every((value) => value >= OFFLINE_NEED_FLOOR)).toBe(true);
   });
 
+  it("does not heal a need that starts below the offline floor", () => {
+    const initial = {
+      ...createSimulation(0),
+      needs: { hunger: 4, energy: 8, hygiene: 12, fun: 14 },
+    };
+    const caughtUp = catchUpOffline(initial, 30 * 24 * 60 * 60 * 1_000);
+    expect(caughtUp.needs).toEqual(initial.needs);
+  });
+
+  it("keeps offline floor behavior equivalent across split intervals", () => {
+    const initial = {
+      ...createSimulation(0),
+      needs: { hunger: 16, energy: 10, hygiene: 20, fun: 14 },
+    };
+    const target = 48 * 60 * 60 * 1_000;
+    const whole = catchUpOffline(initial, target);
+    const split = catchUpOffline(catchUpOffline(initial, target / 3), target);
+    expect(split.needs).toEqual(whole.needs);
+  });
+
   it("clamps clock rollback and huge forward offline catch-up", () => {
     const clock = new FakeClock(50_000);
     const initial = createSimulation(clock.now());
 
     clock.set(10_000);
-    expect(catchUpOffline(initial, clock.now())).toBe(initial);
+    const rebased = catchUpOffline(initial, clock.now());
+    expect(rebased).not.toBe(initial);
+    expect(rebased.needs).toEqual(initial.needs);
+    expect(rebased.lastSimulatedAt).toBe(10_000);
 
     clock.set(50_000 + 10 * 365 * 24 * 60 * 60 * 1_000);
-    const forwarded = catchUpOffline(initial, clock.now());
+    const forwarded = catchUpOffline(rebased, clock.now());
     expect(forwarded.lastSimulatedAt).toBe(clock.now());
     expect(forwarded.needs).toEqual({
       hunger: OFFLINE_NEED_FLOOR,

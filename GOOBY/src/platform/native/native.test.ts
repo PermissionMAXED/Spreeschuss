@@ -63,6 +63,37 @@ describe("native save adapter", () => {
     await expect(stale).rejects.toThrow("Save changed since it was loaded");
     await expect(adapter.load()).resolves.toEqual({ revision: 1, payload: { coins: 1 } });
   });
+
+  it("allows one winner across adapters sharing a Preferences client", async () => {
+    const preferences = new MemoryPreferences();
+    const firstAdapter = new NativeSaveAdapter(preferences);
+    const secondAdapter = new NativeSaveAdapter(preferences);
+
+    const results = await Promise.allSettled([
+      firstAdapter.commit(0, { source: "first" }),
+      secondAdapter.commit(0, { source: "second" }),
+    ]);
+
+    expect(results.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(({ status }) => status === "rejected")).toHaveLength(1);
+    await expect(firstAdapter.load()).resolves.toMatchObject({ revision: 1 });
+  });
+
+  it("falls through from a corrupt current record to a valid legacy save", async () => {
+    const preferences = new MemoryPreferences();
+    const legacy = { version: 1, name: "Legacy Gooby" };
+    preferences.values.set("gooby.save.v2", "{ corrupt");
+    preferences.values.set("gooby.save.v1", JSON.stringify(legacy));
+
+    const adapter = new NativeSaveAdapter(preferences);
+
+    await expect(adapter.load()).resolves.toEqual({ revision: 0, payload: legacy });
+    expect(preferences.values.has("gooby.save.v1")).toBe(false);
+    expect(JSON.parse(preferences.values.get("gooby.save.v2") ?? "")).toEqual({
+      revision: 0,
+      payload: legacy,
+    });
+  });
 });
 
 describe("native notification adapter", () => {
@@ -138,6 +169,61 @@ describe("native notification adapter", () => {
     await adapter.schedule({ id: 301, title: "Rested", body: "Ready", at: 1_801_000 });
     expect(schedules).toBe(0);
   });
+
+  it("defers quiet-hour delivery to the end boundary", async () => {
+    let scheduledAt = -1;
+    const start = new Date(2026, 0, 2, 22, 0, 0, 0).getTime();
+    const end = new Date(2026, 0, 3, 8, 0, 0, 0).getTime();
+    const adapter = new NativeNotificationsAdapter({
+      checkPermissions: () => Promise.resolve({ display: "granted" }),
+      requestPermissions: () => Promise.resolve({ display: "granted" }),
+      cancel: () => Promise.resolve(),
+      schedule: ({ notifications }) => {
+        scheduledAt = notifications[0]?.schedule.at.getTime() ?? -1;
+        return Promise.resolve({});
+      },
+    }, new FakeClock(start - 1));
+
+    await adapter.schedule({
+      id: 301,
+      title: "Rested",
+      body: "Ready",
+      at: start,
+      policy: {
+        quietHours: { startHour: 22, endHour: 8 },
+        suppressWhenForeground: true,
+      },
+    });
+
+    expect(scheduledAt).toBe(end);
+  });
+
+  it("stays silent when a foreground-suppressed notification is requested", async () => {
+    let schedules = 0;
+    const adapter = new NativeNotificationsAdapter({
+      checkPermissions: () => Promise.resolve({ display: "granted" }),
+      requestPermissions: () => Promise.resolve({ display: "granted" }),
+      cancel: () => Promise.resolve(),
+      schedule: () => {
+        schedules += 1;
+        return Promise.resolve({});
+      },
+    }, new FakeClock(1_000));
+    adapter.setForeground(true);
+
+    await adapter.schedule({
+      id: 301,
+      title: "Rested",
+      body: "Ready",
+      at: 2_000,
+      policy: {
+        quietHours: null,
+        suppressWhenForeground: true,
+      },
+    });
+
+    expect(schedules).toBe(0);
+  });
 });
 
 describe("native haptics and lifecycle", () => {
@@ -211,5 +297,48 @@ describe("native haptics and lifecycle", () => {
     expect(foregrounds).toBe(1);
     await Promise.resolve();
     expect(removals).toBe(1);
+  });
+
+  it("keeps lifecycle hooks working when splash and status plugins reject", async () => {
+    let listener: ((state: { isActive: boolean }) => void) | undefined;
+    let backgrounds = 0;
+    const cleanup = await configureNativeShell(
+      {
+        onBackground: () => {
+          backgrounds += 1;
+        },
+        onForeground: () => undefined,
+      },
+      {
+        app: {
+          addListener: (_event, installed) => {
+            listener = installed;
+            return Promise.resolve({ remove: () => Promise.resolve() });
+          },
+        },
+        splash: { hide: () => Promise.reject(new Error("splash unavailable")) },
+        statusBar: { setStyle: () => Promise.reject(new Error("status unavailable")) },
+      },
+    );
+
+    listener?.({ isActive: false });
+    expect(backgrounds).toBe(1);
+    cleanup();
+  });
+
+  it("still rejects when required lifecycle registration fails", async () => {
+    await expect(configureNativeShell(
+      {
+        onBackground: () => undefined,
+        onForeground: () => undefined,
+      },
+      {
+        app: {
+          addListener: () => Promise.reject(new Error("lifecycle unavailable")),
+        },
+        splash: { hide: () => Promise.reject(new Error("splash unavailable")) },
+        statusBar: { setStyle: () => Promise.resolve() },
+      },
+    )).rejects.toThrow("lifecycle unavailable");
   });
 });

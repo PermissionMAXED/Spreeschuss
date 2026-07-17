@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { FakeClock } from "../src/core/contracts/clock";
+import {
+  createMinigameLifecycle,
+  type MinigameSettlementReceipt,
+} from "../src/core/contracts/minigame";
 import type { SavePort, SaveRecord } from "../src/core/contracts/platform";
 import {
   commitSave,
@@ -65,8 +70,69 @@ describe("save migrations", () => {
       },
       economy: { coins: 40, xp: 0, level: 1 },
       inventory: { carrot: 3 },
-      settings: { muted: false, reducedMotion: false },
+      settings: {
+        muted: false,
+        reducedMotion: false,
+        haptics: true,
+        notifications: true,
+      },
+      ui: {
+        equipped: {},
+        highScores: {},
+        sleepRationaleSeen: false,
+      },
+      travel: { visitedShops: [] },
+      dailyHarvest: { day: null, count: 0 },
+      notificationPolicy: {
+        quietHours: null,
+        suppressWhenForeground: true,
+      },
+      minigameSettlement: null,
     });
+  });
+
+  it.each(["", "   \t"])("repairs an empty version-one name %j", (name) => {
+    const migrated = migrateSave({
+      version: 1,
+      name,
+      createdAt: 100,
+      lastSeenAt: 200,
+      needs: { hunger: 50, energy: 60, hygiene: 70, fun: 80 },
+    });
+
+    expect(migrated?.profile.name).toBe("Gooby");
+    expect(SaveStateSchema.safeParse(migrated).success).toBe(true);
+  });
+
+  it("defaults canonical fields when loading an old version-two save", () => {
+    const oldV2 = {
+      version: 2,
+      profile: { name: "Bun", onboardingComplete: true, createdAt: 100 },
+      simulation: {
+        needs: { hunger: 50, energy: 60, hygiene: 70, fun: 80 },
+        lastSimulatedAt: 200,
+        sleep: null,
+      },
+      economy: { coins: 12, xp: 25, level: 1 },
+      inventory: { carrot: 2 },
+      settings: { muted: false, reducedMotion: false },
+    };
+
+    const migrated = migrateSave(oldV2);
+    expect(migrated).toMatchObject({
+      settings: {
+        muted: false,
+        reducedMotion: false,
+        haptics: true,
+        notifications: true,
+      },
+      ui: { equipped: {}, highScores: {}, sleepRationaleSeen: false },
+      travel: { visitedShops: [] },
+      dailyHarvest: { day: null, count: 0 },
+      notificationPolicy: { quietHours: null, suppressWhenForeground: true },
+      minigameSettlement: null,
+    });
+    expect(SaveStateSchema.safeParse(migrated).success).toBe(true);
   });
 
   it("repairs a stale derived level in an otherwise current save", () => {
@@ -97,5 +163,50 @@ describe("save migrations", () => {
     const invalid = { ...state, economy: { ...state.economy, coins: -1 } };
     expect(SaveStateSchema.safeParse(invalid).success).toBe(false);
     await expect(commitSave(port, 1, invalid as never)).rejects.toThrow();
+  });
+});
+
+describe("minigame settlement lifecycle", () => {
+  it("settles a run once, replays its receipt, and leaves a zero-action exit unpaid", () => {
+    const clock = new FakeClock(5_000);
+    const settlements = new Map<string, MinigameSettlementReceipt>();
+    const bestScores = new Map<string, number>();
+    const feedback: string[] = [];
+    let payoutsApplied = 0;
+    const lifecycle = createMinigameLifecycle(
+      "carrot-catch",
+      clock,
+      {
+        getBestScore: (id) => bestScores.get(id) ?? 0,
+        getSettlement: (runId) => settlements.get(runId) ?? null,
+        settle: (receipt) => {
+          const previous = settlements.get(receipt.runId);
+          if (previous) return previous;
+          settlements.set(receipt.runId, receipt);
+          bestScores.set(receipt.minigameId, receipt.bestScore);
+          payoutsApplied += 1;
+          return receipt;
+        },
+      },
+      {
+        emit: (event) => {
+          feedback.push(event.kind);
+        },
+      },
+    );
+
+    const abandoned = lifecycle.beginRun();
+    lifecycle.exit();
+    expect(() => lifecycle.completeRun(abandoned, { coins: 5, xp: 5, score: 10 })).toThrow(
+      /inactive/u,
+    );
+    expect(payoutsApplied).toBe(0);
+
+    const runId = lifecycle.beginRun();
+    const receipt = lifecycle.completeRun(runId, { coins: 5, xp: 7, score: 20 });
+    expect(lifecycle.completeRun(runId, { coins: 999, xp: 999, score: 999 })).toBe(receipt);
+    expect(payoutsApplied).toBe(1);
+    expect(lifecycle.persistedBest).toBe(20);
+    expect(feedback).toEqual(["run-began", "run-exited", "run-began", "run-completed"]);
   });
 });
