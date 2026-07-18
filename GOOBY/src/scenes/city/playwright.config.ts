@@ -22,7 +22,7 @@ export default defineConfig({
     cwd: projectRoot,
     command: "npx vite --config src/scenes/city/harness.vite.config.ts --host 0.0.0.0 --port 4547",
     url: "http://127.0.0.1:4547/src/scenes/city/dev-harness.html",
-    reuseExistingServer: false,
+    reuseExistingServer: process.env.CITY_REUSE_EXISTING_SERVER === "1",
     timeout: 120_000,
   },
 });

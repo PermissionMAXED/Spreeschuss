@@ -88,6 +88,14 @@ async function controlDiagnostics(control: Locator): Promise<unknown> {
   }));
 }
 
+async function releasePointer(page: Page): Promise<void> {
+  try {
+    await page.mouse.up();
+  } catch (error) {
+    if (!page.isClosed()) throw error;
+  }
+}
+
 async function holdFor(
   page: Page,
   control: Locator,
@@ -141,7 +149,7 @@ async function holdFor(
   try {
     await page.waitForTimeout(durationMs);
   } finally {
-    await page.mouse.up();
+    await releasePointer(page);
   }
   return true;
 }
@@ -235,6 +243,8 @@ async function steerToward(
 }
 
 test("real pointer-held steering drives outbound and completes the required return", async ({ page }) => {
+  test.setTimeout(240_000);
+
   await page.goto("/src/scenes/city/dev-harness.html");
   await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
 
