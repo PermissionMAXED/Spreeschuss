@@ -6,6 +6,7 @@ import {
   waitForServerIdentity,
 } from "../../src/perf/audit-runner.mjs";
 
+const AUDIT_TIMEOUT_MS = 480_000;
 const host = "127.0.0.1";
 const requestedPort = process.env.GOOBY_PERF_PORT === undefined
   ? 0
@@ -99,7 +100,7 @@ try {
   const timeout = new Promise((resolve) => {
     auditTimeout = setTimeout(
       () => resolve({ label: "timeout", code: null, signal: null }),
-      240_000,
+      AUDIT_TIMEOUT_MS,
     );
     auditTimeout.unref();
   });
@@ -110,7 +111,7 @@ try {
   ]);
   clearTimeout(auditTimeout);
   if (outcome.label === "timeout") {
-    throw new Error("Performance browser audit timed out after 240 seconds");
+    throw new Error(`Performance browser audit timed out after ${AUDIT_TIMEOUT_MS / 1_000} seconds`);
   }
   if (outcome.label === "server") {
     throw new Error(

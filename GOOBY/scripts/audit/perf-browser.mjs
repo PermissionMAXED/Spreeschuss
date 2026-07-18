@@ -1,6 +1,14 @@
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, devices } from "@playwright/test";
+import {
+  MEASUREMENT_TRIALS,
+  advanceWarmupState,
+  assertTimingLimits,
+  createWarmupState,
+  summarizePerformanceTrials,
+  sustainedSlowProbeIsRejected,
+} from "../../src/perf/audit-methodology.mjs";
 import { analyzeLeakSeries } from "../../src/perf/leak-math.mjs";
 import { probeServerIdentity } from "../../src/perf/audit-runner.mjs";
 
@@ -21,6 +29,9 @@ await mkdir(artifacts, { recursive: true });
 
 const MAIN_SCENE_SAMPLES = 120;
 const QUALITY_TIER_SAMPLES = 60;
+const WARMUP_OBSERVATION_MS = 1_100;
+const WARMUP_TIMEOUT_MS = 45_000;
+const NETWORK_IDLE_MS = 750;
 const LEAK_CYCLES = 8;
 const LEAK_MINIMUM_SAMPLES = LEAK_CYCLES + 1;
 const PERF_LIMITS = {
@@ -136,6 +147,22 @@ function watchPage(page, pageErrors, externalRequests) {
   page.on("websocket", (socket) => {
     if (!isAuditHost(socket.url())) externalRequests.push(socket.url());
   });
+  const network = {
+    inFlight: new Set(),
+    lastActivityAt: performance.now(),
+  };
+  page.on("request", (request) => {
+    if (request.resourceType() === "websocket") return;
+    network.inFlight.add(request);
+    network.lastActivityAt = performance.now();
+  });
+  const finishRequest = (request) => {
+    if (!network.inFlight.delete(request)) return;
+    network.lastActivityAt = performance.now();
+  };
+  page.on("requestfinished", finishRequest);
+  page.on("requestfailed", finishRequest);
+  return network;
 }
 
 async function waitForApp(page) {
@@ -158,14 +185,92 @@ async function completeOnboarding(page) {
   await onboarding.waitFor({ state: "hidden" });
 }
 
-async function sampleSnapshot(page, label, minimumSamples, warmupMs = 1_800) {
-  await page.evaluate(() => window.__gooby.perf.controls.resetRollingMetrics());
-  await page.waitForTimeout(warmupMs);
+function networkIsIdle(network) {
+  return network.inFlight.size === 0
+    && performance.now() - network.lastActivityAt >= NETWORK_IDLE_MS;
+}
+
+async function waitForNetworkIdle(page, network, label) {
+  await page.waitForLoadState("networkidle");
+  const deadline = performance.now() + 20_000;
+  while (!networkIsIdle(network)) {
+    invariant(
+      performance.now() < deadline,
+      `${label}: network did not become idle (${network.inFlight.size} requests remain)`,
+    );
+    await page.waitForTimeout(100);
+  }
+}
+
+async function readWarmupObservation(page, network) {
+  const observation = await page.evaluate(() => {
+    const snapshot = window.__gooby.perf.snapshot();
+    const runtime = window.__gooby.runtime();
+    return {
+      appReady: document.querySelector("#app")?.dataset.ready === "true",
+      runtimeKey: JSON.stringify([
+        runtime.sceneId,
+        runtime.cityPhase,
+        runtime.activeMinigame,
+        runtime.minigameRoots,
+      ]),
+      quality: snapshot.quality.active,
+      programs: snapshot.resources.current.programs,
+      samples: snapshot.frame.samples,
+      fps: snapshot.frame.fps,
+      p95Ms: snapshot.frame.p95Ms,
+    };
+  });
+  return {
+    ...observation,
+    networkIdle: networkIsIdle(network),
+  };
+}
+
+async function warmScene(page, network, label, minimumSamples, expectedQuality = "low") {
+  const startedAt = performance.now();
+  await waitForNetworkIdle(page, network, label);
   await page.evaluate(() => window.__gooby.perf.controls.resetRollingMetrics());
   await page.waitForFunction(
     (minimum) => window.__gooby.perf.snapshot().frame.samples >= minimum,
     minimumSamples,
-    { timeout: 20_000 },
+    { timeout: WARMUP_TIMEOUT_MS },
+  );
+  let state = createWarmupState();
+  const observations = [];
+  const deadline = performance.now() + WARMUP_TIMEOUT_MS;
+  while (!state.ready) {
+    await waitForNetworkIdle(page, network, label);
+    const observation = await readWarmupObservation(page, network);
+    observations.push(observation);
+    state = advanceWarmupState(state, observation, { minimumSamples, expectedQuality });
+    if (state.ready) break;
+    invariant(
+      performance.now() < deadline,
+      `${label}: renderer/JIT warmup did not stabilize: ${state.reason}`,
+    );
+    await page.waitForTimeout(WARMUP_OBSERVATION_MS);
+  }
+  const final = observations.at(-1);
+  console.log(
+    `${label}: warm after ${((performance.now() - startedAt) / 1_000).toFixed(1)}s, `
+      + `${final.samples} frames, ${final.programs} programs, `
+      + `${final.fps.toFixed(1)} FPS`,
+  );
+  return {
+    label,
+    durationMs: performance.now() - startedAt,
+    observations,
+    stableObservations: state.stableObservations,
+  };
+}
+
+async function collectSnapshot(page, label, minimumSamples) {
+  await page.evaluate(() => window.__gooby.perf.controls.resetRollingMetrics());
+  await page.waitForFunction(
+    (minimum) => window.__gooby.perf.snapshot().frame.samples >= minimum,
+    minimumSamples,
+    { timeout: 30_000 },
   );
   const snapshot = await page.evaluate(() => window.__gooby.perf.snapshot());
   invariant(
@@ -179,14 +284,7 @@ function assertSceneLimits(label, snapshot, rendererClass) {
   const limits = PERF_LIMITS[label];
   invariant(limits, `${label}: no performance limit is documented`);
   const timing = limits.timing[rendererClass];
-  invariant(
-    snapshot.frame.fps >= timing.minFps,
-    `${label}: ${snapshot.frame.fps.toFixed(1)} FPS is below ${timing.minFps} (${rendererClass})`,
-  );
-  invariant(
-    snapshot.frame.p95Ms <= timing.maxP95Ms,
-    `${label}: ${snapshot.frame.p95Ms.toFixed(1)}ms p95 exceeds ${timing.maxP95Ms}ms (${rendererClass})`,
-  );
+  assertTimingLimits(`${label} (${rendererClass})`, snapshot, timing);
   invariant(
     snapshot.render.drawCallsP95 <= limits.maxDrawCallsP95,
     `${label}: ${snapshot.render.drawCallsP95} draw calls p95 exceeds ${limits.maxDrawCallsP95}`,
@@ -197,19 +295,38 @@ function assertSceneLimits(label, snapshot, rendererClass) {
   );
 }
 
-async function measureScene(page, label, rendererClass) {
+async function collectSceneMeasurement(page, network, label, warmups) {
   const limits = PERF_LIMITS[label];
   invariant(limits, `${label}: missing scene limits`);
-  const snapshot = await sampleSnapshot(page, label, limits.samples);
+  warmups.push(await warmScene(page, network, label, limits.samples));
+  const trials = [];
+  for (let index = 0; index < MEASUREMENT_TRIALS; index += 1) {
+    const snapshot = await collectSnapshot(page, `${label} trial ${index + 1}`, limits.samples);
+    trials.push(snapshot);
+    console.log(
+      `${label} trial ${index + 1}/${MEASUREMENT_TRIALS}: `
+        + `${snapshot.frame.fps.toFixed(1)} FPS, `
+        + `${snapshot.frame.p95Ms.toFixed(1)}ms p95, `
+        + `${snapshot.frame.samples} samples`,
+    );
+  }
+  const summary = summarizePerformanceTrials(trials, limits.samples);
+  const snapshot = summary.snapshot;
   console.log(
-    `${label}: ${snapshot.frame.fps.toFixed(1)} FPS, `
+    `${label} median: ${snapshot.frame.fps.toFixed(1)} FPS, `
       + `${snapshot.frame.p95Ms.toFixed(1)}ms p95, `
       + `${snapshot.render.drawCallsP95} draws, `
       + `${snapshot.render.trianglesP95} triangles, `
-      + `${snapshot.frame.samples} samples`,
+      + `${snapshot.frame.samples} samples/trial`,
   );
+  return { limits, snapshot, trials, summary };
+}
+
+async function measureScene(page, network, label, rendererClass, warmups) {
+  const measurement = await collectSceneMeasurement(page, network, label, warmups);
+  const { limits, snapshot, trials, summary } = measurement;
   assertSceneLimits(label, snapshot, rendererClass);
-  return { label, rendererClass, limits, snapshot };
+  return { label, rendererClass, limits, snapshot, trials, summary };
 }
 
 async function openPanel(page, panel) {
@@ -355,6 +472,18 @@ async function leakCheckpoint(page, cdp, index) {
   };
 }
 
+const sustainedSlowProbeChecks = Object.fromEntries(
+  Object.entries(PERF_LIMITS["home:living-room"].timing).map(([rendererClass, timing]) => [
+    rendererClass,
+    sustainedSlowProbeIsRejected(timing, MAIN_SCENE_SAMPLES, 30),
+  ]),
+);
+invariant(
+  Object.values(sustainedSlowProbeChecks).every(Boolean),
+  "Three-trial aggregation accepted a synthetic sustained 30 FPS home probe",
+);
+console.log("Methodology self-check: sustained 30 FPS home probe rejected");
+
 const identityProbe = await probeServerIdentity(baseUrl, nonce);
 invariant(identityProbe.ready, "Performance server was unreachable before browser launch");
 invariant(
@@ -379,39 +508,34 @@ try {
   });
   await guardNetwork(context, externalRequests);
   const page = await context.newPage();
-  watchPage(page, pageErrors, externalRequests);
+  const network = watchPage(page, pageErrors, externalRequests);
   const cdp = await context.newCDPSession(page);
   await cdp.send("Performance.enable");
 
-  await page.goto(`${baseUrl}/?perf=1`);
+  await page.goto(`${baseUrl}/?perf=1`, { waitUntil: "networkidle" });
   await page.evaluate(() => localStorage.clear());
-  await page.reload();
+  await page.reload({ waitUntil: "networkidle" });
   await waitForApp(page);
   await completeOnboarding(page);
   await page.evaluate(() => window.__gooby.perf.controls.setQuality("low"));
 
   const measurements = [];
-  const homeSnapshot = await sampleSnapshot(
+  const warmups = [];
+  const homeMeasurement = await collectSceneMeasurement(
     page,
+    network,
     "home:living-room",
-    PERF_LIMITS["home:living-room"].samples,
+    warmups,
   );
+  const homeSnapshot = homeMeasurement.snapshot;
   const rendererClass = /swiftshader/iu.test(homeSnapshot.quality.profile.gpu)
     ? "swiftshader"
     : "hardware";
-  console.log(
-    `home:living-room: ${homeSnapshot.frame.fps.toFixed(1)} FPS, `
-      + `${homeSnapshot.frame.p95Ms.toFixed(1)}ms p95, `
-      + `${homeSnapshot.render.drawCallsP95} draws, `
-      + `${homeSnapshot.render.trianglesP95} triangles, `
-      + `${homeSnapshot.frame.samples} samples`,
-  );
   assertSceneLimits("home:living-room", homeSnapshot, rendererClass);
   measurements.push({
     label: "home:living-room",
     rendererClass,
-    limits: PERF_LIMITS["home:living-room"],
-    snapshot: homeSnapshot,
+    ...homeMeasurement,
   });
 
   await page.evaluate(() => window.__gooby.test?.grantProgressionXp(3_600));
@@ -419,18 +543,26 @@ try {
   await openPanel(page, "places");
   await page.getByTestId("open-city-board").click();
   await page.waitForFunction(() => window.__gooby.runtime().sceneId === "city:drive");
-  measurements.push(await measureScene(page, "city:destination-board", rendererClass));
+  measurements.push(await measureScene(
+    page,
+    network,
+    "city:destination-board",
+    rendererClass,
+    warmups,
+  ));
 
   const tierMeasurements = {};
   const qualityApplication = {};
   for (const tier of ["low", "mid", "high"]) {
     await page.evaluate((value) => window.__gooby.perf.controls.setQuality(value), tier);
-    const snapshot = await sampleSnapshot(
+    warmups.push(await warmScene(
       page,
+      network,
       `city:quality:${tier}`,
       QUALITY_TIER_SAMPLES,
-      900,
-    );
+      tier,
+    ));
+    const snapshot = await collectSnapshot(page, `city:quality:${tier}`, QUALITY_TIER_SAMPLES);
     const applied = await page.evaluate(() => ({
       documentTier: document.documentElement.dataset.quality,
       particleDensity: Number.parseFloat(
@@ -459,7 +591,7 @@ try {
   await page.getByTestId("destination-fluff-salon").click();
   await page.getByTestId("start-drive").click();
   await page.waitForFunction(() => window.__gooby.runtime().cityPhase === "driving-outbound");
-  measurements.push(await measureScene(page, "city:driving", rendererClass));
+  measurements.push(await measureScene(page, network, "city:driving", rendererClass, warmups));
   await page.evaluate(() => window.__gooby.test?.completeCityLeg());
   await page.getByTestId("enter-shop").click();
   await page.waitForFunction(() => window.__gooby.runtime().sceneId === "shop:fluff-salon");
@@ -468,7 +600,13 @@ try {
   await page.waitForFunction(() =>
     window.__gooby.snapshot()?.inventory["sunny-bucket-hat"] === 1);
   await page.locator('[data-shop-action="try"]').click();
-  measurements.push(await measureScene(page, "shop:fluff-salon:try-on", rendererClass));
+  measurements.push(await measureScene(
+    page,
+    network,
+    "shop:fluff-salon:try-on",
+    rendererClass,
+    warmups,
+  ));
 
   await page.getByRole("button", { name: "Return to Town" }).click();
   await page.waitForFunction(() => window.__gooby.runtime().cityPhase === "return-board");
@@ -486,7 +624,7 @@ try {
   for (const [game, label] of measuredGames) {
     await startMinigame(page, game);
     await prepareMinigame(page, game);
-    measurements.push(await measureScene(page, label, rendererClass));
+    measurements.push(await measureScene(page, network, label, rendererClass, warmups));
     await exitMinigame(page);
   }
   await startMinigame(page, "bubble-bath-blast");
@@ -578,6 +716,16 @@ try {
       mainScenes: MAIN_SCENE_SAMPLES,
       qualityTiers: QUALITY_TIER_SAMPLES,
       leakCheckpoints: LEAK_MINIMUM_SAMPLES,
+      measurementTrials: MEASUREMENT_TRIALS,
+    },
+    methodology: {
+      networkIdleMs: NETWORK_IDLE_MS,
+      warmupObservationMs: WARMUP_OBSERVATION_MS,
+      warmupTimeoutMs: WARMUP_TIMEOUT_MS,
+      timingAggregation: "median of three complete trials",
+      workBudgetAggregation: "maximum across three complete trials",
+      syntheticSustained30FpsRejected: sustainedSlowProbeChecks,
+      warmups,
     },
     heaviestGameRationale: [
       "Delivery Dash repaints a full-resolution 2D city canvas and traffic every frame.",
@@ -609,6 +757,7 @@ try {
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   console.log(`Performance report: ${reportPath}`);
   console.log(`Renderer: ${rendererClass}; measured scenes: ${measurements.length}`);
+  console.log(`Warmup gates: ${warmups.length}; measurement trials: ${MEASUREMENT_TRIALS}`);
   console.log(`Leak cycles: ${LEAK_CYCLES}; post-baseline transitions: ${finalResourceSnapshot.resources.completedTransitions}`);
   console.log(`Governor: high -> ${governorResult} after sustained 35 FPS`);
   console.log(`External requests: ${externalRequests.length}; page errors: ${pageErrors.length}`);
