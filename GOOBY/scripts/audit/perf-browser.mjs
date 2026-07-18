@@ -17,6 +17,11 @@ import {
 } from "../../src/perf/audit-methodology.mjs";
 import { analyzeLeakSeries } from "../../src/perf/leak-math.mjs";
 import { probeServerIdentity } from "../../src/perf/audit-runner.mjs";
+import {
+  CALIBRATION_PAGE_PATH,
+  CALIBRATION_VIEWPORT,
+  CALIBRATION_WORKLOAD,
+} from "../../src/perf/calibration-workload.mjs";
 
 const baseUrl = process.env.GOOBY_URL ?? "http://127.0.0.1:5173";
 const nonce = process.env.GOOBY_PERF_NONCE;
@@ -48,16 +53,22 @@ const QUALITY_TIER_SAMPLES = 60;
 const WARMUP_OBSERVATION_MS = 1_100;
 const WARMUP_TIMEOUT_MS = 45_000;
 const NETWORK_IDLE_MS = 750;
-const RAW_CALIBRATION = Object.freeze({
-  width: 390,
-  height: 844,
+// Fixed representative Three.js calibration workload: same WebGLRenderer
+// profile, viewport, and scene-graph scheduling shape as the audited Home
+// scene at low quality. The workload constants are frozen in
+// src/perf/calibration-workload.mjs and asserted by unit tests and on every
+// rendered calibration frame.
+const THREE_CALIBRATION = Object.freeze({
+  page: CALIBRATION_PAGE_PATH,
+  width: CALIBRATION_VIEWPORT.width,
+  height: CALIBRATION_VIEWPORT.height,
+  pixelRatio: CALIBRATION_VIEWPORT.pixelRatio,
   warmupSamples: 120,
   samplesPerTrial: 120,
   trials: MEASUREMENT_TRIALS,
-  drawCallsPerFrame: 105,
-  trianglesPerDraw: 154,
-  trianglesPerFrame: 16_170,
-  cpuIterationsPerDraw: 8_000,
+  drawCallsPerFrame: CALIBRATION_WORKLOAD.drawCallsPerFrame,
+  trianglesPerFrame: CALIBRATION_WORKLOAD.trianglesPerFrame,
+  materialFamilies: CALIBRATION_WORKLOAD.materialFamilies,
   timeoutMs: 30_000,
 });
 const LEAK_CYCLES = 8;
@@ -328,214 +339,65 @@ async function warmScene(page, network, label, minimumSamples, expectedQuality =
   };
 }
 
-async function runRawWebGlCalibration(page, attempt) {
+async function runThreeCalibration(page, attempt) {
   const injectSchedulerJitter = calibrationJitterMode === "both-cohorts"
     || (calibrationJitterMode === "first-cohort" && attempt === 1);
+  // 40ms exceeds two 60Hz vsync intervals, so the burst forces missed frames
+  // even when the calibration renders with headroom; 20ms could be absorbed
+  // by the compositor without moving requestAnimationFrame timestamps.
   const schedulerJitter = injectSchedulerJitter
     ? {
         trialIndex: 1,
         frameIndexes: [8, 24, 40, 56, 72, 88, 104],
-        blockMs: 20,
+        blockMs: 40,
       }
     : null;
   const runConfig = {
-    ...RAW_CALIBRATION,
+    warmupSamples: THREE_CALIBRATION.warmupSamples,
+    samplesPerTrial: THREE_CALIBRATION.samplesPerTrial,
+    trials: THREE_CALIBRATION.trials,
+    timeoutMs: THREE_CALIBRATION.timeoutMs,
     schedulerJitter,
   };
-  const raw = await page.evaluate(async (config) => {
-    const canvas = new OffscreenCanvas(config.width, config.height);
-    const gl = canvas.getContext("webgl", {
-      alpha: false,
-      antialias: false,
-      depth: false,
-      desynchronized: false,
-      failIfMajorPerformanceCaveat: false,
-      powerPreference: "high-performance",
-      preserveDrawingBuffer: false,
-      stencil: false,
-    });
-    if (!gl) throw new Error("Raw WebGL calibration could not create a context");
-    if (
-      gl.drawingBufferWidth !== config.width
-      || gl.drawingBufferHeight !== config.height
-    ) {
-      throw new Error(
-        `Raw WebGL calibration buffer is ${gl.drawingBufferWidth}x`
-          + `${gl.drawingBufferHeight}, expected ${config.width}x${config.height}`,
-      );
-    }
-
-    const compileShader = (type, source) => {
-      const shader = gl.createShader(type);
-      if (!shader) throw new Error("Raw WebGL calibration could not allocate a shader");
-      gl.shaderSource(shader, source);
-      gl.compileShader(shader);
-      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        throw new Error(
-          `Raw WebGL calibration shader failed: ${gl.getShaderInfoLog(shader) ?? "unknown"}`,
-        );
-      }
-      return shader;
-    };
-    const vertexShader = compileShader(gl.VERTEX_SHADER, `
-      attribute vec2 a_position;
-      uniform vec2 u_offset;
-      uniform float u_phase;
-      varying float v_shade;
-      void main() {
-        vec2 wobble = vec2(sin(u_phase), cos(u_phase)) * 0.0015;
-        gl_Position = vec4(a_position + u_offset + wobble, 0.0, 1.0);
-        v_shade = fract(a_position.x * 13.0 + a_position.y * 7.0 + u_phase);
-      }
-    `);
-    const fragmentShader = compileShader(gl.FRAGMENT_SHADER, `
-      precision mediump float;
-      varying float v_shade;
-      void main() {
-        float shade = 0.35 + 0.65 * abs(sin(v_shade * 6.2831853));
-        gl_FragColor = vec4(shade, 0.42 * shade, 0.18 + 0.3 * shade, 1.0);
-      }
-    `);
-    const program = gl.createProgram();
-    if (!program) throw new Error("Raw WebGL calibration could not allocate a program");
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      throw new Error(
-        `Raw WebGL calibration program failed: ${gl.getProgramInfoLog(program) ?? "unknown"}`,
-      );
-    }
-    gl.useProgram(program);
-
-    const vertices = new Float32Array(config.trianglesPerDraw * 6);
-    for (let triangle = 0; triangle < config.trianglesPerDraw; triangle += 1) {
-      const column = triangle % 14;
-      const row = Math.floor(triangle / 14);
-      const centerX = -0.94 + column * (1.88 / 13);
-      const centerY = -0.92 + row * (1.84 / 10);
-      const width = 0.008 + (triangle % 3) * 0.001;
-      const height = 0.008 + (triangle % 5) * 0.0005;
-      vertices.set([
-        centerX - width,
-        centerY - height,
-        centerX + width,
-        centerY - height,
-        centerX,
-        centerY + height,
-      ], triangle * 6);
-    }
-    const buffer = gl.createBuffer();
-    if (!buffer) throw new Error("Raw WebGL calibration could not allocate a buffer");
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-    const position = gl.getAttribLocation(program, "a_position");
-    const offset = gl.getUniformLocation(program, "u_offset");
-    const phase = gl.getUniformLocation(program, "u_phase");
-    if (position < 0 || offset === null || phase === null) {
-      throw new Error("Raw WebGL calibration shader locations are unavailable");
-    }
-    gl.enableVertexAttribArray(position);
-    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
-    gl.viewport(0, 0, config.width, config.height);
-    gl.disable(gl.BLEND);
-    gl.disable(gl.CULL_FACE);
-    gl.disable(gl.DEPTH_TEST);
-
-    let frame = 0;
-    let cpuAccumulator = 0.123;
-    const renderFrame = () => {
-      gl.clearColor(0.035, 0.047, 0.064, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      for (let draw = 0; draw < config.drawCallsPerFrame; draw += 1) {
-        for (let work = 0; work < config.cpuIterationsPerDraw; work += 1) {
-          cpuAccumulator = Math.sin(
-            cpuAccumulator + ((work + draw) % 17) * 0.000001,
-          ) + 1.001;
-        }
-        const x = ((draw % 7) - 3) * 0.002;
-        const y = ((Math.floor(draw / 7) % 5) - 2) * 0.002;
-        gl.uniform2f(offset, x, y);
-        gl.uniform1f(
-          phase,
-          ((frame * 17 + draw * 23) % 360) * (Math.PI / 180)
-            + cpuAccumulator * 0.0001,
-        );
-        gl.drawArrays(gl.TRIANGLES, 0, config.trianglesPerDraw * 3);
-      }
-      gl.finish();
-      frame += 1;
-    };
-    const summarize = (frameTimes) => {
-      const ordered = frameTimes.toSorted((left, right) => left - right);
-      const averageMs = frameTimes.reduce((sum, value) => sum + value, 0)
-        / frameTimes.length;
-      return {
-        fps: 1_000 / averageMs,
-        averageMs,
-        p95Ms: ordered[Math.ceil(ordered.length * 0.95) - 1],
-        samples: frameTimes.length,
-      };
-    };
-    const collect = (sampleCount, jitter = null) => new Promise((resolve, reject) => {
-      const frameTimes = [];
-      const jitterFrames = new Set(jitter?.frameIndexes ?? []);
-      let previousTimestamp = null;
-      const timeout = setTimeout(() => {
-        reject(new Error(
-          `Raw WebGL calibration timed out at ${frameTimes.length}/${sampleCount} samples`,
-        ));
-      }, config.timeoutMs);
-      const tick = (timestamp) => {
-        renderFrame();
-        if (previousTimestamp !== null) frameTimes.push(timestamp - previousTimestamp);
-        previousTimestamp = timestamp;
-        if (jitterFrames.has(frameTimes.length)) {
-          const blockedUntil = performance.now() + jitter.blockMs;
-          while (performance.now() < blockedUntil) {
-            cpuAccumulator += Number.EPSILON;
-          }
-        }
-        if (frameTimes.length >= sampleCount) {
-          clearTimeout(timeout);
-          resolve(summarize(frameTimes));
-          return;
-        }
-        requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    });
-
-    const warmup = await collect(config.warmupSamples);
-    const trials = [];
-    for (let index = 0; index < config.trials; index += 1) {
-      const jitter = config.schedulerJitter?.trialIndex === index
-        ? config.schedulerJitter
-        : null;
-      trials.push(await collect(config.samplesPerTrial, jitter));
-    }
-    const rendererInfo = gl.getExtension("WEBGL_debug_renderer_info");
-    const renderer = rendererInfo
-      ? gl.getParameter(rendererInfo.UNMASKED_RENDERER_WEBGL)
-      : gl.getParameter(gl.RENDERER);
-    gl.deleteBuffer(buffer);
-    gl.deleteProgram(program);
-    gl.deleteShader(vertexShader);
-    gl.deleteShader(fragmentShader);
-    return {
-      renderer,
-      drawingBuffer: {
-        width: gl.drawingBufferWidth,
-        height: gl.drawingBufferHeight,
-      },
-      warmup,
-      trials,
-    };
-  }, runConfig);
+  // A fresh navigation per cohort guarantees an independent WebGL context,
+  // renderer, warmup, and trials; it also warms the Vite module graph and
+  // pre-bundled three dependency before the app itself loads.
+  await page.goto(
+    `${baseUrl}${THREE_CALIBRATION.page}?cohort=${attempt}`,
+    { waitUntil: "networkidle" },
+  );
+  await page.waitForFunction(() => window.__goobyPerfCalibration?.ready === true);
+  const run = await page.evaluate(
+    (config) => window.__goobyPerfCalibration.run(config),
+    runConfig,
+  );
+  invariant(
+    run.renderedWorkload.drawCalls === THREE_CALIBRATION.drawCallsPerFrame,
+    `Calibration cohort ${attempt} rendered ${run.renderedWorkload.drawCalls} draw calls, `
+      + `expected ${THREE_CALIBRATION.drawCallsPerFrame}`,
+  );
+  invariant(
+    run.renderedWorkload.triangles === THREE_CALIBRATION.trianglesPerFrame,
+    `Calibration cohort ${attempt} rendered ${run.renderedWorkload.triangles} triangles, `
+      + `expected ${THREE_CALIBRATION.trianglesPerFrame}`,
+  );
+  invariant(
+    run.renderedWorkload.programs === THREE_CALIBRATION.materialFamilies,
+    `Calibration cohort ${attempt} compiled ${run.renderedWorkload.programs} programs, `
+      + `expected ${THREE_CALIBRATION.materialFamilies}`,
+  );
+  invariant(
+    run.drawingBuffer.width === THREE_CALIBRATION.width
+      && run.drawingBuffer.height === THREE_CALIBRATION.height,
+    `Calibration cohort ${attempt} drawing buffer is `
+      + `${run.drawingBuffer.width}x${run.drawingBuffer.height}, expected `
+      + `${THREE_CALIBRATION.width}x${THREE_CALIBRATION.height}`,
+  );
   return {
-    workload: RAW_CALIBRATION,
+    attempt,
+    workload: THREE_CALIBRATION,
     schedulerJitter,
-    ...raw,
+    ...run,
   };
 }
 
@@ -790,7 +652,7 @@ const leakSamples = [];
 let identityProbe = null;
 let calibration = {
   status: "not-started",
-  workload: RAW_CALIBRATION,
+  workload: THREE_CALIBRATION,
 };
 let rendererClass = null;
 let finalResourceSnapshot = null;
@@ -835,19 +697,19 @@ try {
 
   calibration = {
     status: "running",
-    workload: RAW_CALIBRATION,
+    workload: THREE_CALIBRATION,
     attempts: [],
   };
   const calibrationRun = await runCalibrationCohorts(
-    (attempt) => runRawWebGlCalibration(page, attempt),
+    (attempt) => runThreeCalibration(page, attempt),
     {
-      minimumSamples: RAW_CALIBRATION.samplesPerTrial,
-      expectedTrials: RAW_CALIBRATION.trials,
+      minimumSamples: THREE_CALIBRATION.samplesPerTrial,
+      expectedTrials: THREE_CALIBRATION.trials,
     },
   );
   calibration = {
     status: calibrationRun.status,
-    workload: RAW_CALIBRATION,
+    workload: THREE_CALIBRATION,
     schedulerJitterMode: calibrationJitterMode,
     attempts: calibrationRun.attempts,
     selectedAttempt: calibrationRun.selectedAttempt,
@@ -856,7 +718,7 @@ try {
   };
   for (const attempt of calibrationRun.attempts) {
     console.log(
-      `Raw WebGL calibration attempt ${attempt.attempt}: ${attempt.status}, `
+      `Three.js calibration attempt ${attempt.attempt}: ${attempt.status}, `
         + `${attempt.summary.fps.toFixed(1)} FPS, `
         + `${attempt.summary.p95Ms.toFixed(1)}ms p95 `
         + `(${attempt.reason})`,
@@ -865,12 +727,13 @@ try {
   invariant(calibrationRun.status === "passed", calibrationRun.reason);
   const calibrationSummary = calibrationRun.summary;
   console.log(
-    `Raw WebGL calibration selected attempt ${calibrationRun.selectedAttempt}: `
+    `Three.js calibration selected attempt ${calibrationRun.selectedAttempt}: `
       + `${calibrationSummary.fps.toFixed(1)} FPS, `
       + `${calibrationSummary.p95Ms.toFixed(1)}ms p95, `
-      + `${RAW_CALIBRATION.drawCallsPerFrame} draws / `
-      + `${RAW_CALIBRATION.trianglesPerFrame} triangles, `
-      + `${RAW_CALIBRATION.trials}x${RAW_CALIBRATION.samplesPerTrial} samples`,
+      + `${THREE_CALIBRATION.drawCallsPerFrame} draws / `
+      + `${THREE_CALIBRATION.trianglesPerFrame} triangles / `
+      + `${THREE_CALIBRATION.materialFamilies} program families, `
+      + `${THREE_CALIBRATION.trials}x${THREE_CALIBRATION.samplesPerTrial} samples`,
   );
 
   await page.goto(`${baseUrl}/?perf=1`, { waitUntil: "networkidle" });
@@ -1110,9 +973,9 @@ try {
       rendererClass,
       cpuThrottleRate,
       sampleRequirements: {
-        calibrationWarmup: RAW_CALIBRATION.warmupSamples,
-        calibrationPerTrial: RAW_CALIBRATION.samplesPerTrial,
-        calibrationTrials: RAW_CALIBRATION.trials,
+        calibrationWarmup: THREE_CALIBRATION.warmupSamples,
+        calibrationPerTrial: THREE_CALIBRATION.samplesPerTrial,
+        calibrationTrials: THREE_CALIBRATION.trials,
         calibrationMaxCohorts: MAX_CALIBRATION_COHORTS,
         mainScenes: MAIN_SCENE_SAMPLES,
         qualityTiers: QUALITY_TIER_SAMPLES,

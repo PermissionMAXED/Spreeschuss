@@ -10,7 +10,9 @@ Measured with the iPhone 13 Playwright profile in cloud Chromium. The renderer i
 
 ## SwiftShader baselines and limits
 
-SwiftShader timing is normalized to a deterministic raw-WebGL runner calibration instead of treating one cloud VM's absolute FPS as portable. Before the app loads, an exact 390×844 `OffscreenCanvas` runs a fixed WebGL 1 shader, 105 draw calls, 154 triangles per call (16,170 per frame), and 8,000 deterministic submission-side math iterations per draw. `gl.finish()` keeps queued software rendering inside the measured frame. Each independent calibration cohort runs its own 120-sample warmup followed by three clean 120-sample trials.
+SwiftShader timing is normalized to a fixed representative **Three.js** calibration instead of treating one cloud VM's absolute FPS as portable. The previous calibrator was a raw WebGL 1 runner (one trivial shader, no depth test, no antialiasing, CPU `Math.sin` busy loops); on a slower CI runner it calibrated at 46.45 FPS while the Home living room rendered 30.29 FPS with 42 draws and 13,406 triangles, producing a false 0.65 FPS ratio against Home's 0.75 gate before any City measurement occurred. A raw-shader workload is not comparable to Three.js scene scheduling, so it was replaced rather than the thresholds.
+
+Before the app loads, the audit navigates to a dev-only calibration page (`src/perf/calibration.html`, served by the same audit Vite server, absent from the production bundle) that renders a frozen scene through the same `WebGLRenderer` profile as the audited Home scene at low quality: identical constructor options to `GameRenderer` (`alpha: false`, `antialias: true`, depth on, `powerPreference: "default"`), sRGB output, ACES filmic tone mapping at 1.05 exposure, shadow maps off, 390×844 at device pixel ratio 1, camera FOV 36 / far 76, and an ambient-plus-directional light rig. The workload is 42 meshes in interleaved family order — 14 smooth `MeshStandardMaterial` spheres, 12 flat-shaded `MeshStandardMaterial` boxes, 8 clearcoat `MeshPhysicalMaterial` tori, 8 `MeshBasicMaterial` cylinders — totaling exactly 42 draw calls, 13,408 triangles, and 4 shader program families per frame. Every mesh rotates deterministically and the root group bobs, so each frame performs a full scene-graph traversal and world-matrix update like the real game loop; all geometry is generated and no mesh ever leaves the frustum. `renderer.info` is asserted against the frozen constants (42 / 13,408 / 4) on **every** calibration frame, unit tests assert the same counts against real three.js geometry plus frustum containment, and the browser runner re-asserts them per cohort. Loading the calibration page also warms the Vite module graph and the pre-bundled `three` dependency before the app itself is measured. Each independent calibration cohort is a fresh page navigation (new WebGL context) running its own 120-sample warmup followed by three clean 120-sample trials.
 
 The fixed FPS ratios are the former documented SwiftShader minimums divided by the 60 FPS reference runner. The fixed p95-throughput ratios are the 16.667 ms reference p95 divided by the former documented p95 caps. A SwiftShader scene must pass both ratios and its absolute FPS safety floor:
 
@@ -28,9 +30,9 @@ The fixed FPS ratios are the former documented SwiftShader minimums divided by t
 | Pond Fishing Legend | 0.800 (48/60) | 0.667 (16.667/25) | 30 | 1 / 1 |
 | Rhythm Hop hard mode | 0.800 (48/60) | 0.667 (16.667/25) | 30 | 1 / 1 |
 
-The calibration rejects any missing 120-sample trial. A cohort is unstable when its three-trial FPS range exceeds 20% of the median or its p95 range exceeds 35% of the median. A stable first cohort gates the scenes without a retry. An unstable first cohort is retained in the report but discarded for gating, then exactly one fresh cohort (new WebGL context, warmup, and three trials) runs. A stable second cohort gates the scenes using only its three trials; trials are never merged or selected across cohorts. Two unstable cohorts fail before the app is loaded. The report records every cohort, warmup, trial, variance, classification and reason, plus every app trial and partial state on failure before the error is propagated.
+The calibration rejects any missing 120-sample trial. A cohort is unstable when its three-trial FPS range exceeds 20% of the median or its p95 range exceeds 35% of the median. A stable first cohort gates the scenes without a retry. An unstable first cohort is retained in the report but discarded for gating, then exactly one fresh cohort (new page navigation, WebGL context, warmup, and three trials) runs. A stable second cohort gates the scenes using only its three trials; trials are never merged or selected across cohorts. Two unstable cohorts fail before the app is loaded. The report records every cohort, warmup, trial, variance, classification and reason, plus every app trial and partial state on failure before the error is propagated.
 
-A normal local audit calibrated at 60.0 FPS / 16.7 ms p95; a 2× CDP CPU-throttled audit calibrated at 34.3 FPS / 33.4 ms and passed the same normalized scene gates. An injected seven-frame scheduler-jitter burst made the first cohort's p95 range 99.4%; the runner discarded it, selected a fresh stable 60.0 FPS / 16.8 ms second cohort, and completed all seven scene measurements. Injecting the burst into both cohorts produced 99.4% and 98.8% p95 ranges, failed before app load, and reported zero scene measurements. A synthetic sustained 30 FPS home scene still fails against a 60 FPS calibration. Hardware renderers retain every previous absolute min-FPS/max-p95 limit. Draw calls, triangles, sample counts, resource limits, and leak limits are unchanged and renderer-independent.
+Measured with the Three.js calibrator on one cloud VM: three cold audits (Vite dependency cache cleared first) calibrated at 60.0 FPS / 16.7–16.8 ms p95 and passed all seven scenes with Home FPS ratios of 0.972–0.997. Three 2× CDP CPU-throttled audits passed the same normalized gates (Home ratios 0.922–0.957). A 6× throttled audit dropped the calibration itself to 52.2 FPS / 33.4 ms and Home still passed normalized (ratio 0.847, p95 ratio 1.000) — like workloads now degrade together — before the run legitimately failed City destination board's unchanged 0.467 ratio at 0.457; no threshold was loosened to absorb that. An injected seven-frame 40 ms scheduler-jitter burst (40 ms spans two 60 Hz vsync intervals; a 20 ms burst can be absorbed by the compositor without moving `requestAnimationFrame` timestamps) made the first cohort's p95 range 197.6%; the runner discarded it, selected a fresh stable 60.0 FPS / 16.7 ms second cohort, and completed all seven scene measurements. Injecting the burst into both cohorts produced 197.0% and 198.8% p95 ranges, failed before app load, and reported zero scene measurements. A synthetic sustained 30 FPS home scene still fails against a 60 FPS calibration. Hardware renderers retain every previous absolute min-FPS/max-p95 limit. Draw calls, triangles, sample counts, resource limits, and leak limits are unchanged and renderer-independent.
 
 Forced city quality tiers still record 60 samples each and assert pixel ratio, shadows, camera distance, DOM FX density, renderer/DOM labels, and fog behavior for every tier. The sustained 35 FPS governor check still moves high to mid.
 
@@ -40,16 +42,16 @@ The leak pass first warms all exercised scenes, games, and the purchased cosmeti
 
 | Metric | Baseline → final | Slope per cycle | Allowed slope / final / peak growth |
 | --- | ---: | ---: | ---: |
-| Geometries | 78 → 78 | 0 | 0.25 / 2 / 4 |
+| Geometries | 19 → 19 | 0 | 0.25 / 2 / 4 |
 | Textures | 3 → 3 | 0 | 0.15 / 1 / 2 |
-| Materials | 86 → 86 | 0 | 0.25 / 2 / 4 |
-| Programs | 3 → 3 | 0 | 0.15 / 1 / 2 |
-| Event listeners | 47 → 48 | 0.067 | 0.5 / 4 / 8 |
-| DOM nodes | 797 → 706 | -5.9 | 2 / 12 / 30 |
-| CDP heap | 19,524,116 → 19,823,800 bytes | 32,847 bytes | 524,288 / 6 MiB / 12 MiB |
+| Materials | 25 → 25 | 0 | 0.25 / 2 / 4 |
+| Programs | 4 → 4 | 0 | 0.15 / 1 / 2 |
+| Event listeners | 51 → 52 | 0.067 | 0.5 / 4 / 8 |
+| DOM nodes | 1,222 → 715 | -33.5 | 2 / 12 / 30 |
+| CDP heap | 21,260,660 → 21,635,952 bytes | 44,381 bytes | 524,288 / 6 MiB / 12 MiB |
 
 The in-app leak heuristic also remains clear after all 32 transitions. Trend tests cover stable noise, persistent slope, final/peak bounds, and minimum-checkpoint rejection.
 
 ## Actionable non-owned finding
 
-The home living room still carries 105 draw calls, 16,226 triangles, 78 geometries, and 86 materials at low quality. Reusing procedural material and geometry instances in `src/scenes/home/**`, `src/gooby/**`, and `src/render/proc/**` remains the highest-value scene-work reduction.
+The home living room now renders 42 draw calls and 13,406 triangles at low quality (19 geometries, 25 materials), so the earlier 105-draw material/geometry sharing finding in `src/scenes/home/**`, `src/gooby/**`, and `src/render/proc/**` has been addressed. The heaviest SwiftShader scenes are now City (destination board ~32 FPS, driving ~37 FPS at low quality with up to 18,750 triangles p95); batching the City building/props draw list is the next highest-value scene-work reduction.

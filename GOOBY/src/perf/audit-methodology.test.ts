@@ -146,7 +146,7 @@ describe("performance audit repeat trials", () => {
   });
 });
 
-describe("raw WebGL runner calibration", () => {
+describe("Three.js runner calibration", () => {
   const calibration = { fps: 60, p95Ms: 16.7 };
   const stableCohort = {
     marker: "stable",
