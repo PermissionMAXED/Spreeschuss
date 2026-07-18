@@ -2,16 +2,18 @@ import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, devices } from "@playwright/test";
 import {
+  DEFAULT_CALIBRATION_OPTIONS,
+  MAX_CALIBRATION_COHORTS,
   MEASUREMENT_TRIALS,
   advanceWarmupState,
   assertNormalizedTimingLimits,
   assertTimingLimits,
   createWarmupState,
   normalizedSustainedSlowProbeIsRejected,
+  runCalibrationCohorts,
   runWithDiagnosticReport,
   summarizePerformanceTrials,
   sustainedSlowProbeIsRejected,
-  summarizeCalibrationTrials,
 } from "../../src/perf/audit-methodology.mjs";
 import { analyzeLeakSeries } from "../../src/perf/leak-math.mjs";
 import { probeServerIdentity } from "../../src/perf/audit-runner.mjs";
@@ -31,6 +33,12 @@ const reportPath = process.env.GOOBY_PERF_REPORT ?? artifactFile("gooby_perf_rep
 const cpuThrottleRate = Number.parseFloat(process.env.GOOBY_PERF_CPU_THROTTLE_RATE ?? "1");
 if (!Number.isFinite(cpuThrottleRate) || cpuThrottleRate < 1 || cpuThrottleRate > 20) {
   throw new RangeError("GOOBY_PERF_CPU_THROTTLE_RATE must be between 1 and 20");
+}
+const calibrationJitterMode = process.env.GOOBY_PERF_CALIBRATION_JITTER ?? "none";
+if (!["none", "first-cohort", "both-cohorts"].includes(calibrationJitterMode)) {
+  throw new RangeError(
+    "GOOBY_PERF_CALIBRATION_JITTER must be none, first-cohort, or both-cohorts",
+  );
 }
 const baseHost = new URL(baseUrl).host;
 await mkdir(artifacts, { recursive: true });
@@ -320,7 +328,20 @@ async function warmScene(page, network, label, minimumSamples, expectedQuality =
   };
 }
 
-async function runRawWebGlCalibration(page) {
+async function runRawWebGlCalibration(page, attempt) {
+  const injectSchedulerJitter = calibrationJitterMode === "both-cohorts"
+    || (calibrationJitterMode === "first-cohort" && attempt === 1);
+  const schedulerJitter = injectSchedulerJitter
+    ? {
+        trialIndex: 1,
+        frameIndexes: [8, 24, 40, 56, 72, 88, 104],
+        blockMs: 20,
+      }
+    : null;
+  const runConfig = {
+    ...RAW_CALIBRATION,
+    schedulerJitter,
+  };
   const raw = await page.evaluate(async (config) => {
     const canvas = new OffscreenCanvas(config.width, config.height);
     const gl = canvas.getContext("webgl", {
@@ -456,8 +477,9 @@ async function runRawWebGlCalibration(page) {
         samples: frameTimes.length,
       };
     };
-    const collect = (sampleCount) => new Promise((resolve, reject) => {
+    const collect = (sampleCount, jitter = null) => new Promise((resolve, reject) => {
       const frameTimes = [];
+      const jitterFrames = new Set(jitter?.frameIndexes ?? []);
       let previousTimestamp = null;
       const timeout = setTimeout(() => {
         reject(new Error(
@@ -468,6 +490,12 @@ async function runRawWebGlCalibration(page) {
         renderFrame();
         if (previousTimestamp !== null) frameTimes.push(timestamp - previousTimestamp);
         previousTimestamp = timestamp;
+        if (jitterFrames.has(frameTimes.length)) {
+          const blockedUntil = performance.now() + jitter.blockMs;
+          while (performance.now() < blockedUntil) {
+            cpuAccumulator += Number.EPSILON;
+          }
+        }
         if (frameTimes.length >= sampleCount) {
           clearTimeout(timeout);
           resolve(summarize(frameTimes));
@@ -481,7 +509,10 @@ async function runRawWebGlCalibration(page) {
     const warmup = await collect(config.warmupSamples);
     const trials = [];
     for (let index = 0; index < config.trials; index += 1) {
-      trials.push(await collect(config.samplesPerTrial));
+      const jitter = config.schedulerJitter?.trialIndex === index
+        ? config.schedulerJitter
+        : null;
+      trials.push(await collect(config.samplesPerTrial, jitter));
     }
     const rendererInfo = gl.getExtension("WEBGL_debug_renderer_info");
     const renderer = rendererInfo
@@ -500,9 +531,10 @@ async function runRawWebGlCalibration(page) {
       warmup,
       trials,
     };
-  }, RAW_CALIBRATION);
+  }, runConfig);
   return {
     workload: RAW_CALIBRATION,
+    schedulerJitter,
     ...raw,
   };
 }
@@ -804,23 +836,37 @@ try {
   calibration = {
     status: "running",
     workload: RAW_CALIBRATION,
+    attempts: [],
   };
-  const rawCalibration = await runRawWebGlCalibration(page);
+  const calibrationRun = await runCalibrationCohorts(
+    (attempt) => runRawWebGlCalibration(page, attempt),
+    {
+      minimumSamples: RAW_CALIBRATION.samplesPerTrial,
+      expectedTrials: RAW_CALIBRATION.trials,
+    },
+  );
   calibration = {
-    status: "collected",
-    ...rawCalibration,
+    status: calibrationRun.status,
+    workload: RAW_CALIBRATION,
+    schedulerJitterMode: calibrationJitterMode,
+    attempts: calibrationRun.attempts,
+    selectedAttempt: calibrationRun.selectedAttempt,
+    reason: calibrationRun.reason,
+    summary: calibrationRun.summary,
   };
-  const calibrationSummary = summarizeCalibrationTrials(rawCalibration.trials, {
-    minimumSamples: RAW_CALIBRATION.samplesPerTrial,
-    expectedTrials: RAW_CALIBRATION.trials,
-  });
-  calibration = {
-    ...calibration,
-    status: "passed",
-    summary: calibrationSummary,
-  };
+  for (const attempt of calibrationRun.attempts) {
+    console.log(
+      `Raw WebGL calibration attempt ${attempt.attempt}: ${attempt.status}, `
+        + `${attempt.summary.fps.toFixed(1)} FPS, `
+        + `${attempt.summary.p95Ms.toFixed(1)}ms p95 `
+        + `(${attempt.reason})`,
+    );
+  }
+  invariant(calibrationRun.status === "passed", calibrationRun.reason);
+  const calibrationSummary = calibrationRun.summary;
   console.log(
-    `Raw WebGL calibration: ${calibrationSummary.fps.toFixed(1)} FPS, `
+    `Raw WebGL calibration selected attempt ${calibrationRun.selectedAttempt}: `
+      + `${calibrationSummary.fps.toFixed(1)} FPS, `
       + `${calibrationSummary.p95Ms.toFixed(1)}ms p95, `
       + `${RAW_CALIBRATION.drawCallsPerFrame} draws / `
       + `${RAW_CALIBRATION.trianglesPerFrame} triangles, `
@@ -1067,6 +1113,7 @@ try {
         calibrationWarmup: RAW_CALIBRATION.warmupSamples,
         calibrationPerTrial: RAW_CALIBRATION.samplesPerTrial,
         calibrationTrials: RAW_CALIBRATION.trials,
+        calibrationMaxCohorts: MAX_CALIBRATION_COHORTS,
         mainScenes: MAIN_SCENE_SAMPLES,
         qualityTiers: QUALITY_TIER_SAMPLES,
         leakCheckpoints: LEAK_MINIMUM_SAMPLES,
@@ -1078,6 +1125,12 @@ try {
         warmupTimeoutMs: WARMUP_TIMEOUT_MS,
         timingAggregation: "median of three complete trials",
         workBudgetAggregation: "maximum across three complete trials",
+        calibrationCohortPolicy:
+          "gate on one stable warmup-plus-three-trial cohort; discard one unstable first cohort and retry exactly once without combining trials",
+        calibrationVarianceLimits: {
+          maxFpsRelativeRange: DEFAULT_CALIBRATION_OPTIONS.maxFpsRelativeRange,
+          maxP95RelativeRange: DEFAULT_CALIBRATION_OPTIONS.maxP95RelativeRange,
+        },
         swiftShaderTimingGate:
           "fixed scene/calibration FPS and calibration/scene p95 throughput ratios, plus absolute FPS floor",
         syntheticSustained30FpsRejected: sustainedSlowProbeChecks,

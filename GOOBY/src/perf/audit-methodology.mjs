@@ -1,4 +1,5 @@
 export const MEASUREMENT_TRIALS = 3;
+export const MAX_CALIBRATION_COHORTS = 2;
 export const DEFAULT_CALIBRATION_OPTIONS = Object.freeze({
   minimumSamples: 120,
   expectedTrials: MEASUREMENT_TRIALS,
@@ -191,19 +192,15 @@ export function summarizePerformanceTrials(
   };
 }
 
-export function summarizeCalibrationTrials(
-  trials,
-  overrides = {},
-) {
+function resolveCalibrationOptions(overrides) {
   const options = { ...DEFAULT_CALIBRATION_OPTIONS, ...overrides };
   if (
     !Number.isInteger(options.expectedTrials)
     || options.expectedTrials < 3
     || options.expectedTrials % 2 === 0
-    || trials.length !== options.expectedTrials
   ) {
     throw new RangeError(
-      `Calibration requires exactly ${String(options.expectedTrials)} odd repeat trials`,
+      "Calibration expectedTrials must be an odd integer of at least three",
     );
   }
   if (!Number.isInteger(options.minimumSamples) || options.minimumSamples <= 0) {
@@ -216,6 +213,15 @@ export function summarizeCalibrationTrials(
     if (!finitePositive(limit)) {
       throw new RangeError(`Calibration maximum ${name} must be positive and finite`);
     }
+  }
+  return options;
+}
+
+function summarizeCalibrationMetrics(trials, options) {
+  if (!Array.isArray(trials) || trials.length !== options.expectedTrials) {
+    throw new RangeError(
+      `Calibration requires exactly ${String(options.expectedTrials)} odd repeat trials`,
+    );
   }
 
   const sampleCounts = trials.map((trial, index) => {
@@ -239,18 +245,6 @@ export function summarizeCalibrationTrials(
   const p95Ms = median(p95Values, "calibration p95");
   const fpsRelativeRange = relativeRange(fpsValues, fps);
   const p95RelativeRange = relativeRange(p95Values, p95Ms);
-  if (fpsRelativeRange > options.maxFpsRelativeRange) {
-    throw new Error(
-      `Calibration FPS variance ${(fpsRelativeRange * 100).toFixed(1)}% exceeds `
-        + `${(options.maxFpsRelativeRange * 100).toFixed(1)}%`,
-    );
-  }
-  if (p95RelativeRange > options.maxP95RelativeRange) {
-    throw new Error(
-      `Calibration p95 variance ${(p95RelativeRange * 100).toFixed(1)}% exceeds `
-        + `${(options.maxP95RelativeRange * 100).toFixed(1)}%`,
-    );
-  }
 
   return {
     fps,
@@ -261,6 +255,95 @@ export function summarizeCalibrationTrials(
     fpsRelativeRange,
     p95RelativeRange,
     timingAggregation: "median",
+  };
+}
+
+export function classifyCalibrationTrials(
+  trials,
+  overrides = {},
+) {
+  const options = resolveCalibrationOptions(overrides);
+  const summary = summarizeCalibrationMetrics(trials, options);
+  const reasons = [];
+  if (summary.fpsRelativeRange > options.maxFpsRelativeRange) {
+    reasons.push(
+      `Calibration FPS variance ${(summary.fpsRelativeRange * 100).toFixed(1)}% exceeds `
+        + `${(options.maxFpsRelativeRange * 100).toFixed(1)}%`,
+    );
+  }
+  if (summary.p95RelativeRange > options.maxP95RelativeRange) {
+    reasons.push(
+      `Calibration p95 variance ${(summary.p95RelativeRange * 100).toFixed(1)}% exceeds `
+        + `${(options.maxP95RelativeRange * 100).toFixed(1)}%`,
+    );
+  }
+  const status = reasons.length === 0 ? "stable" : "unstable";
+  return {
+    status,
+    summary,
+    reason: status === "stable"
+      ? `within ${(options.maxFpsRelativeRange * 100).toFixed(1)}% FPS and `
+        + `${(options.maxP95RelativeRange * 100).toFixed(1)}% p95 variance limits`
+      : reasons.join("; "),
+  };
+}
+
+export function summarizeCalibrationTrials(
+  trials,
+  overrides = {},
+) {
+  const classification = classifyCalibrationTrials(trials, overrides);
+  if (classification.status === "unstable") {
+    throw new Error(classification.reason);
+  }
+  return classification.summary;
+}
+
+export async function runCalibrationCohorts(
+  collectCohort,
+  overrides = {},
+) {
+  if (typeof collectCohort !== "function") {
+    throw new TypeError("Calibration cohort collector must be a function");
+  }
+  const attempts = [];
+  for (let attempt = 1; attempt <= MAX_CALIBRATION_COHORTS; attempt += 1) {
+    const cohort = await collectCohort(attempt);
+    if (cohort === null || typeof cohort !== "object" || !Array.isArray(cohort.trials)) {
+      throw new TypeError(`Calibration cohort ${attempt} must include a trials array`);
+    }
+    const classification = classifyCalibrationTrials(cohort.trials, overrides);
+    attempts.push({
+      attempt,
+      status: classification.status,
+      reason: classification.reason,
+      usedForGating: classification.status === "stable",
+      summary: classification.summary,
+      cohort,
+    });
+    if (classification.status === "stable") {
+      const retried = attempt > 1;
+      return {
+        status: "passed",
+        attempts,
+        selectedAttempt: attempt,
+        summary: classification.summary,
+        reason: retried
+          ? `Attempt 1 was discarded for gating (${attempts[0].reason}); `
+            + `attempt ${attempt} was stable`
+          : "Attempt 1 was stable; no retry required",
+      };
+    }
+  }
+  return {
+    status: "failed",
+    attempts,
+    selectedAttempt: null,
+    summary: null,
+    reason: `Calibration remained unstable across ${MAX_CALIBRATION_COHORTS} `
+      + `independent cohorts (${attempts
+        .map(({ attempt, reason }) => `attempt ${attempt}: ${reason}`)
+        .join("; ")})`,
   };
 }
 

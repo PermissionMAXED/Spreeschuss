@@ -5,6 +5,7 @@ import {
   assertTimingLimits,
   createWarmupState,
   normalizedSustainedSlowProbeIsRejected,
+  runCalibrationCohorts,
   runWithDiagnosticReport,
   sustainedSlowProbeIsRejected,
   summarizeCalibrationTrials,
@@ -147,6 +148,24 @@ describe("performance audit repeat trials", () => {
 
 describe("raw WebGL runner calibration", () => {
   const calibration = { fps: 60, p95Ms: 16.7 };
+  const stableCohort = {
+    marker: "stable",
+    warmup: { fps: 60, p95Ms: 16.8, samples: 120 },
+    trials: [
+      { fps: 59, p95Ms: 17.1, samples: 120 },
+      { fps: 61, p95Ms: 16.7, samples: 121 },
+      { fps: 60, p95Ms: 16.9, samples: 120 },
+    ],
+  };
+  const schedulerJitterCohort = {
+    marker: "scheduler-jitter",
+    warmup: { fps: 60, p95Ms: 16.8, samples: 120 },
+    trials: [
+      { fps: 60, p95Ms: 16.8, samples: 120 },
+      { fps: 56.6, p95Ms: 33.4, samples: 120 },
+      { fps: 59.9, p95Ms: 16.7, samples: 120 },
+    ],
+  };
   const normalizedHomeLimit = {
     minimumCalibrationRatio: 0.75,
     minimumP95CalibrationRatio: (1_000 / 60) / 28,
@@ -192,6 +211,91 @@ describe("raw WebGL runner calibration", () => {
       { fps: 60, p95Ms: 16.7, samples: 119 },
       { fps: 60, p95Ms: 16.7, samples: 120 },
     ])).toThrow(/Calibration trial 2 has 119\/120 samples/u);
+  });
+
+  it("discards one unstable cohort and gates only on a fresh stable cohort", async () => {
+    const cohorts = [schedulerJitterCohort, stableCohort];
+    const result = await runCalibrationCohorts(() => cohorts.shift()!);
+    const firstAttempt = result.attempts[0]!;
+    const secondAttempt = result.attempts[1]!;
+
+    expect(result.status).toBe("passed");
+    expect(result.attempts).toHaveLength(2);
+    expect(firstAttempt).toMatchObject({
+      attempt: 1,
+      status: "unstable",
+      usedForGating: false,
+      cohort: schedulerJitterCohort,
+    });
+    expect(firstAttempt.reason).toMatch(/p95 variance 99\.4% exceeds 35\.0%/u);
+    expect(secondAttempt).toMatchObject({
+      attempt: 2,
+      status: "stable",
+      usedForGating: true,
+      cohort: stableCohort,
+    });
+    expect(result.selectedAttempt).toBe(2);
+    expect(result.summary).toBe(secondAttempt.summary);
+    expect(result.summary).not.toBe(firstAttempt.summary);
+    expect(result.reason).toMatch(/Attempt 1 was discarded for gating/u);
+  });
+
+  it("fails after exactly two independent unstable cohorts", async () => {
+    let collected = 0;
+    const result = await runCalibrationCohorts(() => {
+      collected += 1;
+      return {
+        ...schedulerJitterCohort,
+        marker: `scheduler-jitter-${collected}`,
+      };
+    });
+
+    expect(collected).toBe(2);
+    expect(result).toMatchObject({
+      status: "failed",
+      selectedAttempt: null,
+      summary: null,
+    });
+    expect(result.attempts).toHaveLength(2);
+    expect(result.attempts.every((attempt) =>
+      attempt.status === "unstable" && !attempt.usedForGating)).toBe(true);
+    expect(result.reason).toMatch(
+      /remained unstable across 2 independent cohorts \(attempt 1: .*; attempt 2:/u,
+    );
+  });
+
+  it("does not collect a second cohort when the first is stable", async () => {
+    let collected = 0;
+    const result = await runCalibrationCohorts(() => {
+      collected += 1;
+      return stableCohort;
+    });
+
+    expect(collected).toBe(1);
+    expect(result).toMatchObject({
+      status: "passed",
+      selectedAttempt: 1,
+      reason: "Attempt 1 was stable; no retry required",
+    });
+    expect(result.attempts).toHaveLength(1);
+  });
+
+  it("does not convert a scene gate failure into a calibration retry", async () => {
+    let collected = 0;
+    const result = await runCalibrationCohorts(() => {
+      collected += 1;
+      return stableCohort;
+    });
+    expect(result.status).toBe("passed");
+
+    expect(() => assertNormalizedTimingLimits(
+      "home",
+      snapshot(44, 21, 105, 16_226),
+      normalizedHomeLimit,
+      result.summary!,
+    )).toThrow(/FPS throughput ratio 0\.733 is below 0\.750/u);
+    expect(collected).toBe(1);
+    expect(result.attempts).toHaveLength(1);
   });
 
   it("passes and fails scenes by calibration-relative FPS and p95 throughput", () => {

@@ -1,4 +1,5 @@
 export const MEASUREMENT_TRIALS: 3;
+export const MAX_CALIBRATION_COHORTS: 2;
 
 export interface CalibrationOptions {
   readonly minimumSamples: number;
@@ -23,6 +24,46 @@ export interface CalibrationSummary {
   readonly p95RelativeRange: number;
   readonly timingAggregation: "median";
 }
+
+export interface CalibrationClassification {
+  readonly status: "stable" | "unstable";
+  readonly summary: CalibrationSummary;
+  readonly reason: string;
+}
+
+export interface CalibrationCohort {
+  readonly trials: readonly CalibrationTrial[];
+  readonly [key: string]: unknown;
+}
+
+export interface CalibrationCohortAttempt<T extends CalibrationCohort> {
+  readonly attempt: number;
+  readonly status: "stable" | "unstable";
+  readonly reason: string;
+  readonly usedForGating: boolean;
+  readonly summary: CalibrationSummary;
+  readonly cohort: T;
+}
+
+export interface PassedCalibrationCohorts<T extends CalibrationCohort> {
+  readonly status: "passed";
+  readonly attempts: readonly CalibrationCohortAttempt<T>[];
+  readonly selectedAttempt: number;
+  readonly summary: CalibrationSummary;
+  readonly reason: string;
+}
+
+export interface FailedCalibrationCohorts<T extends CalibrationCohort> {
+  readonly status: "failed";
+  readonly attempts: readonly CalibrationCohortAttempt<T>[];
+  readonly selectedAttempt: null;
+  readonly summary: null;
+  readonly reason: string;
+}
+
+export type CalibrationCohortResult<T extends CalibrationCohort> =
+  | PassedCalibrationCohorts<T>
+  | FailedCalibrationCohorts<T>;
 
 export const DEFAULT_CALIBRATION_OPTIONS: Readonly<CalibrationOptions>;
 
@@ -110,6 +151,14 @@ export function summarizeCalibrationTrials(
   trials: readonly CalibrationTrial[],
   overrides?: Partial<CalibrationOptions>,
 ): CalibrationSummary;
+export function classifyCalibrationTrials(
+  trials: readonly CalibrationTrial[],
+  overrides?: Partial<CalibrationOptions>,
+): CalibrationClassification;
+export function runCalibrationCohorts<T extends CalibrationCohort>(
+  collectCohort: (attempt: number) => T | Promise<T>,
+  overrides?: Partial<CalibrationOptions>,
+): Promise<CalibrationCohortResult<T>>;
 export function assertTimingLimits(
   label: string,
   snapshot: AuditSnapshot,
