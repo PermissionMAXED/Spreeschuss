@@ -16,6 +16,7 @@ import {
   Matrix4,
   Mesh,
   MeshBasicMaterial,
+  MeshLambertMaterial,
   MeshStandardMaterial,
   PlaneGeometry,
   Quaternion,
@@ -417,6 +418,10 @@ export class CityWorld {
   private built = false;
   private trafficCarCount = 0;
   private readonly chunkCulling: { mesh: Mesh; box: Box3 }[] = [];
+  private readonly lodMeshes: { mesh: Mesh; full: Material; low: Material }[] = [];
+  private readonly lodVariants = new Map<Material, Material>();
+  private brakeMaterialLow: MeshLambertMaterial | null = null;
+  private materialsLow = false;
   private treeTrunks: InstancedMesh | null = null;
   private treeCrowns: InstancedMesh | null = null;
   private lampPoles: InstancedMesh | null = null;
@@ -577,7 +582,11 @@ export class CityWorld {
       (CITY_WORLD_BOUNDS.minZ + CITY_WORLD_BOUNDS.maxZ) / 2,
     );
     ground.receiveShadow = true;
-    this.root.add(ground);
+    // Overdraw control: the full-city ground fills last so its fragments
+    // fail the depth test wherever roads, patches or lots already drew.
+    // Opaque-only ordering, so the rendered image is pixel-identical.
+    ground.renderOrder = 2;
+    this.root.add(this.withLod(ground));
 
     const patches = new InstancedMesh(
       new PlaneGeometry(1, 1),
@@ -598,7 +607,8 @@ export class CityWorld {
     }
     patches.instanceMatrix.needsUpdate = true;
     if (patches.instanceColor) patches.instanceColor.needsUpdate = true;
-    this.root.add(patches);
+    patches.renderOrder = 1;
+    this.root.add(this.withLod(patches));
   }
 
   /**
@@ -806,9 +816,14 @@ export class CityWorld {
       roughness: 0.85,
     });
     const accentMaterial = new MeshStandardMaterial({ vertexColors: true, roughness: 0.82 });
-    this.registerChunkCulling(roadChunks.build(roadMaterial, "city-roads", this.root));
-    this.registerChunkCulling(kitChunks.build(kitMaterial, "city-kit", this.root));
-    this.registerChunkCulling(accentChunks.build(accentMaterial, "city-accents", this.root));
+    for (const meshes of [
+      roadChunks.build(roadMaterial, "city-roads", this.root),
+      kitChunks.build(kitMaterial, "city-kit", this.root),
+      accentChunks.build(accentMaterial, "city-accents", this.root),
+    ]) {
+      this.registerChunkCulling(meshes);
+      for (const mesh of meshes) this.withLod(mesh);
+    }
   }
 
   /**
@@ -820,6 +835,49 @@ export class CityWorld {
     for (const mesh of meshes) {
       const box = mesh.geometry.boundingBox;
       if (box) this.chunkCulling.push({ mesh, box });
+    }
+  }
+
+  /**
+   * Quality-aware material LOD: the LOW tier swaps every PBR Standard
+   * material for a prebuilt diffuse-only Lambert twin (same texture map,
+   * vertex colors, emissive and transparency), which is far cheaper per
+   * fragment on software rasterizers. MID/HIGH keep full Standard lighting.
+   * Twins are created once at build time and cached, so tier switches only
+   * flip material pointers — no allocation or material churn at runtime.
+   */
+  private lowMaterialVariant(full: MeshStandardMaterial): Material {
+    const cached = this.lodVariants.get(full);
+    if (cached) return cached;
+    const low = new MeshLambertMaterial({
+      color: full.color.clone(),
+      map: full.map,
+      vertexColors: full.vertexColors,
+      transparent: full.transparent,
+      opacity: full.opacity,
+      side: full.side,
+      emissive: full.emissive.clone(),
+      emissiveIntensity: full.emissiveIntensity,
+    });
+    this.lodVariants.set(full, low);
+    this.tracker.track(low);
+    return low;
+  }
+
+  /** Registers a mesh for LOW-tier material swapping (prebuilt twin). */
+  private withLod<T extends Mesh>(mesh: T): T {
+    const full = mesh.material as MeshStandardMaterial;
+    const low = this.lowMaterialVariant(full);
+    this.lodMeshes.push({ mesh, full, low });
+    if (this.materialsLow) mesh.material = low;
+    return mesh;
+  }
+
+  private applyMaterialLod(low: boolean): void {
+    if (this.materialsLow === low) return;
+    this.materialsLow = low;
+    for (const entry of this.lodMeshes) {
+      entry.mesh.material = low ? entry.low : entry.full;
     }
   }
 
@@ -839,7 +897,7 @@ export class CityWorld {
     mesh.rotation.y = yawTowardNearestRoad(lot.center);
     mesh.castShadow = false;
     mesh.receiveShadow = true;
-    this.root.add(mesh);
+    this.root.add(this.withLod(mesh));
   }
 
   private buildInstancedProps(): void {
@@ -887,7 +945,12 @@ export class CityWorld {
     crowns.computeBoundingSphere();
     lampPoles.computeBoundingSphere();
     lampHeads.computeBoundingSphere();
-    this.root.add(trunks, crowns, lampPoles, lampHeads);
+    this.root.add(
+      this.withLod(trunks),
+      this.withLod(crowns),
+      this.withLod(lampPoles),
+      this.withLod(lampHeads),
+    );
   }
 
   private layoutTree(slot: number, index: number): void {
@@ -981,6 +1044,7 @@ export class CityWorld {
     );
     disc.name = "parking-disc";
     disc.position.y = 0.08;
+    this.withLod(disc);
     const ring = new Mesh(
       new RingGeometry(CITY_MARKER_VISUALS.ringInnerRadius, CITY_MARKER_VISUALS.ringOuterRadius, 48),
       new MeshBasicMaterial({
@@ -1074,7 +1138,7 @@ export class CityWorld {
     }
     bases.instanceMatrix.needsUpdate = true;
     chevrons.instanceMatrix.needsUpdate = true;
-    this.root.add(bases, chevrons);
+    this.root.add(this.withLod(bases), chevrons);
   }
 
   private buildPlayerCar(): void {
@@ -1088,14 +1152,17 @@ export class CityWorld {
     car.name = "merged-player-car";
     car.rotation.y = -Math.PI / 2;
     car.castShadow = true;
+    this.withLod(car);
 
     const brakeParts = new Group();
     for (const x of [-0.43, 0.43]) {
       const light = new Mesh(new BoxGeometry(0.34, 0.24, 0.1), this.brakeMaterial);
       light.position.set(x, 0.73, -1.16);
-      brakeParts.add(light);
+      brakeParts.add(this.withLod(light));
     }
     brakeParts.name = "brake-lights";
+    const brakeLow = this.lodVariants.get(this.brakeMaterial);
+    this.brakeMaterialLow = brakeLow instanceof MeshLambertMaterial ? brakeLow : null;
 
     const driver = new Mesh(
       lowPolyDriver(),
@@ -1106,6 +1173,7 @@ export class CityWorld {
     driver.rotation.y = Math.PI;
     driver.scale.setScalar(0.2);
     driver.castShadow = false;
+    this.withLod(driver);
 
     this.playerCar.add(car, brakeParts, driver);
     this.root.add(this.playerCar);
@@ -1177,6 +1245,10 @@ export class CityWorld {
     this.playerCar.rotation.y = shown.headingRadians;
     this.brakeMaterial.emissiveIntensity = snapshot.braking ? 3.4 : 0.35;
     this.brakeMaterial.color.setHex(snapshot.braking ? 0xff1515 : 0xa71e1e);
+    if (this.brakeMaterialLow) {
+      this.brakeMaterialLow.emissiveIntensity = this.brakeMaterial.emissiveIntensity;
+      this.brakeMaterialLow.color.copy(this.brakeMaterial.color);
+    }
     this.lastCollectedIds = snapshot.collectedCoinIds;
     if (animateCoins) {
       // Driving: coins bob and spin every frame.
@@ -1244,7 +1316,7 @@ export class CityWorld {
     mesh.scale.setScalar(scale);
     mesh.userData.baseY = -(geometry.boundingBox?.min.y ?? 0) * scale + 0.02;
     mesh.castShadow = false;
-    return mesh;
+    return this.withLod(mesh);
   }
 
   update(
@@ -1255,6 +1327,7 @@ export class CityWorld {
   ): void {
     if (!this.built) return;
     this.elapsed += deltaSeconds;
+    this.applyMaterialLod(this.gameRenderer.scene.userData.goobyQualityTier === "low");
     this.setCar(car, pose, !parkedIdle);
     // Parked boards drop the marker beacon to a low-rate tick; driving restores it.
     this.markerRoot.rotation.y += deltaSeconds * (this.reducedMotion || parkedIdle ? 0.1 : 0.32);
