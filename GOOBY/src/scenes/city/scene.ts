@@ -37,7 +37,10 @@ import {
   type CityCarSnapshot,
 } from "./simulation";
 import { CityWorld, type CityWorldStats } from "./world";
-import type { CityTravelSnapshot } from "./travel-snapshot";
+import {
+  shouldEmitCityTravelSnapshot,
+  type CityTravelSnapshot,
+} from "./travel-snapshot";
 
 export interface CityDriveSceneOptions {
   readonly renderer: GameRenderer;
@@ -83,6 +86,8 @@ export class CityDriveScene implements GameScene {
   private disposed = false;
   private previousMountPosition = "";
   private travelSnapshotSeconds = 0;
+  private lastEmittedSafePosition: CityPoint | null = null;
+  private lifecycleFlushInstalled = false;
   private readonly destinationScratch = new Vector3();
   private readonly cameraSpaceScratch = new Vector3();
   private readonly projectedScratch = new Vector3();
@@ -138,6 +143,7 @@ export class CityDriveScene implements GameScene {
     if (this.disposed) throw new Error("A disposed city scene cannot be entered");
     if (this.entered) return;
     this.entered = true;
+    this.installLifecycleFlush();
     this.previousMountPosition = this.options.mount.style.position;
     if (getComputedStyle(this.options.mount).position === "static") {
       this.options.mount.style.position = "relative";
@@ -217,7 +223,13 @@ export class CityDriveScene implements GameScene {
     this.renderUi(car);
     this.updateEdgePointer();
     this.travelSnapshotSeconds += deltaSeconds;
-    if (this.travelSnapshotSeconds >= 0.5) this.emitTravelSnapshot(car);
+    if (shouldEmitCityTravelSnapshot(
+      this.travelSnapshotSeconds,
+      this.lastEmittedSafePosition,
+      this.physics.safePose.position,
+    )) {
+      this.emitTravelSnapshot(car);
+    }
   }
 
   resize(context: SceneContext): void {
@@ -227,19 +239,23 @@ export class CityDriveScene implements GameScene {
   }
 
   exit(): void {
+    this.flushTravelSnapshot();
     this.overlay?.releaseControls();
     this.controls = RELEASED_CONTROLS;
     this.entered = false;
   }
 
   pause(): void {
+    this.flushTravelSnapshot();
     this.overlay?.releaseControls();
     this.controls = RELEASED_CONTROLS;
   }
 
   dispose(): void {
     if (this.disposed) return;
+    this.flushTravelSnapshot();
     this.disposed = true;
+    this.removeLifecycleFlush();
     this.overlay?.dispose();
     this.overlay = null;
     this.world?.dispose();
@@ -419,8 +435,39 @@ export class CityDriveScene implements GameScene {
       this.physics.safePose,
       car.collectedCoinIds,
     );
+    this.lastEmittedSafePosition = [
+      snapshot.safeCarPose.position[0],
+      snapshot.safeCarPose.position[1],
+    ];
     this.options.onTravelSnapshotChanged?.(snapshot);
   }
+
+  private flushTravelSnapshot(): void {
+    if (this.disposed) return;
+    this.emitTravelSnapshot(this.physics.snapshot);
+  }
+
+  private installLifecycleFlush(): void {
+    if (this.lifecycleFlushInstalled) return;
+    this.lifecycleFlushInstalled = true;
+    window.addEventListener("pagehide", this.onPageHide);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
+  }
+
+  private removeLifecycleFlush(): void {
+    if (!this.lifecycleFlushInstalled) return;
+    this.lifecycleFlushInstalled = false;
+    window.removeEventListener("pagehide", this.onPageHide);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
+  }
+
+  private readonly onPageHide = (): void => {
+    this.flushTravelSnapshot();
+  };
+
+  private readonly onVisibilityChange = (): void => {
+    if (document.visibilityState !== "visible") this.flushTravelSnapshot();
+  };
 
   private configureWorldForState(): void {
     if (!this.world) return;

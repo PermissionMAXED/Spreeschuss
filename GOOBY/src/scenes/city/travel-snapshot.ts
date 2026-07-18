@@ -45,6 +45,9 @@ export interface CityTravelSnapshot {
   readonly collectedRouteState: CityCollectedRouteState;
 }
 
+export const CITY_TRAVEL_SNAPSHOT_INTERVAL_SECONDS = 0.5;
+export const CITY_MAX_UNSAVED_SAFE_DISTANCE_METERS = 2;
+
 const SHOP_ID_SET: ReadonlySet<string> = new Set(SHOP_IDS);
 const PHASE_SET: ReadonlySet<string> = new Set(CITY_TRAVEL_PHASES);
 const COIN_ID_SET: ReadonlySet<string> = new Set(CITY_COINS.map(({ id }) => id));
@@ -125,6 +128,23 @@ function poseMatchesPhase(
     return parking !== undefined && distance2d(position, parking) <= PARKING_TRIGGER_RADIUS + 0.5;
   }
   return true;
+}
+
+/**
+ * Bounds unsaved progress by physical distance as well as wall-clock cadence.
+ * The scene calls this after each complete physics update, so any route-safe
+ * movement that reaches the distance limit is published in the same JS task,
+ * independent of frame partition or current car speed.
+ */
+export function shouldEmitCityTravelSnapshot(
+  elapsedSeconds: number,
+  lastEmittedSafePosition: CityPoint | null,
+  currentSafePosition: CityPoint,
+): boolean {
+  return lastEmittedSafePosition === null
+    || elapsedSeconds >= CITY_TRAVEL_SNAPSHOT_INTERVAL_SECONDS
+    || distance2d(lastEmittedSafePosition, currentSafePosition)
+      >= CITY_MAX_UNSAVED_SAFE_DISTANCE_METERS;
 }
 
 export function createSafeBoardTravelSnapshot(): CityTravelSnapshot {

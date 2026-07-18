@@ -1,10 +1,11 @@
 import { GameRenderer } from "../../render/renderer";
 import { CityDriveScene, type CityDriveDebugSnapshot } from "./scene";
 import { CityRouteMachine } from "./route-machine";
-import type { CityTravelSnapshot } from "./travel-snapshot";
+import type { CitySafeCarPose, CityTravelSnapshot } from "./travel-snapshot";
 
 interface CityHarnessDebug {
   snapshot(): CityDriveDebugSnapshot;
+  initialCarPose(): CitySafeCarPose;
   saveRaw(snapshot: unknown): void;
   clearSaved(): void;
   completeLeg(): void;
@@ -96,9 +97,14 @@ async function startHarness(): Promise<void> {
       pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
     },
   });
+  const initialCarPose = scene.debugSnapshot().travelSnapshot.safeCarPose;
   window.addEventListener("resize", resize);
   window.__cityHarness = {
     snapshot: () => scene.debugSnapshot(),
+    initialCarPose: () => ({
+      position: [initialCarPose.position[0], initialCarPose.position[1]],
+      headingRadians: initialCarPose.headingRadians,
+    }),
     saveRaw: (snapshot) => {
       localStorage.setItem(HARNESS_TRAVEL_KEY, JSON.stringify({
         visitedShops: controller.visitedShops(),

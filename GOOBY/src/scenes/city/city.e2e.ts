@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { CityDriveDebugSnapshot } from "./scene";
 import { CITY_GARAGE_POSITION, type CityPoint } from "../../data/city";
+import type { CitySafeCarPose } from "./travel-snapshot";
 
 async function snapshot(page: Page): Promise<CityDriveDebugSnapshot> {
   return page.evaluate(() => window.__cityHarness.snapshot());
@@ -24,6 +25,41 @@ function headingDelta(from: number, to: number): number {
   while (delta > Math.PI) delta -= Math.PI * 2;
   while (delta < -Math.PI) delta += Math.PI * 2;
   return delta;
+}
+
+interface ReloadBoundarySnapshot {
+  readonly safeCarPose: CitySafeCarPose;
+  readonly collectedCoinIds: readonly string[];
+}
+
+async function reloadAtLatestSafePose(
+  page: Page,
+  label: string,
+): Promise<{
+  readonly boundary: ReloadBoundarySnapshot;
+  readonly initialCarPose: CitySafeCarPose;
+}> {
+  const storageKey = `gooby.city.reload-boundary.${label}`;
+  await page.evaluate((key) => {
+    window.addEventListener("pagehide", () => {
+      const current = window.__cityHarness.snapshot();
+      const boundary: ReloadBoundarySnapshot = {
+        safeCarPose: current.travelSnapshot.safeCarPose,
+        collectedCoinIds: current.car.collectedCoinIds,
+      };
+      sessionStorage.setItem(key, JSON.stringify(boundary));
+    }, { once: true });
+  }, storageKey);
+  await page.reload();
+  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  return page.evaluate((key) => {
+    const serialized = sessionStorage.getItem(key);
+    if (!serialized) throw new Error(`Reload boundary was not captured for ${key}`);
+    return {
+      boundary: JSON.parse(serialized) as ReloadBoundarySnapshot,
+      initialCarPose: window.__cityHarness.initialCarPose(),
+    };
+  }, storageKey);
 }
 
 async function steerToward(
@@ -136,20 +172,22 @@ test("reloads outbound and required-return travel without changing the honest ph
     .toBeLessThan(39);
   await expect.poll(async () => (await snapshot(page)).travelSnapshot.collectedRouteState.coinIds)
     .toContain("coin-garage");
-  const outboundBeforeReload = await snapshot(page);
 
-  await page.reload();
-  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  const outboundReload = await reloadAtLatestSafePose(page, "outbound");
   const outboundAfterReload = await snapshot(page);
   expect(outboundAfterReload.state).toMatchObject({
     phase: "driving-outbound",
     selected: "carrot-market",
   });
   expect(distance2dForTest(
-    outboundAfterReload.car.position,
-    outboundBeforeReload.travelSnapshot.safeCarPose.position,
-  )).toBeLessThan(6);
-  for (const coinId of outboundBeforeReload.travelSnapshot.collectedRouteState.coinIds) {
+    outboundReload.initialCarPose.position,
+    outboundReload.boundary.safeCarPose.position,
+  )).toBeLessThan(0.001);
+  expect(Math.abs(headingDelta(
+    outboundReload.initialCarPose.headingRadians,
+    outboundReload.boundary.safeCarPose.headingRadians,
+  ))).toBeLessThan(0.001);
+  for (const coinId of outboundReload.boundary.collectedCoinIds) {
     expect(outboundAfterReload.car.collectedCoinIds).toContain(coinId);
   }
 
@@ -157,25 +195,31 @@ test("reloads outbound and required-return travel without changing the honest ph
   await expect.poll(async () => (await snapshot(page)).state.phase).toBe("arrived");
   await page.getByTestId("enter-shop").click();
   await expect.poll(async () => (await snapshot(page)).state.phase).toBe("return-board");
-  await page.reload();
-  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  const returnBoardReload = await reloadAtLatestSafePose(page, "return-board");
   expect((await snapshot(page)).state).toMatchObject({
     phase: "return-board",
     visited: "carrot-market",
     returnRequired: true,
   });
+  expect(distance2dForTest(
+    returnBoardReload.initialCarPose.position,
+    returnBoardReload.boundary.safeCarPose.position,
+  )).toBeLessThan(0.001);
   await expect(page.getByTestId("quick-return")).toBeHidden();
 
   await page.getByTestId("drive-home").click();
   await expect.poll(async () => (await snapshot(page)).car.position[0]).toBeGreaterThan(-16);
   await expect.poll(async () => (await snapshot(page)).travelSnapshot.safeCarPose.position[0])
     .toBeGreaterThan(-17);
-  await page.reload();
-  await expect(page.locator("#city-harness")).toHaveAttribute("data-ready", "true");
+  const homeReload = await reloadAtLatestSafePose(page, "driving-home");
   expect((await snapshot(page)).state).toMatchObject({
     phase: "driving-home",
     visited: "carrot-market",
   });
+  expect(distance2dForTest(
+    homeReload.initialCarPose.position,
+    homeReload.boundary.safeCarPose.position,
+  )).toBeLessThan(0.001);
 });
 
 test("invalid travel recovers to the safe garage board", async ({ page }) => {

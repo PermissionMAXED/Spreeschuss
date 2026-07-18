@@ -3,13 +3,18 @@ import { Vector3 } from "three";
 import { FallbackAssetLoader } from "../../render/proc";
 import {
   CITY_BOOST_PADS,
+  CITY_BOOST_SPEED,
   CITY_BUILDINGS,
+  CITY_CRUISE_SPEED,
   CITY_COINS,
   CITY_DESTINATIONS,
   CITY_GARAGE_POSITION,
   CITY_HUD_RESERVED_REGIONS,
+  CITY_MAX_UNSAVED_SAFE_DISTANCE_METERS,
   CITY_MARKER_VISUALS,
   CITY_RENDER_BUDGET,
+  CITY_REVERSE_SPEED,
+  CITY_TRAVEL_SNAPSHOT_INTERVAL_SECONDS,
   CITY_CONTROL_HIT_REGIONS,
   GARAGE_TRIGGER_RADIUS,
   PARKING_TRIGGER_RADIUS,
@@ -33,6 +38,7 @@ import {
   parseCityTravelSnapshot,
   pointAlongRoute,
   routeLength,
+  shouldEmitCityTravelSnapshot,
   type CityPoint,
 } from ".";
 import type { ShopId } from "../../core/contracts/scenes";
@@ -320,6 +326,72 @@ describe("serializable city travel snapshots", () => {
     const restored = new CityRouteMachine([], tampered);
     expect(restored.state).toMatchObject({ phase: "return-board", returnRequired: true });
     expect(() => restored.useQuickReturn()).toThrow(/first visit/u);
+  });
+});
+
+describe("travel snapshot freshness", () => {
+  it("bounds unsaved safe travel across speeds, frame partitions, and timer phases", () => {
+    const speeds = [
+      Math.abs(CITY_REVERSE_SPEED),
+      CITY_CRUISE_SPEED,
+      CITY_BOOST_SPEED,
+    ];
+    const framePartitions: ReadonlyArray<readonly number[]> = [
+      [1 / 120],
+      [1 / 60],
+      [1 / 30],
+      [0.1],
+      [0.5],
+      [1 / 120, 0.1, 1 / 30, 0.25],
+    ];
+    const timerPhases = [
+      0,
+      CITY_TRAVEL_SNAPSHOT_INTERVAL_SECONDS * 0.1,
+      CITY_TRAVEL_SNAPSHOT_INTERVAL_SECONDS * 0.49,
+      CITY_TRAVEL_SNAPSHOT_INTERVAL_SECONDS - 0.000_001,
+    ];
+
+    for (const speed of speeds) {
+      for (const partitions of framePartitions) {
+        for (const timerPhase of timerPhases) {
+          let elapsedSeconds = timerPhase;
+          let current: CityPoint = [0, 0];
+          let lastEmitted: CityPoint = [0, 0];
+          for (let frame = 0; frame < 240; frame += 1) {
+            const deltaSeconds = partitions[frame % partitions.length] as number;
+            elapsedSeconds += deltaSeconds;
+            current = [current[0] + speed * deltaSeconds, current[1]];
+            if (shouldEmitCityTravelSnapshot(elapsedSeconds, lastEmitted, current)) {
+              lastEmitted = current;
+              elapsedSeconds = 0;
+            }
+            expect(
+              distance2d(current, lastEmitted),
+              `${speed}m/s, frames ${partitions.join("/")}, phase ${timerPhase}`,
+            ).toBeLessThan(CITY_MAX_UNSAVED_SAFE_DISTANCE_METERS);
+          }
+        }
+      }
+    }
+  });
+
+  it("publishes on the exact physical bound and while stationary at the time bound", () => {
+    const origin: CityPoint = [0, 0];
+    expect(shouldEmitCityTravelSnapshot(
+      CITY_TRAVEL_SNAPSHOT_INTERVAL_SECONDS - 0.000_001,
+      origin,
+      [CITY_MAX_UNSAVED_SAFE_DISTANCE_METERS - 0.000_001, 0],
+    )).toBe(false);
+    expect(shouldEmitCityTravelSnapshot(
+      0,
+      origin,
+      [CITY_MAX_UNSAVED_SAFE_DISTANCE_METERS, 0],
+    )).toBe(true);
+    expect(shouldEmitCityTravelSnapshot(
+      CITY_TRAVEL_SNAPSHOT_INTERVAL_SECONDS,
+      origin,
+      origin,
+    )).toBe(true);
   });
 });
 
