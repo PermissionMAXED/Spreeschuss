@@ -22,6 +22,11 @@ export default defineConfig({
   projects: [
     {
       name: "phone-390x844",
+      testMatch: [
+        "**/app.spec.ts",
+        "**/coverage.spec.ts",
+        "**/shops.spec.ts",
+      ],
       use: {
         ...devices["iPhone 13"],
         browserName: "chromium",
@@ -29,7 +34,7 @@ export default defineConfig({
     },
     {
       name: "ipad-820x1180",
-      testIgnore: "**/shops.spec.ts",
+      testMatch: "**/ipad.spec.ts",
       use: {
         ...devices["iPad Pro 11"],
         browserName: "chromium",
