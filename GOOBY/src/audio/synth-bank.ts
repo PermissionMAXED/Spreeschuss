@@ -1,6 +1,7 @@
 import {
   AUDIO_ASSET_CUES,
   type AudioAssetKey,
+  type PlaybackBus,
   type SoundCue,
 } from "./contracts";
 
@@ -77,20 +78,32 @@ export const SYNTH_RECIPES: Readonly<Record<SoundCue, readonly SynthVoice[]>> = 
   "minigame-win": [tone("sine", 523.25, 0, 0.2, 0.065), tone("sine", 659.25, 0.13, 0.22, 0.065), tone("sine", 783.99, 0.26, 0.23, 0.065), tone("sine", 1046.5, 0.4, 0.42, 0.075)],
   "minigame-lose": [tone("triangle", 392, 0, 0.2, 0.05), tone("triangle", 311.13, 0.16, 0.25, 0.045), tone("triangle", 246.94, 0.34, 0.36, 0.04)],
   "minigame-score": [tone("sine", 784, 0, 0.065, 0.05, 1046)],
+  "voice-greeting": [tone("triangle", 420, 0, 0.11, 0.05, 610), tone("sine", 670, 0.1, 0.15, 0.045, 820)],
+  "voice-happy": [tone("triangle", 560, 0, 0.12, 0.05, 760), tone("sine", 760, 0.09, 0.17, 0.05, 980)],
+  "voice-giggle": [tone("sine", 720, 0, 0.075, 0.045, 880), tone("sine", 790, 0.08, 0.075, 0.045, 970), tone("sine", 860, 0.16, 0.1, 0.04, 1080)],
+  "voice-curious": [tone("triangle", 390, 0, 0.16, 0.05, 650), tone("sine", 650, 0.13, 0.13, 0.04, 720)],
+  "voice-hungry": [tone("sawtooth", 190, 0, 0.2, 0.035, 145), tone("triangle", 290, 0.18, 0.14, 0.045, 220)],
+  "voice-munch-happy": [noise(920, 0, 0.06, 0.025), tone("triangle", 430, 0.06, 0.12, 0.05, 620), tone("sine", 690, 0.15, 0.16, 0.045)],
+  "voice-sleepy": [tone("sine", 330, 0, 0.28, 0.045, 245), tone("triangle", 270, 0.23, 0.22, 0.035, 205)],
+  "voice-yawn": [tone("triangle", 310, 0, 0.5, 0.045, 170), noise(520, 0.16, 0.28, 0.018)],
+  "voice-goodnight": [tone("sine", 440, 0, 0.2, 0.045, 330), tone("sine", 330, 0.17, 0.24, 0.04, 245)],
+  "voice-good-morning": [tone("triangle", 330, 0, 0.14, 0.05, 520), tone("sine", 520, 0.1, 0.17, 0.05, 780)],
+  "voice-cheer": [tone("triangle", 520, 0, 0.11, 0.05, 760), tone("sine", 780, 0.09, 0.15, 0.055, 1040), tone("sine", 1040, 0.19, 0.17, 0.05)],
+  "voice-sad": [tone("triangle", 380, 0, 0.2, 0.04, 270), tone("sine", 270, 0.17, 0.28, 0.035, 205)],
 };
 
 export interface SynthVoiceOutput {
-  tone(voice: ToneVoice, pitch: number, gain: number): void;
-  noise(voice: NoiseVoice, pitch: number, gain: number): void;
+  tone(voice: ToneVoice, pitch: number, gain: number, bus: PlaybackBus): void;
+  noise(voice: NoiseVoice, pitch: number, gain: number, bus: PlaybackBus): void;
 }
 
 export class ProceduralSynthBank {
   constructor(private readonly output: SynthVoiceOutput) {}
 
-  play(cue: SoundCue, pitch = 1, gain = 1): void {
+  play(cue: SoundCue, pitch = 1, gain = 1, bus: PlaybackBus = "sfx"): void {
     for (const voice of SYNTH_RECIPES[cue]) {
-      if (voice.kind === "tone") this.output.tone(voice, pitch, gain);
-      else this.output.noise(voice, pitch, gain);
+      if (voice.kind === "tone") this.output.tone(voice, pitch, gain, bus);
+      else this.output.noise(voice, pitch, gain, bus);
     }
   }
 

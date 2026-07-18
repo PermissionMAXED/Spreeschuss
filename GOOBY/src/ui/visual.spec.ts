@@ -100,7 +100,7 @@ async function exerciseSurfaces(page: Page, viewportName: string, capture: boole
   await closePanel(page);
 
   await assertPanelLayout(page, "play");
-  await expect(page.locator(".game-card")).toHaveCount(12);
+  await expect(page.locator(".game-card")).toHaveCount(24);
   if (capture && viewportName === "iphone-portrait") {
     await page.screenshot({ path: "/opt/cursor/artifacts/sol_ui_games_390_final.png" });
   }
@@ -241,7 +241,7 @@ test("supports keyboard onboarding, trapped modals, semantic tabs, and reduced m
   await page.getByRole("button", { name: "Start sleep" }).click();
   await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().audio.theme)).toBe("lullaby");
   await page.getByRole("button", { name: "Wake gently" }).click();
-  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().audio.theme)).toBe("home-cozy");
+  await expect.poll(async () => page.evaluate(() => window.__gooby.runtime().audio.theme)).toBe("home");
   await page.getByRole("button", { name: "Let’s go" }).click();
 
   await page.getByRole("tab", { name: "Items" }).click();

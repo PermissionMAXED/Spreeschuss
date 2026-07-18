@@ -24,6 +24,8 @@ import {
   licenseNoticeDocument,
   licenseNoticeRecord,
 } from "./assets/license-notice.mjs";
+import { readLock } from "./asset-cache/lock.mjs";
+import { CACHE_ARCHIVE_DIR, LOCK_PATH } from "./asset-cache/sources.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const ASSETS_ROOT = join(ROOT, "assets");
@@ -129,9 +131,30 @@ async function writeStagedFile(stageRoot, relativePath, bytes) {
   };
 }
 
-async function vendorPack(pack, stageRoot, workRoot) {
-  const downloadUrl = await resolveDownload(pack);
-  const archive = await fetchBytes(downloadUrl);
+/**
+ * Source-cache-first resolution: when the shared source cache already holds
+ * this pack's archive and it matches the committed lock, vendor from the
+ * cache with zero network traffic; otherwise fall back to the official page.
+ */
+async function cachedArchive(pack, lock) {
+  const record = lock?.sources?.[`kenney-${pack.id}`];
+  if (!record) return null;
+  try {
+    const bytes = await readFile(join(ROOT, CACHE_ARCHIVE_DIR, `kenney-${pack.id}.zip`));
+    if (bytes.length !== record.archive.bytes || sha256(bytes) !== record.archive.sha256) return null;
+    return { downloadUrl: record.downloadUrl, archive: bytes };
+  } catch {
+    return null;
+  }
+}
+
+async function vendorPack(pack, stageRoot, workRoot, lock, offline) {
+  const cached = await cachedArchive(pack, lock);
+  if (offline && !cached) {
+    throw new Error("Offline mode requested and the source cache has no verified archive; using checksummed vendored files");
+  }
+  const downloadUrl = cached?.downloadUrl ?? await resolveDownload(pack);
+  const archive = cached?.archive ?? await fetchBytes(downloadUrl);
   const archivePath = join(workRoot, `${pack.id}.zip`);
   await writeFile(archivePath, archive);
   const archiveTest = spawnSync("unzip", ["-tqq", archivePath], { encoding: "utf8" });
@@ -299,6 +322,12 @@ async function previousManifest() {
 
 async function main() {
   const offline = process.argv.includes("--offline");
+  let lock = null;
+  try {
+    lock = await readLock(join(ROOT, LOCK_PATH));
+  } catch {
+    lock = null;
+  }
   const previous = await previousManifest();
   const previousById = new Map((previous?.packs ?? []).map((pack) => [pack.id, pack]));
   const temporaryRoot = await mkdtemp(join(tmpdir(), "gooby-assets-"));
@@ -311,8 +340,7 @@ async function main() {
   try {
     for (const pack of PACKS) {
       try {
-        if (offline) throw new Error("Offline mode requested; using checksummed vendored files");
-        const result = await vendorPack(pack, stageRoot, workRoot);
+        const result = await vendorPack(pack, stageRoot, workRoot, lock, offline);
         results.push(result);
         console.log(`Vendored ${pack.title}: ${result.files.length} curated file(s)`);
       } catch (cause) {

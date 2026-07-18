@@ -4,8 +4,23 @@ import { HOME_ZONE_IDS } from "../../core/contracts/scenes";
 export const ITEM_RARITIES = ["everyday", "special", "treasured"] as const;
 export type ItemRarity = (typeof ITEM_RARITIES)[number];
 
+/**
+ * Render-attached cosmetic slots. These stay frozen to the four sockets the
+ * Gooby actor exposes today; catalog cosmetics must use one of them so every
+ * purchasable item can be worn immediately.
+ */
 export const COSMETIC_SLOTS = ["head", "ears", "neck", "back"] as const;
 export type CosmeticSlot = (typeof COSMETIC_SLOTS)[number];
+
+/**
+ * The full six-slot wardrobe contract for saves, reducers, and future catalog
+ * items. `face` and `paws` become purchasable once the actor grows matching
+ * attachment sockets; persistence and validation already accept them.
+ */
+export const COSMETIC_EQUIP_SLOTS = ["head", "ears", "neck", "back", "face", "paws"] as const;
+export type CosmeticEquipSlot = (typeof COSMETIC_EQUIP_SLOTS)[number];
+
+export const CosmeticEquipSlotSchema = z.enum(COSMETIC_EQUIP_SLOTS);
 
 export const DISPLAY_FIXTURES = ["shelf", "pedestal", "rack"] as const;
 export type DisplayFixture = (typeof DISPLAY_FIXTURES)[number];
@@ -15,9 +30,9 @@ const CatalogBaseSchema = z
     id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
     name: z.string().trim().min(2).max(40),
     description: z.string().trim().min(8).max(140),
-    price: z.number().int().min(1).max(120),
+    price: z.number().int().min(1).max(400),
     rarity: z.enum(ITEM_RARITIES),
-    levelRequired: z.number().int().min(1).max(4),
+    levelRequired: z.number().int().min(1).max(8),
     availability: z.literal("always"),
     display: z
       .object({
@@ -47,6 +62,19 @@ export const CosmeticCatalogItemSchema = CatalogBaseSchema.extend({
   slot: z.enum(COSMETIC_SLOTS),
   stackable: z.literal(false),
 }).strict();
+
+/**
+ * Additive six-slot cosmetic validator for upcoming `face`/`paws` items. The
+ * shipped `CatalogItemSchema` keeps the render-attached four-slot union so the
+ * current actor and shop renderers stay type-safe; new-slot items validate
+ * here until their attachment sockets land.
+ */
+export const WardrobeCosmeticCatalogItemSchema = CatalogBaseSchema.extend({
+  kind: z.literal("cosmetic"),
+  slot: CosmeticEquipSlotSchema,
+  stackable: z.literal(false),
+}).strict();
+export type WardrobeCosmeticCatalogItem = z.infer<typeof WardrobeCosmeticCatalogItemSchema>;
 
 export const CatalogItemSchema = z.discriminatedUnion("kind", [
   FoodCatalogItemSchema,

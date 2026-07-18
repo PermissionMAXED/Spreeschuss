@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Arcade Kit Dev Harness</title>
+    <style>
+      body { margin: 0; display: flex; justify-content: center; background: #2b1d14; font-family: system-ui, sans-serif; }
+      #kit-harness { position: relative; width: min(100vw, 420px); height: 100vh; max-height: 908px; overflow: hidden; background: linear-gradient(#bfe3ff, #e8f7d8 70%); }
+      #harness-status { position: absolute; left: 10px; bottom: 8px; z-index: 60; font-size: 11px; color: #4a3428; background: #fff9; padding: 2px 8px; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <main id="kit-harness"></main>
+    <output id="harness-status">Loading Arcade Kit…</output>
+    <script type="module" src="./dev-harness.ts"></script>
+  </body>
+</html>

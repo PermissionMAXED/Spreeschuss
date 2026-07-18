@@ -1,22 +1,8 @@
-import type { MusicZone } from "./contracts";
+import { MUSIC_PROGRAMS, type MusicProgram, type MusicZone } from "./contracts";
 
-export const MUSIC_THEMES = [
-  "home-cozy",
-  "home-kitchen",
-  "home-bubbles",
-  "home-dream",
-  "home-garden",
-  "city-drive",
-  "shop-market",
-  "shop-boutique",
-  "shop-salon",
-  "minigame-bouncy",
-  "minigame-focus",
-  "minigame-rhythm",
-  "lullaby",
-] as const;
+export const MUSIC_THEMES = MUSIC_PROGRAMS;
 
-export type MusicTheme = (typeof MUSIC_THEMES)[number];
+export type MusicTheme = MusicProgram;
 
 export interface MusicTrack {
   setGain(gain: number, fadeSeconds: number): void;
@@ -27,39 +13,41 @@ export interface MusicMixer {
   start(theme: MusicTheme, initialGain: number): MusicTrack;
   setMasterGain(gain: number, fadeSeconds: number): void;
   duck(gain: number, durationSeconds: number): void;
+  setPaused?(paused: boolean): void;
   dispose(): void;
 }
 
-export function themeForZone(zone: MusicZone): MusicTheme {
-  if (zone === "lullaby") return "lullaby";
-  if (zone === "city") return "city-drive";
-  if (zone === "home:living-room") return "home-cozy";
-  if (zone === "home:kitchen") return "home-kitchen";
-  if (zone === "home:bathroom") return "home-bubbles";
-  if (zone === "home:bedroom") return "home-dream";
-  if (zone === "home:garden") return "home-garden";
-  if (zone === "shop:carrot-market") return "shop-market";
-  if (zone === "shop:cloud-boutique") return "shop-boutique";
-  if (zone === "shop:fluff-salon") return "shop-salon";
-  if (zone === "minigame:rhythm-hop" || zone === "minigame:gooby-says") return "minigame-rhythm";
+export function themeForZone(zone: MusicZone | MusicTheme): MusicTheme {
+  if ((MUSIC_THEMES as readonly string[]).includes(zone)) return zone as MusicTheme;
+  if (zone.startsWith("home:")) return "home";
+  if (zone === "city") return "city";
+  if (zone.startsWith("shop:")) return "shop";
+  if (zone === "minigame:shopping-surf") return "surf";
+  if (zone === "minigame:cake-atelier") return "cake";
   if (
     zone === "minigame:memory-meadow" ||
     zone === "minigame:veggie-sort" ||
-    zone === "minigame:pond-fishing"
+    zone === "minigame:pond-fishing" ||
+    zone === "minigame:library-stack" ||
+    zone === "minigame:snail-mail" ||
+    zone === "minigame:topiary-trim" ||
+    zone === "minigame:firefly-lantern"
   ) {
-    return "minigame-focus";
+    return "calm";
   }
-  return "minigame-bouncy";
+  return "action";
 }
 
 export class ZoneMusicDirector {
   private track: MusicTrack | null = null;
   private theme: MusicTheme | null = null;
   private muted = false;
+  private hidden = false;
+  private reducedMotion = false;
 
   constructor(
     private readonly mixer: MusicMixer,
-    private readonly fadeSeconds = 1.25,
+    private readonly fadeSeconds = 1.2,
   ) {}
 
   get currentTheme(): MusicTheme | null {
@@ -70,20 +58,31 @@ export class ZoneMusicDirector {
     return this.muted;
   }
 
-  setZone(zone: MusicZone): void {
+  setZone(zone: MusicZone | MusicTheme): void {
     const nextTheme = themeForZone(zone);
     if (nextTheme === this.theme) return;
     const previous = this.track;
     this.track = this.mixer.start(nextTheme, 0);
-    this.track.setGain(1, this.fadeSeconds);
-    previous?.stop(this.fadeSeconds);
+    const fade = this.transitionSeconds;
+    this.track.setGain(1, fade);
+    previous?.stop(fade);
     this.theme = nextTheme;
   }
 
   setMuted(muted: boolean): void {
     if (muted === this.muted) return;
     this.muted = muted;
-    this.mixer.setMasterGain(muted ? 0 : 1, 0.18);
+    this.mixer.setMasterGain(muted ? 0 : 1, 0.03);
+  }
+
+  setReducedMotion(reducedMotion: boolean): void {
+    this.reducedMotion = reducedMotion;
+  }
+
+  setHidden(hidden: boolean): void {
+    if (hidden === this.hidden) return;
+    this.hidden = hidden;
+    this.mixer.setPaused?.(hidden);
   }
 
   duck(gain = 0.38, durationSeconds = 0.28): void {
@@ -91,9 +90,13 @@ export class ZoneMusicDirector {
   }
 
   dispose(): void {
-    this.track?.stop(0.08);
+    this.track?.stop(0.03);
     this.track = null;
     this.theme = null;
     this.mixer.dispose();
+  }
+
+  private get transitionSeconds(): number {
+    return this.reducedMotion ? 0.03 : this.fadeSeconds;
   }
 }

@@ -1,0 +1,490 @@
+{
+  "schemaVersion": 1,
+  "generator": "scripts/asset-cache/cache.mjs",
+  "sources": {
+    "kaykit-city-builder-bits": {
+      "kind": "github-commit",
+      "title": "KayKit City Builder Bits",
+      "creator": "Kay Lousberg",
+      "repoUrl": "https://github.com/KayKit-Game-Assets/KayKit-City-Builder-Bits-1.0",
+      "commit": "63976910ca04d16f0fc531b9c614244be8128713",
+      "downloadUrl": "https://codeload.github.com/KayKit-Game-Assets/KayKit-City-Builder-Bits-1.0/zip/63976910ca04d16f0fc531b9c614244be8128713",
+      "archive": {
+        "bytes": 974356,
+        "sha256": "dc101668e104968509740fcad1ed2a12f6123e1a75185f050abeef76dbefd151"
+      },
+      "fileCount": 208,
+      "totalBytes": 3889530,
+      "contentDigest": "a6ffa137ae89e528205631135a7a234ffec436fcb717f15d749dd942e045c5d0",
+      "license": {
+        "entry": "addons/kaykit_city_builder_bits/Assets/LICENSE.txt",
+        "bytes": 828,
+        "sha256": "b076d86beec660e1550e00796ca24a8b70d7b2187d79954b2e29722b666dce93",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "Kay Lousberg"
+        ]
+      }
+    },
+    "kaykit-furniture-bits": {
+      "kind": "github-commit",
+      "title": "KayKit Furniture Bits",
+      "creator": "Kay Lousberg",
+      "repoUrl": "https://github.com/KayKit-Game-Assets/KayKit-Furniture-Bits-1.0",
+      "commit": "96d5930a8dbdb363409bbc2d3341718b00e17c9c",
+      "downloadUrl": "https://codeload.github.com/KayKit-Game-Assets/KayKit-Furniture-Bits-1.0/zip/96d5930a8dbdb363409bbc2d3341718b00e17c9c",
+      "archive": {
+        "bytes": 683587,
+        "sha256": "84be044ad8aa6d7b2e5e6e01ce6f2cc97133c07c04f9de7d98dc2677a0234242"
+      },
+      "fileCount": 216,
+      "totalBytes": 2082671,
+      "contentDigest": "76d6b724190aa091024fbccbe24691315318a4725eabe10c00afd36f4ea48bfb",
+      "license": {
+        "entry": "addons/kaykit_furniture_bits/Assets/LICENSE.txt",
+        "bytes": 827,
+        "sha256": "cd675f2adc31eb5fedaedc1072d8ddc27b917f523682f0561837c03dc56393cb",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "Kay Lousberg"
+        ]
+      }
+    },
+    "kaykit-prototype-bits": {
+      "kind": "github-commit",
+      "title": "KayKit Prototype Bits",
+      "creator": "Kay Lousberg",
+      "repoUrl": "https://github.com/KayKit-Game-Assets/KayKit-Prototype-Bits-1.0",
+      "commit": "bb159596f4f5106b663741d002c8eb45c80c0f41",
+      "downloadUrl": "https://codeload.github.com/KayKit-Game-Assets/KayKit-Prototype-Bits-1.0/zip/bb159596f4f5106b663741d002c8eb45c80c0f41",
+      "archive": {
+        "bytes": 773696,
+        "sha256": "17985aed180fe2f658c526e92dc300f2fde72db09494433153c7e808c6137afe"
+      },
+      "fileCount": 302,
+      "totalBytes": 2322447,
+      "contentDigest": "6a60a7db3cde4abde0e195e26d415afcae64036b23d865db308de39c0940836c",
+      "license": {
+        "entry": "addons/kaykit_prototype_bits/Assets/LICENSE.txt",
+        "bytes": 827,
+        "sha256": "1706d3369ecd7676320c03c25a898cc29fd1bb83bd3136646c45e6f400058887",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "Kay Lousberg"
+        ]
+      }
+    },
+    "kaykit-restaurant-bits": {
+      "kind": "github-commit",
+      "title": "KayKit Restaurant Bits",
+      "creator": "Kay Lousberg",
+      "repoUrl": "https://github.com/KayKit-Game-Assets/KayKit-Restaurant-Bits-1.0",
+      "commit": "153c8a7535b48237854cb54ff6890679f8c574d1",
+      "downloadUrl": "https://codeload.github.com/KayKit-Game-Assets/KayKit-Restaurant-Bits-1.0/zip/153c8a7535b48237854cb54ff6890679f8c574d1",
+      "archive": {
+        "bytes": 3174057,
+        "sha256": "5d2ebd136bfe116b78d5e931e0ceb14391fac3dee29e561d962b5fff90101d0a"
+      },
+      "fileCount": 592,
+      "totalBytes": 9375391,
+      "contentDigest": "02366ce1edf64fffa14e469ca9b75c52c23813a3cf26247d7ddcf542a1e999f5",
+      "license": {
+        "entry": "addons/kaykit_restaurant_bits/Assets/LICENSE.txt",
+        "bytes": 862,
+        "sha256": "4da4ad3a3face68a71c11c8adc8e93017fdeb8fd67fcb0ca8286bd9c3dbbf674",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "Kay Lousberg"
+        ]
+      }
+    },
+    "kenney-car-kit": {
+      "kind": "kenney-pack",
+      "title": "Car Kit",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/car-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/car-kit/1a312ec241-1775131960/kenney_car-kit.zip",
+      "archive": {
+        "bytes": 4814237,
+        "sha256": "fac7dacac5c7874348cf19729af3ef205f3d366493edaf0a827d93f4fdf3d0c4"
+      },
+      "fileCount": 259,
+      "totalBytes": 14483795,
+      "contentDigest": "40b0273f2668468ded07c6b201a802a5c481ba7dddf2922ab1b8bf141a2a4561",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 696,
+        "sha256": "c33b7f6453d134deae7b1b8493717d9ccfa754c25ab97f6de89b88f8fda19b00",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-city-kit-commercial": {
+      "kind": "kenney-pack",
+      "title": "City Kit (Commercial)",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/city-kit-commercial",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/city-kit-commercial/a742d900eb-1753115042/kenney_city-kit-commercial_2.1.zip",
+      "archive": {
+        "bytes": 4096974,
+        "sha256": "f8b09b081c2bb88bcc126e2dec1cb40fd0dad7e7e591b6c26aaefe96fb35276b"
+      },
+      "fileCount": 219,
+      "totalBytes": 11190670,
+      "contentDigest": "07058e8a9aec0b445eacab877deb0bf282260b982fdaabd1bed144e93d8794d0",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 708,
+        "sha256": "c38cee408d022e57e44e49f1cd655c2fe0dc881a07b881276b795215cdc0de69",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-city-kit-roads": {
+      "kind": "kenney-pack",
+      "title": "City Kit (Roads)",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/city-kit-roads",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/city-kit-roads/74288c9459-1741864740/kenney_city-kit-roads.zip",
+      "archive": {
+        "bytes": 1716227,
+        "sha256": "2c1644a293a85d98837ef788b0cbc4b9d53dffb1280fbe9a4f927b644aaba4b0"
+      },
+      "fileCount": 372,
+      "totalBytes": 4734883,
+      "contentDigest": "a9c877dc5783095dc463f02b761f17cced4b929aa06974819fa1dc7a50a77043",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 717,
+        "sha256": "70d0b4ef26a341070faf76b058bcc5753925d6cf118420fd51c73957573f7b4d",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-city-kit-suburban": {
+      "kind": "kenney-pack",
+      "title": "City Kit (Suburban)",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/city-kit-suburban",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/city-kit-suburban/2c871b7af2-1745479373/kenney_city-kit-suburban_20.zip",
+      "archive": {
+        "bytes": 3038740,
+        "sha256": "5869c35cf30b1c87bdb2d197b6d325eebadd2ef08ea27f04797e8e08d77a9a39"
+      },
+      "fileCount": 216,
+      "totalBytes": 8069616,
+      "contentDigest": "18f56c1215136e877870fa9ebe2719532f17e4ed25aff71b44ef56e91c4439b5",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 706,
+        "sha256": "d778fa769a89a7d9f167bc337fdf8fc2144e47d9abb0c35eb6ad897c0ee24d0a",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-food-kit": {
+      "kind": "kenney-pack",
+      "title": "Food Kit",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/food-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip",
+      "archive": {
+        "bytes": 4606270,
+        "sha256": "cdad90853682499b94c9fda2f87678b24bfd8f3264e0ed323f6b6a27fd7c6f6f"
+      },
+      "fileCount": 1009,
+      "totalBytes": 13641128,
+      "contentDigest": "cfc1068f6983827e6d24d00803912bf36c74b2318920ddb1280e5eb560dc459f",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 711,
+        "sha256": "32a081c2035dd4db47d850c83244da048165f0e53d71c076b76c1afc0590bc7f",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-furniture-kit": {
+      "kind": "kenney-pack",
+      "title": "Furniture Kit",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/furniture-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/furniture-kit/440e0608a4-1677580847/kenney_furniture-kit.zip",
+      "archive": {
+        "bytes": 5130729,
+        "sha256": "e67652d0932cee41683f74711c03d3e192a2af9979ef8e6b237711f5482d46b0"
+      },
+      "fileCount": 1546,
+      "totalBytes": 17671416,
+      "contentDigest": "cfd7d45f91efd368e4059288bad2ace7eb1071cc1a3ba94f192ecc8df0efeb5c",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 614,
+        "sha256": "bc0de1a0742cb490f9ed4bae0bd284286ebb27e23149b9917c7d8c0d590b8b29",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-game-icons-expansion": {
+      "kind": "kenney-pack",
+      "title": "Game Icons Expansion",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/game-icons-expansion",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/game-icons-expansion/afac4593af-1677661643/kenney_game-icons-expansion.zip",
+      "archive": {
+        "bytes": 2008440,
+        "sha256": "477471e820b9d8443878da0193d99506419da76ad897031531cdcca240f5672f"
+      },
+      "fileCount": 810,
+      "totalBytes": 7341873,
+      "contentDigest": "54356203d5efc50bff80e8414a2a9e7d71b008156181a58c5b91871cf28d6911",
+      "license": {
+        "entry": "license.txt",
+        "bytes": 493,
+        "sha256": "8738041658c4ad51a898920c4672f41ff5ff1513d319952915c3750dec15e56e",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "License (CC0)",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-impact-sounds": {
+      "kind": "kenney-pack",
+      "title": "Impact Sounds",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/impact-sounds",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/impact-sounds/87b4ddecda-1677589768/kenney_impact-sounds.zip",
+      "archive": {
+        "bytes": 800850,
+        "sha256": "029d734af1582474edf3a694d1b0cebc97c1c152f2f39fa34d4c2bafc5de77f8"
+      },
+      "fileCount": 133,
+      "totalBytes": 1035004,
+      "contentDigest": "ed32895ead861f6cff3fb3f5be254138333145db51555e27e207c883df113304",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 608,
+        "sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-input-prompts": {
+      "kind": "kenney-pack",
+      "title": "Input Prompts",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/input-prompts",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/input-prompts/8de120163f-1783763952/kenney_input-prompts_1.5.zip",
+      "archive": {
+        "bytes": 5070075,
+        "sha256": "ac2fcf599080b0f3ba2d174c9474db6df1a0e96ff0662580e2da79a122ab78a1"
+      },
+      "fileCount": 4667,
+      "totalBytes": 5960296,
+      "contentDigest": "0b4baf046998ac7858a4f95a428bcc22e6a8c5af97bffd46e88a4114dd5fdfe3",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 708,
+        "sha256": "ca2f58f80f903512119da5828868199478119818cd7ecffb303d625cb74cbb5a",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-interface-sounds": {
+      "kind": "kenney-pack",
+      "title": "Interface Sounds",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/interface-sounds",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip",
+      "archive": {
+        "bytes": 834536,
+        "sha256": "f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232"
+      },
+      "fileCount": 103,
+      "totalBytes": 961273,
+      "contentDigest": "6555f36149ebca984c437a3ced7323864ac6882c644721b72bead0ee7d9bf29a",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 574,
+        "sha256": "f7966c773bbed0eca6a9c75081c44a178b38eae112724dbb5fdfbd4192d118a9",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-mini-arcade": {
+      "kind": "kenney-pack",
+      "title": "Mini Arcade",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/mini-arcade",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/mini-arcade/ece1e8f320-1721638600/kenney_mini-arcade.zip",
+      "archive": {
+        "bytes": 1317439,
+        "sha256": "2acfe5cb44d392e834f77cf5488528c7cd45427cdf5fb941ce99856276158c19"
+      },
+      "fileCount": 114,
+      "totalBytes": 4316416,
+      "contentDigest": "c5c67d279f288b6e0b74610b1f9d3626dc3212daaf37bed1d65ca823592afac1",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 767,
+        "sha256": "f6042b6169407f419031ae0a0577c71d05b0033af5fa708cc77dce5731af886c",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-mini-market": {
+      "kind": "kenney-pack",
+      "title": "Mini Market",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/mini-market",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/mini-market/463f38da51-1729865423/kenney_mini-market.zip",
+      "archive": {
+        "bytes": 1135859,
+        "sha256": "6f2e69090e359204ace43e4c98dc3fb8639b75e423109672b5c890d194c45203"
+      },
+      "fileCount": 114,
+      "totalBytes": 3337803,
+      "contentDigest": "75828db7f02e3e809e4c7276a4b9ad97ed7bba4f4d91701f9030e5a3feaafb67",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 767,
+        "sha256": "5ee4df809330c05896f223c97f250cc1bdc13b46a370eb464533c85c94146070",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-music-jingles": {
+      "kind": "kenney-pack",
+      "title": "Music Jingles",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/music-jingles",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/music-jingles/f37e530b9e-1677590399/kenney_music-jingles.zip",
+      "archive": {
+        "bytes": 1239525,
+        "sha256": "b729ba57959bd58793d2c5cafa348aaf2655d354f3da35ec4729e03ec77197b8"
+      },
+      "fileCount": 89,
+      "totalBytes": 1433222,
+      "contentDigest": "33633c100f53be59ec38fb7dc014b12bc2d0e62a3f4007a82d5cdd9c5a6b4d45",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 482,
+        "sha256": "373b1c880ee6c7a83c1ccf209f251cf45fc9ea9b1f0330844fa7be64a401adc4",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-particle-pack": {
+      "kind": "kenney-pack",
+      "title": "Particle Pack",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/particle-pack",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/particle-pack/f8fe0f8cb8-1677578741/kenney_particle-pack.zip",
+      "archive": {
+        "bytes": 15001764,
+        "sha256": "b631d4b07f7002549fdcf155f01141ad482f79f3440e4e301eed49ce5f1d8958"
+      },
+      "fileCount": 195,
+      "totalBytes": 15222316,
+      "contentDigest": "c45146ed50f8f6efa8dd6d41c1a46a6df48cac230c7b524c10842a9d992f5894",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 651,
+        "sha256": "f9e70b81d8cc07c4e07c9f2eff1d94fd371a06070b18cb67c651c41158ec2975",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-platformer-kit": {
+      "kind": "kenney-pack",
+      "title": "Platformer Kit",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/platformer-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/platformer-kit/1585cf62b4-1775122253/kenney_platformer-kit.zip",
+      "archive": {
+        "bytes": 4640135,
+        "sha256": "899605d237367688c6b42e41fff2206c0fb8d626163158294556353f7baa7c1b"
+      },
+      "fileCount": 777,
+      "totalBytes": 13596856,
+      "contentDigest": "36b4611eaf6c2572c34ee4cb3d7f0b158ec55f4a3301a77caf801d342fc8d7f9",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 703,
+        "sha256": "e1185354d8f0f055c325c7204602326c8cf0c47ee5ae1db7ed16f0465b91bb9a",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-ui-pack": {
+      "kind": "kenney-pack",
+      "title": "UI Pack",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/ui-pack",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/ui-pack/f651646eab-1718203990/kenney_ui-pack.zip",
+      "archive": {
+        "bytes": 1229750,
+        "sha256": "a8a14a234911eb648c062622915c93e79e94e97cb7f9f375a70f6617f1174318"
+      },
+      "fileCount": 1315,
+      "totalBytes": 1416520,
+      "contentDigest": "9da7be6845b684434b4825d3d2ca201fd527aae86cae05ecbfbe1876b17463fd",
+      "license": {
+        "entry": "License.txt",
+        "bytes": 565,
+        "sha256": "69f7eaa5e05913b4d09cf5848f75390b5c3c9a409ef8555777803d9ca0c171fb",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    }
+  }
+}

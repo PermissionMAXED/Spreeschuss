@@ -80,7 +80,7 @@ describe("event-driven haptics", () => {
   it("maps home and UI feedback but leaves minigame haptics explicit", () => {
     expect(hapticForAudioEvent("audio:gooby", { action: "tickle" })).toBe("combo");
     expect(hapticForAudioEvent("audio:gooby", { action: "bathe" })).toBe("success");
-    expect(hapticForAudioEvent("audio:economy", { action: "purchase" })).toBe("success");
+    expect(hapticForAudioEvent("audio:economy", { action: "purchase" })).toBe("purchase");
     expect(hapticForAudioEvent("audio:car", { action: "skid" })).toBe("tension");
     expect(hapticForAudioEvent("audio:car", { action: "engine-loop" })).toBeNull();
     expect(hapticForAudioEvent("audio:minigame", { action: "hit" })).toBeNull();
@@ -102,5 +102,29 @@ describe("event-driven haptics", () => {
     director.setMuted(true);
     events.emit("audio:economy", { action: "coin", amount: 4 });
     expect(driver.impacts).toEqual(["light"]);
+  });
+
+  it("plays explicit sticker, purchase, and game-win patterns once and respects settings", () => {
+    const driver = new SpyHaptics();
+    const scheduler = new ManualScheduler();
+    const director = new HapticDirector(driver, scheduler);
+    const audio = new EventBus<AudioEvents>();
+    director.bindAudioEvents(audio);
+    director.bindAudioEvents(audio);
+
+    audio.emit("audio:economy", { action: "purchase" });
+    scheduler.runAll();
+    expect(driver.impacts).toEqual(["medium", "success"]);
+
+    director.applySettings({ haptics: true, reducedMotion: true });
+    director.stickerUnlocked();
+    director.gameWon();
+    expect(driver.impacts.slice(-2)).toEqual(["success", "success"]);
+
+    audio.emit("audio:minigame", { action: "win" });
+    expect(driver.impacts.slice(-2)).toEqual(["success", "success"]);
+    director.applySettings({ haptics: false, reducedMotion: false });
+    director.purchaseCompleted();
+    expect(driver.impacts.slice(-2)).toEqual(["success", "success"]);
   });
 });

@@ -2,7 +2,16 @@ import type { EventBus, GameEvents } from "../core/contracts/events";
 import type { HapticPattern, HapticsPort } from "../core/contracts/platform";
 import type { AudioEvents } from "../audio/contracts";
 
-export const POLISH_HAPTIC_PATTERNS = ["light", "success", "warning", "tension", "combo"] as const;
+export const POLISH_HAPTIC_PATTERNS = [
+  "light",
+  "success",
+  "warning",
+  "tension",
+  "combo",
+  "sticker",
+  "purchase",
+  "game-win",
+] as const;
 export type PolishHapticPattern = (typeof POLISH_HAPTIC_PATTERNS)[number];
 
 export interface HapticPulse {
@@ -31,7 +40,30 @@ export const HAPTIC_PATTERNS: Readonly<Record<PolishHapticPattern, readonly Hapt
     { atMs: 55, impact: "medium" },
     { atMs: 105, impact: "success" },
   ],
+  sticker: [
+    { atMs: 0, impact: "light" },
+    { atMs: 85, impact: "success" },
+  ],
+  purchase: [
+    { atMs: 0, impact: "medium" },
+    { atMs: 90, impact: "success" },
+  ],
+  "game-win": [
+    { atMs: 0, impact: "light" },
+    { atMs: 65, impact: "medium" },
+    { atMs: 145, impact: "success" },
+  ],
 };
+
+export interface HapticSettings {
+  readonly haptics: boolean;
+  readonly reducedMotion: boolean;
+}
+
+export interface HapticEvents {
+  "haptics:settings": HapticSettings;
+  "haptics:feedback": { readonly pattern: PolishHapticPattern };
+}
 
 export interface HapticScheduler {
   schedule(delayMs: number, callback: () => void): unknown;
@@ -73,7 +105,7 @@ export function hapticForAudioEvent<Key extends keyof AudioEvents>(
     return "light";
   }
   if (event === "audio:economy") {
-    return (payload as AudioEvents["audio:economy"]).action === "purchase" ? "success" : "light";
+    return (payload as AudioEvents["audio:economy"]).action === "purchase" ? "purchase" : "light";
   }
   if (event === "audio:car") {
     const action = (payload as AudioEvents["audio:car"]).action;
@@ -89,6 +121,8 @@ export class HapticDirector {
   private readonly pending: unknown[] = [];
   private readonly removeListeners: Array<() => void> = [];
   private muted = false;
+  private reducedMotion = false;
+  private readonly audioBindings = new Set<EventBus<AudioEvents>>();
 
   constructor(
     private readonly driver: HapticsPort = new NoopWebHaptics(),
@@ -102,7 +136,11 @@ export class HapticDirector {
   play(pattern: PolishHapticPattern): void {
     if (this.muted) return;
     this.cancelPending();
-    for (const pulse of HAPTIC_PATTERNS[pattern]) {
+    const configured = HAPTIC_PATTERNS[pattern];
+    const pulses = this.reducedMotion
+      ? [{ atMs: 0, impact: configured.at(-1)?.impact ?? "light" } satisfies HapticPulse]
+      : configured;
+    for (const pulse of pulses) {
       if (pulse.atMs === 0) {
         void this.driver.impact(pulse.impact).catch(() => undefined);
       } else {
@@ -118,12 +156,44 @@ export class HapticDirector {
     if (muted) this.cancelPending();
   }
 
+  applySettings(settings: HapticSettings): void {
+    if (settings.reducedMotion && !this.reducedMotion) this.cancelPending();
+    this.reducedMotion = settings.reducedMotion;
+    this.setMuted(!settings.haptics);
+  }
+
+  stickerUnlocked(): void {
+    this.play("sticker");
+  }
+
+  purchaseCompleted(): void {
+    this.play("purchase");
+  }
+
+  gameWon(): void {
+    this.play("game-win");
+  }
+
   bindAudioEvents(bus: EventBus<AudioEvents>): () => void {
+    if (this.audioBindings.has(bus)) return () => undefined;
+    this.audioBindings.add(bus);
     const removers = [
       bus.on("audio:ui", (payload) => this.playMapped("audio:ui", payload)),
       bus.on("audio:gooby", (payload) => this.playMapped("audio:gooby", payload)),
       bus.on("audio:economy", (payload) => this.playMapped("audio:economy", payload)),
       bus.on("audio:car", (payload) => this.playMapped("audio:car", payload)),
+    ];
+    this.removeListeners.push(...removers);
+    return () => {
+      this.audioBindings.delete(bus);
+      this.remove(removers);
+    };
+  }
+
+  bindHapticEvents(bus: EventBus<HapticEvents>): () => void {
+    const removers = [
+      bus.on("haptics:settings", (settings) => this.applySettings(settings)),
+      bus.on("haptics:feedback", ({ pattern }) => this.play(pattern)),
     ];
     this.removeListeners.push(...removers);
     return () => this.remove(removers);
@@ -145,6 +215,7 @@ export class HapticDirector {
     this.cancelPending();
     for (const remove of this.removeListeners) remove();
     this.removeListeners.length = 0;
+    this.audioBindings.clear();
   }
 
   private playMapped<Key extends keyof AudioEvents>(event: Key, payload: AudioEvents[Key]): void {

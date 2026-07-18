@@ -1,5 +1,7 @@
 export * from "./assets";
+export * from "./audio";
 export * from "./clock";
+export * from "./i18n";
 export * from "./economy";
 export * from "./events";
 export * from "./gooby";
@@ -10,3 +12,4 @@ export * from "./rng";
 export * from "./save";
 export * from "./scenes";
 export * from "./simulation";
+export * from "./stickers";

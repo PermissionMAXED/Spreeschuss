@@ -14,6 +14,11 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     strictPort: true,
+    watch: {
+      // The extracted asset source cache holds tens of thousands of vendored
+      // files; watching it exhausts inotify watchers and kills the audit server.
+      ignored: ["**/.asset-cache/**"],
+    },
   },
   plugins: [
     {

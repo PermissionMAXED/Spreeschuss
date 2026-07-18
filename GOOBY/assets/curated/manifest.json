@@ -1,0 +1,800 @@
+{
+  "schemaVersion": 1,
+  "domain": "models",
+  "generator": "scripts/asset-cache/curate.mjs",
+  "spec": {
+    "path": "scripts/asset-cache/curation-spec.mjs",
+    "sha256": "826f4b097424443fa8951b7eeb0a66a9d3ae0631be2b97a9351009be6ac12243"
+  },
+  "budget": {
+    "maxRuntimeBytes": 41943040
+  },
+  "totalOutputBytes": 861536,
+  "sources": {
+    "kaykit-city-builder-bits": {
+      "kind": "github-commit",
+      "title": "KayKit City Builder Bits",
+      "creator": "Kay Lousberg",
+      "repoUrl": "https://github.com/KayKit-Game-Assets/KayKit-City-Builder-Bits-1.0",
+      "commit": "63976910ca04d16f0fc531b9c614244be8128713",
+      "downloadUrl": "https://codeload.github.com/KayKit-Game-Assets/KayKit-City-Builder-Bits-1.0/zip/63976910ca04d16f0fc531b9c614244be8128713",
+      "archiveSha256": "dc101668e104968509740fcad1ed2a12f6123e1a75185f050abeef76dbefd151",
+      "license": {
+        "path": "assets/curated/vendor/kaykit-city-builder-bits/License.txt",
+        "sourceEntry": "addons/kaykit_city_builder_bits/Assets/LICENSE.txt",
+        "bytes": 828,
+        "sha256": "b076d86beec660e1550e00796ca24a8b70d7b2187d79954b2e29722b666dce93",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "Kay Lousberg"
+        ]
+      }
+    },
+    "kaykit-restaurant-bits": {
+      "kind": "github-commit",
+      "title": "KayKit Restaurant Bits",
+      "creator": "Kay Lousberg",
+      "repoUrl": "https://github.com/KayKit-Game-Assets/KayKit-Restaurant-Bits-1.0",
+      "commit": "153c8a7535b48237854cb54ff6890679f8c574d1",
+      "downloadUrl": "https://codeload.github.com/KayKit-Game-Assets/KayKit-Restaurant-Bits-1.0/zip/153c8a7535b48237854cb54ff6890679f8c574d1",
+      "archiveSha256": "5d2ebd136bfe116b78d5e931e0ceb14391fac3dee29e561d962b5fff90101d0a",
+      "license": {
+        "path": "assets/curated/vendor/kaykit-restaurant-bits/License.txt",
+        "sourceEntry": "addons/kaykit_restaurant_bits/Assets/LICENSE.txt",
+        "bytes": 862,
+        "sha256": "4da4ad3a3face68a71c11c8adc8e93017fdeb8fd67fcb0ca8286bd9c3dbbf674",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "Kay Lousberg"
+        ]
+      }
+    },
+    "kenney-city-kit-roads": {
+      "kind": "kenney-pack",
+      "title": "City Kit (Roads)",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/city-kit-roads",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/city-kit-roads/74288c9459-1741864740/kenney_city-kit-roads.zip",
+      "archiveSha256": "2c1644a293a85d98837ef788b0cbc4b9d53dffb1280fbe9a4f927b644aaba4b0",
+      "license": {
+        "path": "assets/curated/vendor/kenney-city-kit-roads/License.txt",
+        "sourceEntry": "License.txt",
+        "bytes": 717,
+        "sha256": "70d0b4ef26a341070faf76b058bcc5753925d6cf118420fd51c73957573f7b4d",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-food-kit": {
+      "kind": "kenney-pack",
+      "title": "Food Kit",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/food-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/food-kit/83086fa91c-1719418518/kenney_food-kit.zip",
+      "archiveSha256": "cdad90853682499b94c9fda2f87678b24bfd8f3264e0ed323f6b6a27fd7c6f6f",
+      "license": {
+        "path": "assets/curated/vendor/kenney-food-kit/License.txt",
+        "sourceEntry": "License.txt",
+        "bytes": 711,
+        "sha256": "32a081c2035dd4db47d850c83244da048165f0e53d71c076b76c1afc0590bc7f",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-furniture-kit": {
+      "kind": "kenney-pack",
+      "title": "Furniture Kit",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/furniture-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/furniture-kit/440e0608a4-1677580847/kenney_furniture-kit.zip",
+      "archiveSha256": "e67652d0932cee41683f74711c03d3e192a2af9979ef8e6b237711f5482d46b0",
+      "license": {
+        "path": "assets/curated/vendor/kenney-furniture-kit/License.txt",
+        "sourceEntry": "License.txt",
+        "bytes": 614,
+        "sha256": "bc0de1a0742cb490f9ed4bae0bd284286ebb27e23149b9917c7d8c0d590b8b29",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-mini-arcade": {
+      "kind": "kenney-pack",
+      "title": "Mini Arcade",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/mini-arcade",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/mini-arcade/ece1e8f320-1721638600/kenney_mini-arcade.zip",
+      "archiveSha256": "2acfe5cb44d392e834f77cf5488528c7cd45427cdf5fb941ce99856276158c19",
+      "license": {
+        "path": "assets/curated/vendor/kenney-mini-arcade/License.txt",
+        "sourceEntry": "License.txt",
+        "bytes": 767,
+        "sha256": "f6042b6169407f419031ae0a0577c71d05b0033af5fa708cc77dce5731af886c",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-mini-market": {
+      "kind": "kenney-pack",
+      "title": "Mini Market",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/mini-market",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/mini-market/463f38da51-1729865423/kenney_mini-market.zip",
+      "archiveSha256": "6f2e69090e359204ace43e4c98dc3fb8639b75e423109672b5c890d194c45203",
+      "license": {
+        "path": "assets/curated/vendor/kenney-mini-market/License.txt",
+        "sourceEntry": "License.txt",
+        "bytes": 767,
+        "sha256": "5ee4df809330c05896f223c97f250cc1bdc13b46a370eb464533c85c94146070",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    },
+    "kenney-platformer-kit": {
+      "kind": "kenney-pack",
+      "title": "Platformer Kit",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/platformer-kit",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/platformer-kit/1585cf62b4-1775122253/kenney_platformer-kit.zip",
+      "archiveSha256": "899605d237367688c6b42e41fff2206c0fb8d626163158294556353f7baa7c1b",
+      "license": {
+        "path": "assets/curated/vendor/kenney-platformer-kit/License.txt",
+        "sourceEntry": "License.txt",
+        "bytes": 703,
+        "sha256": "e1185354d8f0f055c325c7204602326c8cf0c47ee5ae1db7ed16f0465b91bb9a",
+        "spdx": "CC0-1.0",
+        "evidence": [
+          "Creative Commons Zero",
+          "kenney"
+        ]
+      }
+    }
+  },
+  "keys": {
+    "city.road-straight": {
+      "fallback": "road-straight",
+      "purpose": "Straight road segment",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-city-kit-roads",
+        "path": "Models/GLB format/road-straight.glb",
+        "revision": "2c1644a293a85d98837ef788b0cbc4b9d53dffb1280fbe9a4f927b644aaba4b0"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/road-straight.glb",
+          "bytes": 5264,
+          "sha256": "c3d524d39ff60ae4ca418aa99e83af25ee87ddbdc3c1a021774f30314bf73ca4"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 8658,
+          "sha256": "ebbdaadf298f684ee534d0e63e2bdb223f7501da9fc13eb7bcdc94489162aca5"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-city-kit-roads/city-road-straight.glb",
+        "bytes": 13960,
+        "sha256": "7359210a91cd5df81ea1ddf6373a912df43a4a3f77d5556ba2568e1333b88a34"
+      }
+    },
+    "city.road-corner": {
+      "fallback": "road-corner",
+      "purpose": "Curved corner road segment",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-city-kit-roads",
+        "path": "Models/GLB format/road-bend.glb",
+        "revision": "2c1644a293a85d98837ef788b0cbc4b9d53dffb1280fbe9a4f927b644aaba4b0"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/road-bend.glb",
+          "bytes": 20184,
+          "sha256": "5ec9dab26d77510e77969fa3e1fad060190c63b1529a961cb2b7076cdde2b0cf"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 8658,
+          "sha256": "ebbdaadf298f684ee534d0e63e2bdb223f7501da9fc13eb7bcdc94489162aca5"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-city-kit-roads/city-road-corner.glb",
+        "bytes": 28880,
+        "sha256": "b546634386efe0f91e3371dea6542b62ca921f4328a74aa3bd20d922d1858877"
+      }
+    },
+    "city.road-t": {
+      "fallback": "road-t",
+      "purpose": "Three-way T road intersection",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-city-kit-roads",
+        "path": "Models/GLB format/road-intersection.glb",
+        "revision": "2c1644a293a85d98837ef788b0cbc4b9d53dffb1280fbe9a4f927b644aaba4b0"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/road-intersection.glb",
+          "bytes": 7900,
+          "sha256": "3ebc88956fc771c505f30d616a86f5509b83aa07a0d893ddc82a91553c173eca"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 8658,
+          "sha256": "ebbdaadf298f684ee534d0e63e2bdb223f7501da9fc13eb7bcdc94489162aca5"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-city-kit-roads/city-road-t.glb",
+        "bytes": 16596,
+        "sha256": "8073a2836ea2d83f8b35fb6f6d3b10158f85f651e9007496c7f8acf2edabb373"
+      }
+    },
+    "city.road-4way": {
+      "fallback": "road-4way",
+      "purpose": "Four-way road crossing",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-city-kit-roads",
+        "path": "Models/GLB format/road-crossroad.glb",
+        "revision": "2c1644a293a85d98837ef788b0cbc4b9d53dffb1280fbe9a4f927b644aaba4b0"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/road-crossroad.glb",
+          "bytes": 10100,
+          "sha256": "26de3ec9c54f909331ff071060310f6b9e454c4ed3213394b7b52352ce2a45f9"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 8658,
+          "sha256": "ebbdaadf298f684ee534d0e63e2bdb223f7501da9fc13eb7bcdc94489162aca5"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-city-kit-roads/city-road-4way.glb",
+        "bytes": 18796,
+        "sha256": "6777dedabc016661a6bff4088190e6e1f02f8e0b7d5bf23406f380b9347e0193"
+      }
+    },
+    "city.curb": {
+      "fallback": "curb",
+      "purpose": "Road-side curb edge tile",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-city-kit-roads",
+        "path": "Models/GLB format/road-side.glb",
+        "revision": "2c1644a293a85d98837ef788b0cbc4b9d53dffb1280fbe9a4f927b644aaba4b0"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/road-side.glb",
+          "bytes": 5288,
+          "sha256": "dd1c8cee11d9ac44c02455c1ac1f1f622ec2b4f9f06d97523ead32d1672b39d9"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 8658,
+          "sha256": "ebbdaadf298f684ee534d0e63e2bdb223f7501da9fc13eb7bcdc94489162aca5"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-city-kit-roads/city-curb.glb",
+        "bytes": 13984,
+        "sha256": "6ec853ae0c6f9ce806431ef3651acd25a0a84c102e1e6a74ebb8da364f59d3e3"
+      }
+    },
+    "city.sidewalk": {
+      "fallback": "sidewalk",
+      "purpose": "Raised sidewalk base tile",
+      "mode": "embed",
+      "source": {
+        "id": "kaykit-city-builder-bits",
+        "path": "addons/kaykit_city_builder_bits/Assets/gltf/base.gltf",
+        "revision": "63976910ca04d16f0fc531b9c614244be8128713"
+      },
+      "inputs": [
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/base.gltf",
+          "bytes": 2953,
+          "sha256": "ac49eb9d300587172c416f73c7fd709403dc34f432f02ab3e3c9590adc63c21c"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/base.bin",
+          "bytes": 3432,
+          "sha256": "2b00ed6bb88a18e91fc80ec037cca4a20fba9fdeb21f8f781fc3a7f8be919f8a"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/citybits_texture.png",
+          "bytes": 19885,
+          "sha256": "6d2d9a5a13bce32209cd8c04572ab170504d68f34b1519165c9b0c41871e235b"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kaykit-city-builder-bits/city-sidewalk.glb",
+        "bytes": 24620,
+        "sha256": "ca288783cea4cca6c7c16690027e12d9d4eb69623ab260dfdadcbe3985d91cb6"
+      }
+    },
+    "building.city-a": {
+      "fallback": "city-building-a",
+      "purpose": "City building facade A",
+      "mode": "embed",
+      "source": {
+        "id": "kaykit-city-builder-bits",
+        "path": "addons/kaykit_city_builder_bits/Assets/gltf/building_A.gltf",
+        "revision": "63976910ca04d16f0fc531b9c614244be8128713"
+      },
+      "inputs": [
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/building_A.gltf",
+          "bytes": 2980,
+          "sha256": "d9d21afb847de1c67a643cc34738f0b71d71f6a8926e8fa7f248bb6a434a22ba"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/building_A.bin",
+          "bytes": 49512,
+          "sha256": "29feccd24aa7b996e7a5dbeca2e5c724bfbeaa7eebad02e6fb012a92eebb1a33"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/citybits_texture.png",
+          "bytes": 19885,
+          "sha256": "6d2d9a5a13bce32209cd8c04572ab170504d68f34b1519165c9b0c41871e235b"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kaykit-city-builder-bits/building-city-a.glb",
+        "bytes": 70720,
+        "sha256": "364ebc7676adbbded8fcb9382a4245c92dce8f2e248a27db64ef2b82c30bc8d6"
+      }
+    },
+    "building.city-b": {
+      "fallback": "city-building-b",
+      "purpose": "City building facade B",
+      "mode": "embed",
+      "source": {
+        "id": "kaykit-city-builder-bits",
+        "path": "addons/kaykit_city_builder_bits/Assets/gltf/building_B.gltf",
+        "revision": "63976910ca04d16f0fc531b9c614244be8128713"
+      },
+      "inputs": [
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/building_B.gltf",
+          "bytes": 2980,
+          "sha256": "d026df95a16e31d1d50827375db7978099af35eefbb255bf6674855d303fb390"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/building_B.bin",
+          "bytes": 65468,
+          "sha256": "310c032929c5988dd0ae5d9c15c4ea0d0e69bcbd60d87237cdd56e859639375e"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/citybits_texture.png",
+          "bytes": 19885,
+          "sha256": "6d2d9a5a13bce32209cd8c04572ab170504d68f34b1519165c9b0c41871e235b"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kaykit-city-builder-bits/building-city-b.glb",
+        "bytes": 86676,
+        "sha256": "aea2b4915763d7f90874c5f6ed6e0f683ccd6a743a49846b3885050ca56b81f3"
+      }
+    },
+    "building.city-c": {
+      "fallback": "city-building-c",
+      "purpose": "City building facade C",
+      "mode": "embed",
+      "source": {
+        "id": "kaykit-city-builder-bits",
+        "path": "addons/kaykit_city_builder_bits/Assets/gltf/building_C.gltf",
+        "revision": "63976910ca04d16f0fc531b9c614244be8128713"
+      },
+      "inputs": [
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/building_C.gltf",
+          "bytes": 2979,
+          "sha256": "d2477afdb8a68507ab862ede37f47a2a7b74df369290bc57712239214c6ae2c8"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/building_C.bin",
+          "bytes": 61512,
+          "sha256": "77c6e813fc59631d7866614508220f47800533cda767f55680d393eddd46705d"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/citybits_texture.png",
+          "bytes": 19885,
+          "sha256": "6d2d9a5a13bce32209cd8c04572ab170504d68f34b1519165c9b0c41871e235b"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kaykit-city-builder-bits/building-city-c.glb",
+        "bytes": 82720,
+        "sha256": "3302fe4f437bbf10650273404d99002da64ae203b3e11330ac21695a2f8e5678"
+      }
+    },
+    "city.traffic-car-a": {
+      "fallback": "traffic-car-a",
+      "purpose": "Ambient traffic taxi",
+      "mode": "embed",
+      "source": {
+        "id": "kaykit-city-builder-bits",
+        "path": "addons/kaykit_city_builder_bits/Assets/gltf/car_taxi.gltf",
+        "revision": "63976910ca04d16f0fc531b9c614244be8128713"
+      },
+      "inputs": [
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/car_taxi.gltf",
+          "bytes": 10924,
+          "sha256": "781b3265473dab6f7e054f06c23abeba9b811516b19b61a7a88b0aa8d33e1323"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/car_taxi.bin",
+          "bytes": 58704,
+          "sha256": "28abb85c4eb0d38be9b4b0beebe0a55038565b1f9545fea65f59cb56672c1d11"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/citybits_texture.png",
+          "bytes": 19885,
+          "sha256": "6d2d9a5a13bce32209cd8c04572ab170504d68f34b1519165c9b0c41871e235b"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kaykit-city-builder-bits/city-traffic-car-a.glb",
+        "bytes": 83376,
+        "sha256": "4de01d2ac160f73b65fec9c8e670805b7f28d6624c74a293d9c210ae201fd67b"
+      }
+    },
+    "city.traffic-car-b": {
+      "fallback": "traffic-car-b",
+      "purpose": "Ambient traffic hatchback",
+      "mode": "embed",
+      "source": {
+        "id": "kaykit-city-builder-bits",
+        "path": "addons/kaykit_city_builder_bits/Assets/gltf/car_hatchback.gltf",
+        "revision": "63976910ca04d16f0fc531b9c614244be8128713"
+      },
+      "inputs": [
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/car_hatchback.gltf",
+          "bytes": 10952,
+          "sha256": "e38be3dbdfbc95b0e794fc5c8164b2ff658b2dc5049b51d38179d16a9432b4f3"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/car_hatchback.bin",
+          "bytes": 53564,
+          "sha256": "e7756d8a44553ef75091bb4baa41388bcb1a1b44388008a3e670d05cb12f4c5f"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/citybits_texture.png",
+          "bytes": 19885,
+          "sha256": "6d2d9a5a13bce32209cd8c04572ab170504d68f34b1519165c9b0c41871e235b"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kaykit-city-builder-bits/city-traffic-car-b.glb",
+        "bytes": 78260,
+        "sha256": "54328123d1a7f6f18a3e53eb3ef3a73d7c6da7fd4f1cc967c4fd2115bc8543b3"
+      }
+    },
+    "city.bench": {
+      "fallback": "street-bench",
+      "purpose": "Street bench prop",
+      "mode": "embed",
+      "source": {
+        "id": "kaykit-city-builder-bits",
+        "path": "addons/kaykit_city_builder_bits/Assets/gltf/bench.gltf",
+        "revision": "63976910ca04d16f0fc531b9c614244be8128713"
+      },
+      "inputs": [
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/bench.gltf",
+          "bytes": 3024,
+          "sha256": "f3b731470c30ed21d7e03f15d28f1937b3e4881efcca57a48e4c82ae582e51e1"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/bench.bin",
+          "bytes": 2824,
+          "sha256": "53ac9734110353b244bc409b32e1d4a41d94a86f3aa26884c40a6692dab0f81e"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/citybits_texture.png",
+          "bytes": 19885,
+          "sha256": "6d2d9a5a13bce32209cd8c04572ab170504d68f34b1519165c9b0c41871e235b"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kaykit-city-builder-bits/city-bench.glb",
+        "bytes": 24084,
+        "sha256": "9d5e8cda6570d4f62b79b2e667e1cdbd44983e55b10e03002ba6f7c6b9f42ad6"
+      }
+    },
+    "city.hydrant": {
+      "fallback": "fire-hydrant",
+      "purpose": "Fire hydrant prop",
+      "mode": "embed",
+      "source": {
+        "id": "kaykit-city-builder-bits",
+        "path": "addons/kaykit_city_builder_bits/Assets/gltf/firehydrant.gltf",
+        "revision": "63976910ca04d16f0fc531b9c614244be8128713"
+      },
+      "inputs": [
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/firehydrant.gltf",
+          "bytes": 3067,
+          "sha256": "0a3f9fb95e8b4805602ad26050ee552408553682b41f3e54981a69dfa92a7f3b"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/firehydrant.bin",
+          "bytes": 8056,
+          "sha256": "02cab93bf6af8c16da083c6ac92dcc5997bed24dabc1e746ee780e623b07b3de"
+        },
+        {
+          "path": "addons/kaykit_city_builder_bits/Assets/gltf/citybits_texture.png",
+          "bytes": 19885,
+          "sha256": "6d2d9a5a13bce32209cd8c04572ab170504d68f34b1519165c9b0c41871e235b"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kaykit-city-builder-bits/city-hydrant.glb",
+        "bytes": 29352,
+        "sha256": "0f01e076f4289fbd87e7cbffc5ec4c729573024c9d2d17592f10d65243075af1"
+      }
+    },
+    "city.sign": {
+      "fallback": "street-sign",
+      "purpose": "Street sign prop",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-city-kit-roads",
+        "path": "Models/GLB format/sign-highway.glb",
+        "revision": "2c1644a293a85d98837ef788b0cbc4b9d53dffb1280fbe9a4f927b644aaba4b0"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/sign-highway.glb",
+          "bytes": 17308,
+          "sha256": "1fdae5481b07084926dd6bced13577aed0f568044cacf524e29f312de3d3d56a"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 8658,
+          "sha256": "ebbdaadf298f684ee534d0e63e2bdb223f7501da9fc13eb7bcdc94489162aca5"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-city-kit-roads/city-sign.glb",
+        "bytes": 26008,
+        "sha256": "0d9c4398a9806c82463ded31176954817e9d96a670f5593c79f12c6288885119"
+      }
+    },
+    "surf.cart": {
+      "fallback": "surf-cart",
+      "purpose": "Rideable surf shopping cart",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-mini-market",
+        "path": "Models/GLB format/shopping-cart.glb",
+        "revision": "6f2e69090e359204ace43e4c98dc3fb8639b75e423109672b5c890d194c45203"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/shopping-cart.glb",
+          "bytes": 34832,
+          "sha256": "8933fdece5c43b619ea6902fa03a5fea9f490486048ae7543cc8b03ee98c98dd"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 8706,
+          "sha256": "0d4947d34ff32acf4a359c7f22ca784e057e7e72f622170a9a77b6fc88fdb70e"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-mini-market/surf-cart.glb",
+        "bytes": 43596,
+        "sha256": "d01c77c3f091460f2e1e4995811e9d78996b5933057203720cfeb283304cb9b6"
+      }
+    },
+    "surf.ramp": {
+      "fallback": "surf-ramp",
+      "purpose": "Surf jump ramp",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-platformer-kit",
+        "path": "Models/GLB format/platform-ramp.glb",
+        "revision": "899605d237367688c6b42e41fff2206c0fb8d626163158294556353f7baa7c1b"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/platform-ramp.glb",
+          "bytes": 10092,
+          "sha256": "5989b271dfb32d44acb6d896df17fbad2009e3fcbb5f4171ef1f1f38f59d5b33"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 11140,
+          "sha256": "439dfcac935cfd75dc16f28333a4c8284fffcc4b24f857c61cfb4c8a964a15bd"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-platformer-kit/surf-ramp.glb",
+        "bytes": 21272,
+        "sha256": "60c3397263cb70d983295c828fb750ed04fd74eb0af918f7d3a365306561c9a6"
+      }
+    },
+    "surf.crate": {
+      "fallback": "surf-crate",
+      "purpose": "Surf obstacle crate",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-platformer-kit",
+        "path": "Models/GLB format/crate.glb",
+        "revision": "899605d237367688c6b42e41fff2206c0fb8d626163158294556353f7baa7c1b"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/crate.glb",
+          "bytes": 14336,
+          "sha256": "5eb6b633b71d7459c7ef9b0bf6e138a719175e107d4d52faca8fc7d0a059a45a"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 11140,
+          "sha256": "439dfcac935cfd75dc16f28333a4c8284fffcc4b24f857c61cfb4c8a964a15bd"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-platformer-kit/surf-crate.glb",
+        "bytes": 25528,
+        "sha256": "2c4b516320c2571d1d98cb60651a26a456f9ce3923824eebae591ad909994ca7"
+      }
+    },
+    "food.nougat-jar": {
+      "fallback": "nougat-jar",
+      "purpose": "Nougat storage jar",
+      "mode": "embed",
+      "source": {
+        "id": "kaykit-restaurant-bits",
+        "path": "addons/kaykit_restaurant_bits/Assets/gltf/jar_A_large.gltf",
+        "revision": "153c8a7535b48237854cb54ff6890679f8c574d1"
+      },
+      "inputs": [
+        {
+          "path": "addons/kaykit_restaurant_bits/Assets/gltf/jar_A_large.gltf",
+          "bytes": 3027,
+          "sha256": "593f586c816ff1cf542a4e249da8f27c39ebc22511a75dacc692a0f4092cb60b"
+        },
+        {
+          "path": "addons/kaykit_restaurant_bits/Assets/gltf/jar_A_large.bin",
+          "bytes": 6448,
+          "sha256": "d8c85da629a0a80823720e64bc2885fd8b85783db569a333185f1e5c1534050f"
+        },
+        {
+          "path": "addons/kaykit_restaurant_bits/Assets/gltf/restaurantbits_texture.png",
+          "bytes": 21070,
+          "sha256": "1bfff8f880c5e5e1b793bc46fa1f91149b7f70766174a817b3d5962495c5e40f"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kaykit-restaurant-bits/food-nougat-jar.glb",
+        "bytes": 28880,
+        "sha256": "af789e4e296ecd35ffebee043b8f7decf41847c2b40313be7e0e67f139fe5240"
+      }
+    },
+    "food.cake": {
+      "fallback": "cake",
+      "purpose": "Celebration cake",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-food-kit",
+        "path": "Models/GLB format/cake.glb",
+        "revision": "cdad90853682499b94c9fda2f87678b24bfd8f3264e0ed323f6b6a27fd7c6f6f"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/cake.glb",
+          "bytes": 72884,
+          "sha256": "9594766d701142c4f5ab1d36cc40957667cd966281757e887de4d40557e63e09"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 10715,
+          "sha256": "75baf74d9483a0fc56ac21ceba346fbe16fc24a2a1bf0524c53e6bbe802e1153"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-food-kit/food-cake.glb",
+        "bytes": 83480,
+        "sha256": "fa6f8f52cc3f8c481f80177d0cc07b7a2cd998a9d06bb594a0f539394ec7d24b"
+      }
+    },
+    "home.nougatschleuse": {
+      "fallback": "nougatschleuse",
+      "purpose": "Nougatschleuse dispenser contraption",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-mini-arcade",
+        "path": "Models/GLB format/vending-machine.glb",
+        "revision": "2acfe5cb44d392e834f77cf5488528c7cd45427cdf5fb941ce99856276158c19"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLB format/vending-machine.glb",
+          "bytes": 16228,
+          "sha256": "da92281856adbdc438f006c2381f586664d50890467d25ee3ee431e9502b2daa"
+        },
+        {
+          "path": "Models/GLB format/Textures/colormap.png",
+          "bytes": 8706,
+          "sha256": "0d4947d34ff32acf4a359c7f22ca784e057e7e72f622170a9a77b6fc88fdb70e"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-mini-arcade/home-nougatschleuse.glb",
+        "bytes": 24972,
+        "sha256": "83fa4d15b1891858027110617d128dfbb0044fded320638e19ff8bd888943a31"
+      }
+    },
+    "home.picnic-bench": {
+      "fallback": "picnic-bench",
+      "purpose": "Garden picnic bench",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-furniture-kit",
+        "path": "Models/GLTF format/bench.glb",
+        "revision": "e67652d0932cee41683f74711c03d3e192a2af9979ef8e6b237711f5482d46b0"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLTF format/bench.glb",
+          "bytes": 10756,
+          "sha256": "ba05a6d23a5a5a44da016757632070e47ff7587ce10e2f6d6d52328b4cf5489b"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-furniture-kit/home-picnic-bench.glb",
+        "bytes": 10756,
+        "sha256": "ba05a6d23a5a5a44da016757632070e47ff7587ce10e2f6d6d52328b4cf5489b"
+      }
+    },
+    "home.record-player": {
+      "fallback": "record-player",
+      "purpose": "Record player (radio model stand-in)",
+      "mode": "embed",
+      "source": {
+        "id": "kenney-furniture-kit",
+        "path": "Models/GLTF format/radio.glb",
+        "revision": "e67652d0932cee41683f74711c03d3e192a2af9979ef8e6b237711f5482d46b0"
+      },
+      "inputs": [
+        {
+          "path": "Models/GLTF format/radio.glb",
+          "bytes": 25020,
+          "sha256": "1ba93d6ba6f049750853b4652b92f286f2898e527695a0705b75cc7615897fed"
+        }
+      ],
+      "output": {
+        "path": "assets/curated/kenney-furniture-kit/home-record-player.glb",
+        "bytes": 25020,
+        "sha256": "1ba93d6ba6f049750853b4652b92f286f2898e527695a0705b75cc7615897fed"
+      }
+    }
+  }
+}

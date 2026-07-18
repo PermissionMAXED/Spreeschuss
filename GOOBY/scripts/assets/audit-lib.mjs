@@ -14,6 +14,144 @@ export function extractManifestKeys(manifestSource) {
   return [...declaration[1].matchAll(/^\s{2}"([^"]+)":/gmu)].map((match) => match[1]);
 }
 
+export function extractPlannedManifestKeys(manifestSource) {
+  const declaration = manifestSource.match(
+    /export const PLANNED_ASSET_MANIFEST = \{([\s\S]*?)\n\} as const satisfies/u,
+  );
+  if (!declaration?.[1]) return [];
+  return [...declaration[1].matchAll(/^\s{2}"([^"]+)":/gmu)].map((match) => match[1]);
+}
+
+/**
+ * Planned manifest entries with an empty vendored list are allowed only when
+ * intentional: either the curated domain manifest marks the key
+ * intentionalFallbackOnly, or a curated output exists and must be referenced.
+ */
+export function plannedVendoredViolations(manifestSource, key, outputPath, intentionalFallbackOnly) {
+  const block = manifestSource.match(
+    new RegExp(`"${key.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}":\\s*\\{([\\s\\S]*?)\\n  \\}`, "u"),
+  )?.[1];
+  if (!block) return [`${key}: missing from PLANNED_ASSET_MANIFEST`];
+  const empty = /vendored:\s*\[\s*\]/u.test(block);
+  if (outputPath && !block.includes(`"${outputPath}"`)) {
+    return [`${key}: PLANNED_ASSET_MANIFEST does not reference curated output ${outputPath}`];
+  }
+  if (!outputPath && !empty && !intentionalFallbackOnly) {
+    return [`${key}: vendored references exist without a curated output`];
+  }
+  if (!outputPath && !intentionalFallbackOnly) {
+    return [`${key}: empty vendored mapping is not marked as intentional fallback-only`];
+  }
+  return [];
+}
+
+const HEX64 = /^[a-f0-9]{64}$/u;
+
+const CURATED_EXTENSIONS = {
+  models: /\.glb$/iu,
+  audio: /\.(?:m4a|mp3|wav)$/iu,
+  stickers: /\.(?:png|webp|svg)$/iu,
+};
+
+/**
+ * Structural audit for a curated domain manifest (models, audio, stickers):
+ * lock cross-references, revision pinning, genuine license evidence chains,
+ * hashes, sizes, and intentional-fallback bookkeeping. Filesystem content
+ * checks are performed by the caller.
+ */
+export function curatedDomainViolations({ domain, manifest, lock, licenseRoot = "assets/curated/vendor" }) {
+  const violations = [];
+  const fail = (message) => violations.push(`curated ${domain}: ${message}`);
+  if (!manifest || typeof manifest !== "object") {
+    fail("manifest is missing or unreadable");
+    return violations;
+  }
+  if (manifest.schemaVersion !== 1) fail("unsupported schemaVersion");
+  if (manifest.domain !== domain) fail(`manifest domain "${String(manifest.domain)}" does not match its file`);
+  if (typeof manifest.spec?.path !== "string" || !HEX64.test(manifest.spec?.sha256 ?? "")) {
+    fail("missing curation spec provenance (path + SHA-256)");
+  }
+  if (!Number.isInteger(manifest.budget?.maxRuntimeBytes) || manifest.budget.maxRuntimeBytes <= 0) {
+    fail("missing runtime byte budget");
+  }
+  if (!lock?.sources) {
+    fail("assets/sources.lock.json is missing; curated domains require a locked source cache");
+    return violations;
+  }
+  const extensionRule = CURATED_EXTENSIONS[domain] ?? null;
+
+  const sources = manifest.sources ?? {};
+  for (const [sourceId, source] of Object.entries(sources)) {
+    const locked = lock.sources[sourceId];
+    if (!locked) {
+      fail(`${sourceId}: source is not in the lock`);
+      continue;
+    }
+    if (source.archiveSha256 !== locked.archive?.sha256) fail(`${sourceId}: archive hash differs from the lock`);
+    if (locked.kind === "github-commit" && source.commit !== locked.commit) {
+      fail(`${sourceId}: commit differs from the locked pin`);
+    }
+    if (source.downloadUrl !== locked.downloadUrl) fail(`${sourceId}: download URL differs from the lock`);
+    const license = source.license;
+    if (
+      !license
+      || license.path !== `${licenseRoot}/${sourceId}/License.txt`
+      || license.sha256 !== locked.license?.sha256
+      || license.sourceEntry !== locked.license?.entry
+      || license.spdx !== locked.license?.spdx
+      || JSON.stringify(license.evidence) !== JSON.stringify(locked.license?.evidence)
+    ) {
+      fail(`${sourceId}: committed license evidence does not chain back to the lock`);
+    }
+  }
+
+  let outputBytes = 0;
+  for (const [key, record] of Object.entries(manifest.keys ?? {})) {
+    if (typeof record.fallback !== "string" || record.fallback.length === 0) {
+      fail(`${key}: missing procedural fallback name`);
+    }
+    const locked = lock.sources[record.source?.id];
+    if (!locked || !sources[record.source?.id]) {
+      fail(`${key}: source ${String(record.source?.id)} is not locked and recorded`);
+    } else {
+      const expectedRevision = locked.kind === "github-commit" ? locked.commit : locked.archive.sha256;
+      if (record.source.revision !== expectedRevision) fail(`${key}: source revision differs from the lock`);
+      if (typeof record.source.path !== "string" || record.source.path.length === 0) {
+        fail(`${key}: missing genuine source path`);
+      }
+    }
+    if (record.output === null || record.output === undefined) {
+      if (record.intentionalFallbackOnly !== true) {
+        fail(`${key}: no curated output and not marked intentionalFallbackOnly`);
+      }
+      continue;
+    }
+    const output = record.output;
+    if (
+      typeof output.path !== "string"
+      || !output.path.startsWith(`assets/curated/${record.source?.id}/`)
+      || !HEX64.test(output.sha256 ?? "")
+      || !Number.isInteger(output.bytes)
+      || output.bytes <= 0
+    ) {
+      fail(`${key}: curated output record is incomplete`);
+    } else {
+      if (extensionRule && !extensionRule.test(output.path)) {
+        fail(`${key}: output ${output.path} has a forbidden ${domain} format`);
+      }
+      outputBytes += output.bytes;
+    }
+    if (!Array.isArray(record.inputs) || record.inputs.length === 0
+      || record.inputs.some((input) => !HEX64.test(input.sha256 ?? "") || !Number.isInteger(input.bytes))) {
+      fail(`${key}: curated inputs lack full hash provenance`);
+    }
+  }
+  if (manifest.totalOutputBytes !== outputBytes) {
+    fail(`totalOutputBytes is ${manifest.totalOutputBytes}, but key outputs sum to ${outputBytes}`);
+  }
+  return violations;
+}
+
 export function compareExactKeys(expected, actual, label) {
   const violations = [];
   const expectedSet = new Set(expected);

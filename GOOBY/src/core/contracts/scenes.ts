@@ -6,6 +6,10 @@ export type HomeZoneId = (typeof HOME_ZONE_IDS)[number];
 export const SHOP_IDS = ["carrot-market", "cloud-boutique", "fluff-salon"] as const;
 export type ShopId = (typeof SHOP_IDS)[number];
 
+/**
+ * Frozen launch roster (first twelve) plus the CP1 expansion roster (last
+ * twelve). IDs are append-only: never rename or reorder existing entries.
+ */
 export const MINIGAME_IDS = [
   "carrot-catch",
   "bunny-hop",
@@ -19,8 +23,25 @@ export const MINIGAME_IDS = [
   "memory-meadow",
   "pond-fishing",
   "rhythm-hop",
+  "cake-atelier",
+  "shopping-surf",
+  "picnic-packer",
+  "firefly-lantern",
+  "puddle-hopper",
+  "market-scales",
+  "burrow-dig",
+  "cloud-bounce",
+  "snail-mail",
+  "topiary-trim",
+  "honey-drizzle",
+  "library-stack",
 ] as const;
 export type MinigameId = (typeof MINIGAME_IDS)[number];
+
+/** The first twelve launch minigames owned by their original specialists. */
+export const LAUNCH_MINIGAME_IDS = MINIGAME_IDS.slice(0, 12);
+/** The twelve CP1 expansion minigames introduced as playable checkpoint stubs. */
+export const EXPANSION_MINIGAME_IDS = MINIGAME_IDS.slice(12);
 
 export type SceneId =
   | `home:${HomeZoneId}`

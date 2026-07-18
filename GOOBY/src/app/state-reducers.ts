@@ -1,14 +1,25 @@
+import { clampBusVolume, type AudioBus } from "../core/contracts/audio";
 import { grantReward, levelForXp } from "../core/contracts/economy";
+import type { LanguageSetting } from "../core/contracts/i18n";
 import type {
   MinigameSettlementReceipt,
 } from "../core/contracts/minigame";
 import {
   SaveStateSchema,
+  UI_SCALE_DEFAULT,
+  UI_SCALE_MAX,
+  UI_SCALE_MIN,
   type CanonicalSaveState,
   type SaveState,
 } from "../core/contracts/save";
 import type { QuietHours } from "../core/contracts/platform";
-import type { MinigameId } from "../core/contracts/scenes";
+import { MINIGAME_IDS, type MinigameId } from "../core/contracts/scenes";
+import {
+  catchUpOffline,
+  startSleep,
+  wakeEarly,
+} from "../core/contracts/simulation";
+import type { StickerId } from "../core/contracts/stickers";
 import { CATALOG_BY_ID, COSMETIC_SLOTS } from "../data/catalog";
 import type { UiPersistedState } from "../ui/model";
 import type { ReplayableSaveReducer } from "./save-coordinator";
@@ -152,6 +163,33 @@ export function setQuietHoursReducer(quietHours: QuietHours | null): ReplayableS
   });
 }
 
+interface MinigameStatTotals {
+  readonly distinctGames: number;
+  readonly totalPlays: number;
+}
+
+/**
+ * The nine frozen game-medal milestones on the `game-medals` sticker page.
+ * All medals except `new-best` derive purely from the post-settlement stats
+ * table, so replaying the same receipt can never double-unlock a medal.
+ */
+function earnedGameMedals(
+  totals: MinigameStatTotals,
+  improvedBest: boolean,
+): readonly StickerId[] {
+  const medals: StickerId[] = [];
+  if (totals.totalPlays >= 1) medals.push("sticker.games.first-round");
+  if (improvedBest) medals.push("sticker.games.new-best");
+  if (totals.distinctGames >= 3) medals.push("sticker.games.three-games");
+  if (totals.distinctGames >= 6) medals.push("sticker.games.six-games");
+  if (totals.distinctGames >= 12) medals.push("sticker.games.twelve-games");
+  if (totals.distinctGames >= MINIGAME_IDS.length) medals.push("sticker.games.all-games");
+  if (totals.totalPlays >= 10) medals.push("sticker.games.ten-rounds");
+  if (totals.totalPlays >= 50) medals.push("sticker.games.fifty-rounds");
+  if (totals.totalPlays >= 100) medals.push("sticker.games.hundred-rounds");
+  return medals;
+}
+
 export function settleMinigameReducer(
   receipt: MinigameSettlementReceipt,
 ): ReplayableSaveReducer {
@@ -165,6 +203,26 @@ export function settleMinigameReducer(
       inventory[`${SETTLED_RUN_PREFIX}${JSON.stringify(state.minigameSettlement)}`] = 1;
     }
     inventory[`${SETTLED_RUN_PREFIX}${JSON.stringify(persistedReceipt)}`] = 1;
+    const previousStats = state.minigameStats[receipt.minigameId]
+      ?? { plays: 0, bestScore: 0, totalScore: 0, lastPlayedAt: null };
+    const minigameStats = {
+      ...state.minigameStats,
+      [receipt.minigameId]: {
+        plays: previousStats.plays + 1,
+        bestScore: Math.max(previousStats.bestScore, Math.floor(receipt.payout.score)),
+        totalScore: previousStats.totalScore + receipt.payout.score,
+        lastPlayedAt: receipt.completedAt,
+      },
+    };
+    const statEntries = Object.values(minigameStats);
+    const medals = earnedGameMedals(
+      {
+        distinctGames: statEntries.length,
+        totalPlays: statEntries.reduce((sum, stat) => sum + (stat?.plays ?? 0), 0),
+      },
+      previousStats.plays > 0 && Math.floor(receipt.payout.score) > previousStats.bestScore,
+    );
+    const newUnlocks = medals.filter((id) => state.stickers.unlocked[id] === undefined);
     return SaveStateSchema.parse({
       ...state,
       economy: grantReward(state.economy, {
@@ -180,7 +238,143 @@ export function settleMinigameReducer(
         },
       },
       minigameSettlement: persistedReceipt,
+      minigameStats,
+      stickers: newUnlocks.length === 0
+        ? state.stickers
+        : {
+            ...state.stickers,
+            unlocked: {
+              ...state.stickers.unlocked,
+              ...Object.fromEntries(newUnlocks.map((id) => [id, receipt.completedAt])),
+            },
+          },
     });
+  };
+}
+
+export function clampUiScale(scale: number): number {
+  if (!Number.isFinite(scale)) return UI_SCALE_DEFAULT;
+  return Math.min(UI_SCALE_MAX, Math.max(UI_SCALE_MIN, scale));
+}
+
+export function setUiScaleReducer(scale: number): ReplayableSaveReducer {
+  const clamped = clampUiScale(scale);
+  return (state) => state.settings.uiScale === clamped
+    ? state
+    : SaveStateSchema.parse({
+        ...state,
+        settings: { ...state.settings, uiScale: clamped },
+      });
+}
+
+export function setBusVolumeReducer(bus: AudioBus, volume: number): ReplayableSaveReducer {
+  const clamped = clampBusVolume(volume);
+  return (state) => state.settings.volumes[bus] === clamped
+    ? state
+    : SaveStateSchema.parse({
+        ...state,
+        settings: {
+          ...state.settings,
+          volumes: { ...state.settings.volumes, [bus]: clamped },
+        },
+      });
+}
+
+export function setLanguageReducer(language: LanguageSetting): ReplayableSaveReducer {
+  return (state) => state.settings.language === language
+    ? state
+    : SaveStateSchema.parse({
+        ...state,
+        settings: { ...state.settings, language },
+      });
+}
+
+export function setDevWorkshopUnlockedReducer(unlocked: boolean): ReplayableSaveReducer {
+  return (state) => state.devWorkshop.unlocked === unlocked
+    ? state
+    : SaveStateSchema.parse({
+        ...state,
+        devWorkshop: { ...state.devWorkshop, unlocked },
+      });
+}
+
+export function setDevWorkshopFlagReducer(flag: string, enabled: boolean): ReplayableSaveReducer {
+  return (state) => state.devWorkshop.flags[flag] === enabled
+    ? state
+    : SaveStateSchema.parse({
+        ...state,
+        devWorkshop: {
+          ...state.devWorkshop,
+          flags: { ...state.devWorkshop.flags, [flag]: enabled },
+        },
+      });
+}
+
+/** Sticker unlocks are exactly-once: an existing unlock time is never rewritten. */
+export function unlockStickerReducer(id: StickerId, unlockedAt: number): ReplayableSaveReducer {
+  return (state) => state.stickers.unlocked[id] !== undefined
+    ? state
+    : SaveStateSchema.parse({
+        ...state,
+        stickers: {
+          ...state.stickers,
+          unlocked: { ...state.stickers.unlocked, [id]: unlockedAt },
+        },
+      });
+}
+
+export function unlockAchievementReducer(id: string, unlockedAt: number): ReplayableSaveReducer {
+  return (state) => state.achievements.unlocked[id] !== undefined
+    ? state
+    : SaveStateSchema.parse({
+        ...state,
+        achievements: {
+          ...state.achievements,
+          unlocked: { ...state.achievements.unlocked, [id]: unlockedAt },
+        },
+      });
+}
+
+export function beginSleepReducer(now: number, markRationaleSeen: boolean): ReplayableSaveReducer {
+  return (state) => {
+    if (state.simulation.sleep) {
+      return markRationaleSeen && !state.ui.sleepRationaleSeen
+        ? SaveStateSchema.parse({ ...state, ui: { ...state.ui, sleepRationaleSeen: true } })
+        : state;
+    }
+    return SaveStateSchema.parse({
+      ...state,
+      simulation: startSleep(state.simulation, now),
+      ui: markRationaleSeen
+        ? { ...state.ui, sleepRationaleSeen: true }
+        : state.ui,
+    });
+  };
+}
+
+/**
+ * Exactly-once wake settlement. The wake time is captured when the player
+ * acts, never re-read during a conflict replay, so a gentle early wake always
+ * settles the identical partial-energy result: replaying after the original
+ * `completesAt` can no longer inflate the outcome to a full night's rest, and
+ * a second queued wake (or a replay over an already-awake winner) is a no-op.
+ */
+export function wakeReducer(now: number): ReplayableSaveReducer {
+  return (state) => {
+    if (!state.simulation.sleep) return state;
+    return SaveStateSchema.parse({
+      ...state,
+      simulation: wakeEarly(state.simulation, now),
+    });
+  };
+}
+
+export function catchUpOfflineReducer(now: number): ReplayableSaveReducer {
+  return (state) => {
+    const simulation = catchUpOffline(state.simulation, now);
+    return simulation === state.simulation
+      ? state
+      : SaveStateSchema.parse({ ...state, simulation });
   };
 }
 

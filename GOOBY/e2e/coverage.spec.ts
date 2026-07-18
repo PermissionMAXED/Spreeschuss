@@ -59,7 +59,7 @@ test("recovers corrupt save and UI storage without leaving the normal route", as
 
   await expect(page.locator(".toast")).toContainText("repaired with a fresh save");
   expect(await page.evaluate(() => window.__gooby.snapshot())).toMatchObject({
-    version: 2,
+    version: 3,
     profile: { name: "Gooby", onboardingComplete: false },
     economy: { coins: 40, xp: 0, level: 1 },
     inventory: { carrot: 3 },
@@ -71,7 +71,7 @@ test("recovers corrupt save and UI storage without leaving the normal route", as
   await expect(page.locator('[data-preference="notifications"]')).toHaveAttribute("aria-checked", "true");
 });
 
-test("migrates a legacy browser save once and reloads the committed v2 state", async ({ page }) => {
+test("migrates a legacy browser save once and reloads the committed v3 state", async ({ page }) => {
   await page.addInitScript(() => {
     if (sessionStorage.getItem("e2e-v1-seeded")) return;
     sessionStorage.setItem("e2e-v1-seeded", "true");
@@ -95,7 +95,7 @@ test("migrates a legacy browser save once and reloads the committed v2 state", a
   await waitForApp(page);
   await expect(page.getByTestId("onboarding")).toBeHidden();
   expect(await page.evaluate(() => window.__gooby.snapshot())).toMatchObject({
-    version: 2,
+    version: 3,
     profile: { name: "Legacy Bun", onboardingComplete: true },
     economy: { coins: 99, xp: 425, level: 3 },
     inventory: { carrot: 8 },
@@ -107,7 +107,7 @@ test("migrates a legacy browser save once and reloads the committed v2 state", a
     return raw ? JSON.parse(raw) as { revision: number; payload: { version: number } } : null;
   });
   expect(persisted?.revision).toBeGreaterThan(7);
-  expect(persisted?.payload.version).toBe(2);
+  expect(persisted?.payload.version).toBe(3);
 
   await page.reload();
   await waitForApp(page);

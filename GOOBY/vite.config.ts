@@ -33,5 +33,10 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    watch: {
+      // The extracted asset source cache holds tens of thousands of vendored
+      // files; watching it exhausts inotify watchers and kills dev servers.
+      ignored: ["**/.asset-cache/**"],
+    },
   },
 });

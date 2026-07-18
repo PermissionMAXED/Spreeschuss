@@ -1,16 +1,20 @@
+import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
 import { ASSET_KEY_MAP, MAX_FILE_BYTES, MAX_TOTAL_BYTES, PACKS } from "./assets/catalog.mjs";
 import {
   buildAssetConsumerAudit,
   compareExactKeys,
+  curatedDomainViolations,
   extractAssetKeys,
   extractManifestKeys,
+  extractPlannedManifestKeys,
   extractRuntimeAssetRequests,
   fileSizeViolations,
   glbResourceUris,
   isAllowedRuntimeAudio,
   licenseMetadataViolations,
+  plannedVendoredViolations,
   runtimeReferenceViolations,
   sha256,
 } from "./assets/audit-lib.mjs";
@@ -20,11 +24,24 @@ import {
   licenseNoticeRecord,
   licenseNoticeViolations,
 } from "./assets/license-notice.mjs";
+import {
+  CURATED_DOCUMENT_PATH,
+  CURATED_MODEL_SPECS,
+  CURATED_MODELS_MANIFEST_PATH,
+  RUNTIME_ASSET_BUDGET_BYTES,
+} from "./asset-cache/curation-spec.mjs";
+import { lockRecordViolations, readLock } from "./asset-cache/lock.mjs";
+import { APPROVED_DOWNLOAD_HOSTS, SOURCES } from "./asset-cache/sources.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const PUBLIC_ROOT = join(ROOT, "public");
 const ASSET_ROOT = join(ROOT, "assets");
 const RUNTIME_TEXT_EXTENSIONS = new Set([".css", ".html", ".js", ".json", ".mjs", ".ts", ".tsx"]);
+// Test and dev-harness files never ship in the production bundle; they use
+// fixture origins (including deliberately-rejected external URLs) to prove
+// runtime network refusal. This mirrors scripts/audit/no-network-scan.mjs,
+// which owns the same exclusion for its production source/build scans.
+const EXCLUDED_DEV_FILE = /(?:^|\/)(?:[^/]*\.(?:test|spec|e2e)\.[^/]+|[^/]*harness[^/]*|[^/]*playwright[^/]*config[^/]*|(?:vite[^/]*|[^/]*\.vite)\.config\.[^/]+)$/u;
 const forbiddenAudioExtensions = new Set([".aac", ".flac", ".ogg", ".oga", ".opus"]);
 
 async function filesBelow(directory) {
@@ -67,6 +84,209 @@ async function optionalText(path) {
   } catch {
     return null;
   }
+}
+
+const CURATED_DOMAIN_MANIFESTS = [
+  { domain: "models", manifestPath: CURATED_MODELS_MANIFEST_PATH, required: CURATED_MODEL_SPECS.length > 0 },
+  { domain: "audio", manifestPath: "assets/curated/audio.manifest.json", required: false },
+  { domain: "stickers", manifestPath: "assets/curated/stickers.manifest.json", required: false },
+];
+
+/**
+ * Audits the source-cache lock plus every curated domain manifest that is
+ * present (models always; audio/stickers when added): lock/consumer/license/
+ * hash/size chains, deterministic spec provenance, GLB self-containment,
+ * exact key coverage in PLANNED_ASSET_MANIFEST, and untracked-file detection.
+ */
+async function auditCuratedDomains({ violations, publicFiles, assetFiles, runtimeManifestSource }) {
+  let lock = null;
+  try {
+    lock = await readLock(join(ASSET_ROOT, "sources.lock.json"));
+  } catch (error) {
+    violations.push(`assets/sources.lock.json: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (lock) {
+    violations.push(...compareExactKeys(
+      SOURCES.map(({ id }) => id),
+      Object.keys(lock.sources ?? {}),
+      "assets/sources.lock.json sources",
+    ).map((violation) => violation.replaceAll("AssetKey", "source")));
+    for (const source of SOURCES) {
+      if (!lock.sources?.[source.id]) continue;
+      violations.push(...lockRecordViolations(source.id, lock.sources[source.id], source, APPROVED_DOWNLOAD_HOSTS));
+    }
+  }
+
+  const domains = [];
+  for (const { domain, manifestPath, required } of CURATED_DOMAIN_MANIFESTS) {
+    const raw = await optionalText(join(ROOT, manifestPath));
+    if (raw === null) {
+      if (required) violations.push(`${manifestPath}: curated ${domain} manifest is missing; run "npm run assets:curate"`);
+      continue;
+    }
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      violations.push(`${manifestPath}: unreadable curated manifest`);
+      continue;
+    }
+    if (!lock) {
+      violations.push(`${manifestPath}: present without assets/sources.lock.json`);
+      continue;
+    }
+    violations.push(...curatedDomainViolations({ domain, manifest: parsed, lock }));
+    domains.push({ domain, manifestPath, manifest: parsed });
+  }
+
+  // The models domain must be the exact deterministic product of the
+  // checked-in curation spec.
+  const models = domains.find(({ domain }) => domain === "models")?.manifest;
+  if (models) {
+    const specBytes = await readFile(join(ROOT, "scripts/asset-cache/curation-spec.mjs"));
+    if (models.spec?.sha256 !== createHash("sha256").update(specBytes).digest("hex")) {
+      violations.push("curated models: manifest was not regenerated after the curation spec changed");
+    }
+    violations.push(...compareExactKeys(
+      CURATED_MODEL_SPECS.map(({ key }) => key),
+      Object.keys(models.keys ?? {}),
+      "curated models manifest keys",
+    ));
+    for (const spec of CURATED_MODEL_SPECS) {
+      const record = models.keys?.[spec.key];
+      if (!record) continue;
+      if (
+        record.source?.id !== spec.sourceId
+        || record.source?.path !== spec.sourcePath
+        || record.output?.path !== spec.output
+        || record.fallback !== spec.fallback
+        || record.mode !== spec.mode
+        || record.purpose !== spec.purpose
+      ) {
+        violations.push(`${spec.key}: curated manifest record differs from the checked-in curation spec`);
+      }
+    }
+  }
+
+  const expectedOutputs = new Map();
+  const expectedLicenses = new Map();
+  const domainKeyRecords = new Map();
+  for (const { domain, manifest } of domains) {
+    for (const [sourceId, source] of Object.entries(manifest.sources ?? {})) {
+      if (source.license?.path) expectedLicenses.set(source.license.path, source.license);
+      if (!runtimeManifestSource.includes(`packId: "${sourceId}"`)) {
+        violations.push(`${sourceId}: missing from CURATED_ASSET_CREDITS in src/data/assetManifest.ts`);
+      }
+    }
+    for (const [key, record] of Object.entries(manifest.keys ?? {})) {
+      if (domainKeyRecords.has(key)) violations.push(`${key}: declared by multiple curated domains`);
+      domainKeyRecords.set(key, record);
+      if (record.output?.path) expectedOutputs.set(record.output.path, { domain, key, output: record.output });
+    }
+  }
+
+  for (const [path, { domain, key, output }] of expectedOutputs) {
+    const filePath = safePath(PUBLIC_ROOT, path);
+    if (!filePath) {
+      violations.push(`${path}: unsafe curated runtime path`);
+      continue;
+    }
+    let bytes;
+    try {
+      bytes = await readFile(filePath);
+    } catch {
+      violations.push(`${path}: curated manifest points to a missing runtime file`);
+      continue;
+    }
+    if (bytes.length !== output.bytes) violations.push(`${path}: byte count mismatch`);
+    if (sha256(bytes) !== output.sha256) violations.push(`${path}: checksum mismatch`);
+    violations.push(...fileSizeViolations(path, bytes.length, MAX_FILE_BYTES));
+    if (domain === "models") {
+      try {
+        const uris = glbResourceUris(bytes, path);
+        if (uris.length > 0) {
+          violations.push(`${path}: curated GLB must be self-contained but references ${uris.join(", ")}`);
+        }
+      } catch (error) {
+        violations.push(error instanceof Error ? error.message : `${path}: invalid curated GLB`);
+      }
+    }
+    if (domain === "audio" && !isAllowedRuntimeAudio(path)) {
+      violations.push(`${path}: curated runtime audio must be m4a, mp3, or wav`);
+    }
+    void key;
+  }
+
+  for (const [path, license] of expectedLicenses) {
+    const filePath = safePath(ROOT, path);
+    if (!filePath) {
+      violations.push(`${path}: unsafe curated license path`);
+      continue;
+    }
+    try {
+      const bytes = await readFile(filePath);
+      if (bytes.length !== license.bytes) violations.push(`${path}: license byte count mismatch`);
+      if (sha256(bytes) !== license.sha256) violations.push(`${path}: license checksum mismatch`);
+    } catch {
+      violations.push(`${path}: missing verbatim curated license file`);
+    }
+  }
+
+  const actualPublicCurated = new Set(publicFiles
+    .map(({ path }) => relative(PUBLIC_ROOT, path).replaceAll("\\", "/"))
+    .filter((path) => path.startsWith("assets/curated/")));
+  for (const path of sorted(actualPublicCurated)) {
+    if (!expectedOutputs.has(path)) violations.push(`${path}: untracked curated runtime file`);
+  }
+  const expectedCuratedTree = new Set([
+    ...expectedLicenses.keys(),
+    ...domains.map(({ manifestPath }) => manifestPath),
+    CURATED_DOCUMENT_PATH,
+  ]);
+  const actualCuratedTree = new Set(assetFiles
+    .map(({ path }) => relative(ROOT, path).replaceAll("\\", "/"))
+    .filter((path) => path.startsWith("assets/curated/")));
+  for (const path of sorted(actualCuratedTree)) {
+    if (!expectedCuratedTree.has(path)) violations.push(`${path}: untracked curated asset file`);
+  }
+  for (const path of sorted(expectedCuratedTree)) {
+    if (domains.length > 0 && !actualCuratedTree.has(path)) violations.push(`${path}: missing curated asset file`);
+  }
+
+  if (domains.length > 0) {
+    const document = await optionalText(join(ROOT, CURATED_DOCUMENT_PATH));
+    for (const { manifest } of domains) {
+      for (const source of Object.values(manifest.sources ?? {})) {
+        if (document !== null && (!document.includes(source.title) || !document.includes(source.archiveSha256))) {
+          violations.push(`${CURATED_DOCUMENT_PATH}: missing ${source.title} provenance`);
+        }
+      }
+    }
+  }
+
+  const plannedKeys = extractPlannedManifestKeys(runtimeManifestSource);
+  if (domains.length > 0 || plannedKeys.length > 0) {
+    violations.push(...compareExactKeys(
+      [...domainKeyRecords.keys()],
+      plannedKeys,
+      "src/data/assetManifest.ts PLANNED_ASSET_MANIFEST",
+    ));
+    for (const [key, record] of domainKeyRecords) {
+      violations.push(...plannedVendoredViolations(
+        runtimeManifestSource,
+        key,
+        record.output?.path ?? null,
+        record.intentionalFallbackOnly === true,
+      ));
+    }
+  }
+
+  return {
+    domains: domains.map(({ domain }) => domain),
+    curatedKeys: domainKeyRecords.size,
+    curatedFiles: expectedOutputs.size,
+    lockSources: lock ? Object.keys(lock.sources ?? {}).length : 0,
+  };
 }
 
 async function main() {
@@ -280,6 +500,21 @@ async function main() {
     if (!actualLicenses.has(path)) violations.push(`${path}: missing genuine license file`);
   }
 
+  // --- Source-cache lock and curated domain manifests -----------------------
+  const curatedSummary = await auditCuratedDomains({
+    violations,
+    publicFiles,
+    assetFiles,
+    runtimeManifestSource,
+  });
+  if (actualTotalBytes > RUNTIME_ASSET_BUDGET_BYTES) {
+    // The combined committed asset payload must stay within the runtime
+    // target even before the frozen 150 MB ceiling applies.
+    violations.push(
+      `assets/ plus public/assets/ total ${actualTotalBytes} bytes, exceeding the ${RUNTIME_ASSET_BUDGET_BYTES} byte runtime target`,
+    );
+  }
+
   for (const document of ["VENDORED.md"]) {
     const source = await readFile(join(ASSET_ROOT, document), "utf8");
     for (const pack of manifest.packs ?? []) {
@@ -329,6 +564,7 @@ async function main() {
     const source = await readFile(file.path, "utf8");
     const displayPath = relative(ROOT, file.path).replaceAll("\\", "/");
     if (displayPath.startsWith("src/")) sourceFiles.set(displayPath, source);
+    if (EXCLUDED_DEV_FILE.test(displayPath)) continue;
     violations.push(...runtimeReferenceViolations(displayPath, source));
   }
 
@@ -379,6 +615,11 @@ async function main() {
     `Asset audit passed: ${contractKeys.length} keys mapped, ${vendoredCount}/${PACKS.length} packs available, `
     + `${expectedPublicFiles.size} curated files, bundled license notice verified, `
     + `${actualTotalBytes} bytes, offline runtime enforced.`,
+  );
+  console.log(
+    `Curated domains passed: [${curatedSummary.domains.join(", ")}], ${curatedSummary.curatedKeys} planned keys, `
+    + `${curatedSummary.curatedFiles} curated outputs, ${curatedSummary.lockSources} locked sources, `
+    + `runtime payload within the ${RUNTIME_ASSET_BUDGET_BYTES} byte target.`,
   );
 }
 

@@ -1,7 +1,9 @@
 import { GoobyAudioSystem, type AudioEvents, type MusicZone } from "../audio";
+import { AUDIO_BUSES, type AudioBus } from "../core/contracts/audio";
 import { FakeClock, RealClock, type Clock } from "../core/contracts/clock";
 import { grantReward } from "../core/contracts/economy";
 import { EventBus, type GameEvents } from "../core/contracts/events";
+import { isLanguageSetting, type LanguageSetting } from "../core/contracts/i18n";
 import type { Gesture } from "../core/contracts/input";
 import type {
   MinigameSettlementReceipt,
@@ -10,6 +12,7 @@ import { SeededRng } from "../core/contracts/rng";
 import {
   loadSave,
   SaveStateSchema,
+  UI_SCALE_DEFAULT,
   type CanonicalSaveState,
   type SaveState,
 } from "../core/contracts/save";
@@ -29,8 +32,8 @@ import {
   advanceSimulation,
   catchUpOffline,
   startSleep,
-  wakeEarly,
 } from "../core/contracts/simulation";
+import { applyLanguageSetting } from "../i18n";
 import { createPlatform, configureNativeShell } from "../core/platform";
 import { PointerInput } from "../core/pointer-input";
 import { SceneManager, type SceneFactory } from "../core/scene-manager";
@@ -74,14 +77,21 @@ import {
 } from "./notification-policy";
 import { ReplayableSaveCoordinator, type ReplayableSaveReducer } from "./save-coordinator";
 import {
+  beginSleepReducer,
+  catchUpOfflineReducer,
   consumeFoodReducer,
   migrateLegacyUiReducer,
   reconcileExternalState,
   sanitizeCanonicalUi,
   savedTravelSnapshot,
+  setBusVolumeReducer,
+  setDevWorkshopUnlockedReducer,
+  setLanguageReducer,
   setQuietHoursReducer,
   settlementReceiptForRun,
   settleMinigameReducer,
+  setUiScaleReducer,
+  wakeReducer,
   withTravelSnapshotReducer,
 } from "./state-reducers";
 
@@ -125,6 +135,10 @@ interface GoobyDebugSurface {
     feed(): void;
     sleep(): void;
     wake(): void;
+    setUiScale(scale: number): void;
+    setVolume(bus: string, volume: number): void;
+    setLanguage(setting: string): void;
+    setDevWorkshopUnlocked(unlocked: boolean): void;
     flushSave(): Promise<void>;
     clearSave(): Promise<void>;
     dispose(): Promise<void>;
@@ -190,6 +204,8 @@ export class GoobyApp {
   private minigameFinishing = false;
   private audioUnlockInstalled = false;
   private disposed = false;
+  /** Sleep sessions (keyed by startedAt) whose wake feedback already fired. */
+  private lastSettledSleepStart: number | null = null;
 
   constructor(private readonly mount: HTMLElement) {
     this.fakeClock = import.meta.env.DEV || import.meta.env.MODE === "test"
@@ -273,12 +289,10 @@ export class GoobyApp {
     );
     this.ui.syncCanonical(loaded.state, this.clock.now());
     const setupCommits: Promise<void>[] = [];
-    const caughtUp = catchUpOffline(loaded.state.simulation, this.clock.now());
+    const bootNow = this.clock.now();
+    const caughtUp = catchUpOffline(loaded.state.simulation, bootNow);
     if (caughtUp !== loaded.state.simulation) {
-      setupCommits.push(this.applyReducer((state) => SaveStateSchema.parse({
-        ...state,
-        simulation: catchUpOffline(state.simulation, this.clock.now()),
-      })));
+      setupCommits.push(this.applyReducer(catchUpOfflineReducer(bootNow)));
     }
     if (loaded.recovered) setupCommits.push(this.applyReducer((state) => state));
 
@@ -317,6 +331,8 @@ export class GoobyApp {
     this.platform.audio.setMuted(this.state.settings.muted);
     this.hapticDirector.setMuted(!this.state.settings.haptics);
     this.platform.notifications.setForeground(true);
+    this.applyUiScalePreference();
+    this.applyLanguagePreference();
     this.applyFxPreference();
     this.refreshUi();
     this.updateSleepUi();
@@ -484,13 +500,13 @@ export class GoobyApp {
 
   private tick(deltaSeconds: number): void {
     if (!this.state || this.disposed) return;
-    const wasSleeping = this.state.simulation.sleep !== null;
+    const sleepingSince = this.state.simulation.sleep?.startedAt ?? null;
     this.state = {
       ...this.state,
       simulation: advanceSimulation(this.state.simulation, this.clock.now()),
     };
     this.saveCoordinator?.replaceLocalState(this.state);
-    this.completeSleepIfNeeded(wasSleeping);
+    this.completeSleepIfNeeded(sleepingSince);
     this.activeHome?.gooby.updateNeeds(this.state.simulation.needs);
     this.sceneManager.update(deltaSeconds);
     this.renderer.render();
@@ -607,14 +623,9 @@ export class GoobyApp {
     if (!this.state) return;
     void this.ensureAudio();
     if (this.state.simulation.sleep) return;
-    const simulation = startSleep(this.state.simulation, this.clock.now());
-    void this.applyReducer((state) => SaveStateSchema.parse({
-      ...state,
-      simulation: startSleep(state.simulation, this.clock.now()),
-      ui: markRationaleSeen
-        ? { ...state.ui, sleepRationaleSeen: true }
-        : state.ui,
-    }));
+    const now = this.clock.now();
+    const simulation = startSleep(this.state.simulation, now);
+    void this.applyReducer(beginSleepReducer(now, markRationaleSeen));
     this.activeHome?.setSleeping(true);
     this.emitGooby("sleep");
     this.audio.sounds.setZone("lullaby");
@@ -624,11 +635,12 @@ export class GoobyApp {
   }
 
   private wake(): void {
-    if (!this.state?.simulation.sleep) return;
-    void this.applyReducer((state) => SaveStateSchema.parse({
-      ...state,
-      simulation: wakeEarly(state.simulation, this.clock.now()),
-    }));
+    const sleep = this.state?.simulation.sleep;
+    if (!sleep) return;
+    // Mark the session settled before feedback so the tick-side settlement
+    // cannot fire a duplicate wake celebration for the same sleep.
+    this.lastSettledSleepStart = sleep.startedAt;
+    void this.applyReducer(wakeReducer(this.clock.now()));
     this.activeHome?.setSleeping(false);
     this.emitGooby("wake");
     this.audio.sounds.setZone(this.currentMusicZone);
@@ -870,6 +882,35 @@ export class GoobyApp {
     }
   }
 
+  /** Publishes the persisted UI scale as a CSS variable on the app root. */
+  private applyUiScalePreference(): void {
+    const scale = this.state?.settings.uiScale ?? UI_SCALE_DEFAULT;
+    this.mount.style.setProperty("--gooby-ui-scale", String(scale));
+  }
+
+  private applyLanguagePreference(): void {
+    const locales = typeof navigator === "undefined" ? [] : navigator.languages ?? [];
+    applyLanguageSetting(this.state?.settings.language ?? "auto", locales);
+  }
+
+  private setUiScale(scale: number): void {
+    void this.applyReducer(setUiScaleReducer(scale));
+    this.applyUiScalePreference();
+  }
+
+  private setBusVolume(bus: AudioBus, volume: number): void {
+    void this.applyReducer(setBusVolumeReducer(bus, volume));
+  }
+
+  private setLanguageSetting(setting: LanguageSetting): void {
+    void this.applyReducer(setLanguageReducer(setting));
+    this.applyLanguagePreference();
+  }
+
+  private setDevWorkshopUnlocked(unlocked: boolean): void {
+    void this.applyReducer(setDevWorkshopUnlockedReducer(unlocked));
+  }
+
   private quietHoursChanged(quietHours: Parameters<typeof setQuietHoursReducer>[0]): void {
     if (!this.state) return;
     const completesAt = this.state.simulation.sleep?.completesAt;
@@ -918,6 +959,12 @@ export class GoobyApp {
     this.activeHome?.gooby.updateNeeds(state.simulation.needs);
     if (previous && JSON.stringify(previous.ui.equipped) !== JSON.stringify(state.ui.equipped)) {
       this.activeHome?.equipCatalogCosmetics(state.ui.equipped);
+    }
+    if (previous && previous.settings.uiScale !== state.settings.uiScale) {
+      this.applyUiScalePreference();
+    }
+    if (previous && previous.settings.language !== state.settings.language) {
+      this.applyLanguagePreference();
     }
     this.refreshUi();
     this.gameEvents.emit("state:changed", {
@@ -1074,6 +1121,16 @@ export class GoobyApp {
         feed: () => this.feed(),
         sleep: () => this.sleep(),
         wake: () => this.wake(),
+        setUiScale: (scale) => this.setUiScale(scale),
+        setVolume: (bus, volume) => {
+          if ((AUDIO_BUSES as readonly string[]).includes(bus)) {
+            this.setBusVolume(bus as AudioBus, volume);
+          }
+        },
+        setLanguage: (setting) => {
+          if (isLanguageSetting(setting)) this.setLanguageSetting(setting);
+        },
+        setDevWorkshopUnlocked: (unlocked) => this.setDevWorkshopUnlocked(unlocked),
         flushSave: () => this.persist(),
         clearSave: async () => {
           await this.saveCoordinator?.clear();
@@ -1118,20 +1175,27 @@ export class GoobyApp {
 
   private resumeSimulation(): void {
     if (!this.state || this.disposed) return;
-    const wasSleeping = this.state.simulation.sleep !== null;
+    const sleepingSince = this.state.simulation.sleep?.startedAt ?? null;
     const next = SaveStateSchema.parse({
       ...this.state,
       simulation: catchUpOffline(this.state.simulation, this.clock.now()),
     });
     this.state = next;
     this.saveCoordinator?.replaceLocalState(next);
-    this.completeSleepIfNeeded(wasSleeping);
+    this.completeSleepIfNeeded(sleepingSince);
     this.activeHome?.gooby.updateNeeds(this.state.simulation.needs);
     this.updateSleepUi();
   }
 
-  private completeSleepIfNeeded(wasSleeping: boolean): void {
-    if (!wasSleeping || this.state?.simulation.sleep) return;
+  /**
+   * Settles a finished sleep session exactly once. Sessions are keyed by their
+   * start time, so a save rollback or conflict replay that briefly reinstalls
+   * the sleeping state can never fire the wake celebration a second time.
+   */
+  private completeSleepIfNeeded(sleepingSince: number | null): void {
+    if (sleepingSince === null || this.state?.simulation.sleep) return;
+    if (this.lastSettledSleepStart === sleepingSince) return;
+    this.lastSettledSleepStart = sleepingSince;
     this.activeHome?.setSleeping(false);
     this.activeHome?.react("wake");
     this.emitGooby("wake");

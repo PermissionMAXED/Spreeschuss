@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Stage3D Dev Harness</title>
+    <style>
+      body { margin: 0; display: flex; gap: 12px; padding: 12px; background: #241a12; color: #f4e8d8; font-family: system-ui, sans-serif; }
+      #stage-mount { position: relative; width: 320px; height: 640px; border-radius: 16px; overflow: hidden; background: #000; flex: none; }
+      #controls { display: flex; flex-direction: column; gap: 8px; max-width: 300px; }
+      button, select { min-height: 44px; border-radius: 10px; border: 0; font-size: 14px; cursor: pointer; }
+      #stage-stats { font-size: 12px; white-space: pre-wrap; background: #0006; border-radius: 10px; padding: 10px; }
+    </style>
+  </head>
+  <body>
+    <main id="stage-mount"></main>
+    <section id="controls">
+      <button id="acquire">Acquire lease</button>
+      <button id="release">Release lease</button>
+      <button id="cycle">Run 10 acquire/release cycles</button>
+      <select id="quality" aria-label="Quality tier">
+        <option value="">auto</option>
+        <option value="low">low</option>
+        <option value="mid">mid</option>
+        <option value="high">high</option>
+      </select>
+      <button id="rig">Toggle fixed/chase rig</button>
+      <button id="pause">Pause/resume loop</button>
+      <button id="explode">Throw inside frame callback</button>
+      <output id="stage-stats">Loading…</output>
+    </section>
+    <script type="module" src="./dev-harness.ts"></script>
+  </body>
+</html>

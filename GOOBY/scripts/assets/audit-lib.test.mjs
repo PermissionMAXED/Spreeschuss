@@ -3,12 +3,15 @@ import test from "node:test";
 import {
   buildAssetConsumerAudit,
   compareExactKeys,
+  curatedDomainViolations,
   extractAssetKeys,
   extractManifestKeys,
+  extractPlannedManifestKeys,
   extractRuntimeAssetRequests,
   fileSizeViolations,
   isAllowedRuntimeAudio,
   licenseMetadataViolations,
+  plannedVendoredViolations,
   runtimeReferenceViolations,
 } from "./audit-lib.mjs";
 import { PACKS } from "./catalog.mjs";
@@ -245,6 +248,124 @@ document.body.innerHTML = '<form action="https://forms.example/submit"></form>';
   ]) {
     assert.ok(violations.some((violation) => violation.includes(`[${kind}]`)), kind);
   }
+});
+
+const CURATED_LOCK = {
+  sources: {
+    "kenney-test-pack": {
+      kind: "kenney-pack",
+      downloadUrl: "https://kenney.nl/media/pages/assets/test-pack/a/kenney_test-pack.zip",
+      archive: { bytes: 10, sha256: "a".repeat(64) },
+      license: {
+        entry: "License.txt",
+        sha256: "b".repeat(64),
+        spdx: "CC0-1.0",
+        evidence: ["Creative Commons Zero", "kenney"],
+      },
+    },
+  },
+};
+
+function curatedManifestFixture(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    domain: "models",
+    spec: { path: "scripts/asset-cache/curation-spec.mjs", sha256: "c".repeat(64) },
+    budget: { maxRuntimeBytes: 1024 },
+    totalOutputBytes: 42,
+    sources: {
+      "kenney-test-pack": {
+        archiveSha256: "a".repeat(64),
+        downloadUrl: "https://kenney.nl/media/pages/assets/test-pack/a/kenney_test-pack.zip",
+        license: {
+          path: "assets/curated/vendor/kenney-test-pack/License.txt",
+          sourceEntry: "License.txt",
+          sha256: "b".repeat(64),
+          spdx: "CC0-1.0",
+          evidence: ["Creative Commons Zero", "kenney"],
+        },
+      },
+    },
+    keys: {
+      "test.model": {
+        fallback: "test-model",
+        source: { id: "kenney-test-pack", path: "Models/model.gltf", revision: "a".repeat(64) },
+        inputs: [{ path: "Models/model.gltf", bytes: 5, sha256: "d".repeat(64) }],
+        output: { path: "assets/curated/kenney-test-pack/test-model.glb", bytes: 42, sha256: "e".repeat(64) },
+      },
+    },
+    ...overrides,
+  };
+}
+
+test("curated domain audit chains lock, license, hash, and size evidence", () => {
+  assert.deepEqual(
+    curatedDomainViolations({ domain: "models", manifest: curatedManifestFixture(), lock: CURATED_LOCK }),
+    [],
+  );
+  assert.ok(curatedDomainViolations({ domain: "models", manifest: curatedManifestFixture(), lock: null })
+    .some((violation) => violation.includes("sources.lock.json is missing")));
+
+  const wrongArchive = curatedManifestFixture();
+  wrongArchive.sources["kenney-test-pack"].archiveSha256 = "f".repeat(64);
+  assert.ok(curatedDomainViolations({ domain: "models", manifest: wrongArchive, lock: CURATED_LOCK })
+    .some((violation) => violation.includes("archive hash differs from the lock")));
+
+  const wrongLicense = curatedManifestFixture();
+  wrongLicense.sources["kenney-test-pack"].license.sha256 = "f".repeat(64);
+  assert.ok(curatedDomainViolations({ domain: "models", manifest: wrongLicense, lock: CURATED_LOCK })
+    .some((violation) => violation.includes("does not chain back to the lock")));
+
+  const wrongTotal = curatedManifestFixture({ totalOutputBytes: 41 });
+  assert.ok(curatedDomainViolations({ domain: "models", manifest: wrongTotal, lock: CURATED_LOCK })
+    .some((violation) => violation.includes("key outputs sum to")));
+
+  const oggOutput = curatedManifestFixture({ domain: "audio" });
+  oggOutput.keys["test.model"].output.path = "assets/curated/kenney-test-pack/test.ogg";
+  assert.ok(curatedDomainViolations({
+    domain: "audio",
+    manifest: { ...oggOutput, domain: "audio" },
+    lock: CURATED_LOCK,
+  }).some((violation) => violation.includes("forbidden audio format")));
+});
+
+test("curated keys without outputs must be intentional fallback-only decisions", () => {
+  const fallbackOnly = curatedManifestFixture({ totalOutputBytes: 0 });
+  fallbackOnly.keys["test.model"] = {
+    ...fallbackOnly.keys["test.model"],
+    output: null,
+  };
+  assert.ok(curatedDomainViolations({ domain: "models", manifest: fallbackOnly, lock: CURATED_LOCK })
+    .some((violation) => violation.includes("not marked intentionalFallbackOnly")));
+  fallbackOnly.keys["test.model"].intentionalFallbackOnly = true;
+  assert.deepEqual(
+    curatedDomainViolations({ domain: "models", manifest: fallbackOnly, lock: CURATED_LOCK }),
+    [],
+  );
+});
+
+test("planned manifest extraction and intentional empty-vendored enforcement", () => {
+  const source = `export const PLANNED_ASSET_MANIFEST = {
+  "city.road-straight": {
+    fallback: "road-straight",
+    vendored: [file("assets/curated/kenney-city-kit-roads/city-road-straight.glb")],
+  },
+  "city.sidewalk": {
+    fallback: "sidewalk",
+    vendored: [],
+  },
+} as const satisfies X;`;
+  assert.deepEqual(extractPlannedManifestKeys(source), ["city.road-straight", "city.sidewalk"]);
+  assert.deepEqual(
+    plannedVendoredViolations(source, "city.road-straight", "assets/curated/kenney-city-kit-roads/city-road-straight.glb", false),
+    [],
+  );
+  assert.ok(plannedVendoredViolations(source, "city.road-straight", "assets/curated/other.glb", false)
+    .some((violation) => violation.includes("does not reference curated output")));
+  assert.ok(plannedVendoredViolations(source, "city.sidewalk", null, false)
+    .some((violation) => violation.includes("not marked as intentional")));
+  assert.deepEqual(plannedVendoredViolations(source, "city.sidewalk", null, true), []);
+  assert.deepEqual(plannedVendoredViolations(source, "missing.key", null, true), ["missing.key: missing from PLANNED_ASSET_MANIFEST"]);
 });
 
 test("no-network scan allows local media and inert DOM namespaces", () => {

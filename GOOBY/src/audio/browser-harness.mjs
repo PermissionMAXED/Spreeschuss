@@ -126,7 +126,7 @@ const result = await page.evaluate(() => ({
 }));
 
 if (result.audioState !== "running") throw new Error(`Expected running audio, received ${result.audioState}`);
-if (result.theme !== "minigame-rhythm") throw new Error(`Expected rhythm theme, received ${result.theme}`);
+if (result.theme !== "action") throw new Error(`Expected action theme, received ${result.theme}`);
 if (result.muted) throw new Error("Mute did not transition back to audible");
 if (result.particleElements !== result.particleCapacity) throw new Error("Particle DOM pool was not fixed-capacity");
 
