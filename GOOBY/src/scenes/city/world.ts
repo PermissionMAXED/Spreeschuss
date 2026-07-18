@@ -9,6 +9,7 @@ import {
   DoubleSide,
   Euler,
   Float32BufferAttribute,
+  Frustum,
   Group,
   HemisphereLight,
   InstancedMesh,
@@ -24,10 +25,12 @@ import {
   Vector3,
 } from "three";
 import type {
+  Box3,
   BufferGeometry,
   Material,
   NormalBufferAttributes,
   Object3D,
+  PerspectiveCamera,
 } from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { AssetLoader } from "../../core/contracts/assets";
@@ -114,6 +117,28 @@ const PLACE_QUATERNION = new Quaternion();
 const PLACE_POSITION = new Vector3();
 const PLACE_SCALE = new Vector3();
 const WHITE = new Color(0xffffff);
+const CULL_MATRIX = new Matrix4();
+const CULL_FRUSTUM = new Frustum();
+const CULL_POINT = new Vector3();
+/** Conservative bounding radii so parked-idle culling never pops props. */
+const TREE_CULL_RADIUS = 4.2;
+const LAMP_CULL_RADIUS = 4.4;
+const COIN_CULL_RADIUS = 1.6;
+
+/** Sphere-vs-frustum check for compacting instanced props while parked. */
+function sphereVisible(
+  frustum: Frustum,
+  x: number,
+  y: number,
+  z: number,
+  radius: number,
+): boolean {
+  CULL_POINT.set(x, y, z);
+  for (const plane of frustum.planes) {
+    if (plane.distanceToPoint(CULL_POINT) < -radius) return false;
+  }
+  return true;
+}
 
 function material(color: number, roughness = 0.86): MeshStandardMaterial {
   return new MeshStandardMaterial({ color, roughness, metalness: roughness < 0.45 ? 0.18 : 0 });
@@ -256,20 +281,24 @@ class ChunkSet {
     name: string,
     parent: Object3D,
     castShadow = false,
-  ): void {
+  ): Mesh[] {
+    const meshes: Mesh[] = [];
     for (const [cell, geometries] of this.parts) {
       if (geometries.length === 0) continue;
       const merged = mergeGeometries(geometries, false);
       for (const geometry of geometries) geometry.dispose();
       if (!merged) continue;
       merged.computeBoundingSphere();
+      merged.computeBoundingBox();
       const mesh = new Mesh(merged, sharedMaterial);
       mesh.name = `${name}-cell-${cell}`;
       mesh.castShadow = castShadow;
       mesh.receiveShadow = true;
       parent.add(mesh);
+      meshes.push(mesh);
     }
     this.parts.clear();
+    return meshes;
   }
 }
 
@@ -387,6 +416,19 @@ export class CityWorld {
   private elapsed = 0;
   private built = false;
   private trafficCarCount = 0;
+  private readonly chunkCulling: { mesh: Mesh; box: Box3 }[] = [];
+  private treeTrunks: InstancedMesh | null = null;
+  private treeCrowns: InstancedMesh | null = null;
+  private lampPoles: InstancedMesh | null = null;
+  private lampHeads: InstancedMesh | null = null;
+  private idleCulled = false;
+  private readonly idleCameraPosition = new Vector3();
+  private readonly idleCameraQuaternion = new Quaternion();
+  private idleCameraFov = 0;
+  private idleCameraAspect = 0;
+  private idleCameraFar = 0;
+  private staticCoinCount = -1;
+  private lastCollectedIds: readonly string[] = [];
   private readonly templateCache = new Map<CityCuratedKey, MergableGeometry>();
   private readonly coinPosition = new Vector3();
   private readonly coinQuaternion = new Quaternion();
@@ -515,6 +557,9 @@ export class CityWorld {
     this.tracker.trackTree(this.root);
     this.built = true;
     this.updateCoins([]);
+    // Freeze the coin culling sphere around the full layout before any
+    // parked-idle compaction can shrink the rendered instance count.
+    this.coinMesh.computeBoundingSphere();
   }
 
   private buildGround(): void {
@@ -761,9 +806,21 @@ export class CityWorld {
       roughness: 0.85,
     });
     const accentMaterial = new MeshStandardMaterial({ vertexColors: true, roughness: 0.82 });
-    roadChunks.build(roadMaterial, "city-roads", this.root);
-    kitChunks.build(kitMaterial, "city-kit", this.root);
-    accentChunks.build(accentMaterial, "city-accents", this.root);
+    this.registerChunkCulling(roadChunks.build(roadMaterial, "city-roads", this.root));
+    this.registerChunkCulling(kitChunks.build(kitMaterial, "city-kit", this.root));
+    this.registerChunkCulling(accentChunks.build(accentMaterial, "city-accents", this.root));
+  }
+
+  /**
+   * Chunk cells cull against their exact bounding boxes while a parked board
+   * is up. Cell geometry is baked in world space, so the geometry box is the
+   * world box and the test is exact-conservative (no visual popping).
+   */
+  private registerChunkCulling(meshes: readonly Mesh[]): void {
+    for (const mesh of meshes) {
+      const box = mesh.geometry.boundingBox;
+      if (box) this.chunkCulling.push({ mesh, box });
+    }
   }
 
   private buildShopLot(lot: CityBuildingLot, shop: ShopId): void {
@@ -800,23 +857,8 @@ export class CityWorld {
     crowns.name = "instanced-tree-crowns";
     trunks.castShadow = false;
     crowns.castShadow = false;
-    for (const [index, tree] of CITY_TREE_POSITIONS.entries()) {
-      const scale = 0.82 + (index % 4) * 0.08;
-      setMatrix(
-        trunks,
-        index,
-        INSTANCE_POSITION.set(tree[0], 0.85 * scale, tree[1]),
-        INSTANCE_SCALE.set(scale, scale, scale),
-      );
-      setMatrix(
-        crowns,
-        index,
-        INSTANCE_POSITION.set(tree[0], 2.45 * scale, tree[1]),
-        INSTANCE_SCALE.set(scale, scale, scale),
-      );
-    }
-    trunks.instanceMatrix.needsUpdate = true;
-    crowns.instanceMatrix.needsUpdate = true;
+    this.treeTrunks = trunks;
+    this.treeCrowns = crowns;
 
     const lampPoles = new InstancedMesh(
       new CylinderGeometry(0.08, 0.12, 3.8, 7),
@@ -835,13 +877,94 @@ export class CityWorld {
     );
     lampPoles.name = "instanced-lamp-poles";
     lampHeads.name = "instanced-lamp-heads";
-    for (const [index, lamp] of CITY_LAMP_POSITIONS.entries()) {
-      setMatrix(lampPoles, index, INSTANCE_POSITION.set(lamp[0], 1.9, lamp[1]), UNIT_SCALE);
-      setMatrix(lampHeads, index, INSTANCE_POSITION.set(lamp[0], 3.85, lamp[1]), UNIT_SCALE);
-    }
-    lampPoles.instanceMatrix.needsUpdate = true;
-    lampHeads.instanceMatrix.needsUpdate = true;
+    this.lampPoles = lampPoles;
+    this.lampHeads = lampHeads;
+
+    this.restoreInstancedProps();
+    // Freeze the culling spheres around the full layouts now so later
+    // parked-idle compaction can never shrink them below the restored set.
+    trunks.computeBoundingSphere();
+    crowns.computeBoundingSphere();
+    lampPoles.computeBoundingSphere();
+    lampHeads.computeBoundingSphere();
     this.root.add(trunks, crowns, lampPoles, lampHeads);
+  }
+
+  private layoutTree(slot: number, index: number): void {
+    const tree = CITY_TREE_POSITIONS[index];
+    if (!tree || !this.treeTrunks || !this.treeCrowns) return;
+    const scale = 0.82 + (index % 4) * 0.08;
+    setMatrix(
+      this.treeTrunks,
+      slot,
+      INSTANCE_POSITION.set(tree[0], 0.85 * scale, tree[1]),
+      INSTANCE_SCALE.set(scale, scale, scale),
+    );
+    setMatrix(
+      this.treeCrowns,
+      slot,
+      INSTANCE_POSITION.set(tree[0], 2.45 * scale, tree[1]),
+      INSTANCE_SCALE.set(scale, scale, scale),
+    );
+  }
+
+  private layoutLamp(slot: number, index: number): void {
+    const lamp = CITY_LAMP_POSITIONS[index];
+    if (!lamp || !this.lampPoles || !this.lampHeads) return;
+    setMatrix(this.lampPoles, slot, INSTANCE_POSITION.set(lamp[0], 1.9, lamp[1]), UNIT_SCALE);
+    setMatrix(this.lampHeads, slot, INSTANCE_POSITION.set(lamp[0], 3.85, lamp[1]), UNIT_SCALE);
+  }
+
+  /** Full instanced layouts for driving; parked-idle compacts these down. */
+  private restoreInstancedProps(): void {
+    if (this.treeTrunks && this.treeCrowns) {
+      for (let index = 0; index < CITY_TREE_POSITIONS.length; index += 1) {
+        this.layoutTree(index, index);
+      }
+      this.treeTrunks.count = CITY_TREE_POSITIONS.length;
+      this.treeCrowns.count = CITY_TREE_POSITIONS.length;
+      this.treeTrunks.instanceMatrix.needsUpdate = true;
+      this.treeCrowns.instanceMatrix.needsUpdate = true;
+    }
+    if (this.lampPoles && this.lampHeads) {
+      for (let index = 0; index < CITY_LAMP_POSITIONS.length; index += 1) {
+        this.layoutLamp(index, index);
+      }
+      this.lampPoles.count = CITY_LAMP_POSITIONS.length;
+      this.lampHeads.count = CITY_LAMP_POSITIONS.length;
+      this.lampPoles.instanceMatrix.needsUpdate = true;
+      this.lampHeads.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  /** Prefix-compacts trees and lamps down to the frustum-visible set. */
+  private compactInstancedProps(frustum: Frustum): void {
+    if (this.treeTrunks && this.treeCrowns) {
+      let slot = 0;
+      for (let index = 0; index < CITY_TREE_POSITIONS.length; index += 1) {
+        const tree = CITY_TREE_POSITIONS[index];
+        if (!tree || !sphereVisible(frustum, tree[0], 2.2, tree[1], TREE_CULL_RADIUS)) continue;
+        this.layoutTree(slot, index);
+        slot += 1;
+      }
+      this.treeTrunks.count = slot;
+      this.treeCrowns.count = slot;
+      this.treeTrunks.instanceMatrix.needsUpdate = true;
+      this.treeCrowns.instanceMatrix.needsUpdate = true;
+    }
+    if (this.lampPoles && this.lampHeads) {
+      let slot = 0;
+      for (let index = 0; index < CITY_LAMP_POSITIONS.length; index += 1) {
+        const lamp = CITY_LAMP_POSITIONS[index];
+        if (!lamp || !sphereVisible(frustum, lamp[0], 2, lamp[1], LAMP_CULL_RADIUS)) continue;
+        this.layoutLamp(slot, index);
+        slot += 1;
+      }
+      this.lampPoles.count = slot;
+      this.lampHeads.count = slot;
+      this.lampPoles.instanceMatrix.needsUpdate = true;
+      this.lampHeads.instanceMatrix.needsUpdate = true;
+    }
   }
 
   private buildMarker(): void {
@@ -1048,13 +1171,24 @@ export class CityWorld {
     this.breadcrumbMesh.instanceMatrix.needsUpdate = true;
   }
 
-  setCar(snapshot: CityCarSnapshot, pose?: CityRenderPose): void {
+  setCar(snapshot: CityCarSnapshot, pose?: CityRenderPose, animateCoins = true): void {
     const shown = pose ?? snapshot;
     this.playerCar.position.set(shown.position[0], 0.08, shown.position[1]);
     this.playerCar.rotation.y = shown.headingRadians;
     this.brakeMaterial.emissiveIntensity = snapshot.braking ? 3.4 : 0.35;
     this.brakeMaterial.color.setHex(snapshot.braking ? 0xff1515 : 0xa71e1e);
-    this.updateCoins(snapshot.collectedCoinIds);
+    this.lastCollectedIds = snapshot.collectedCoinIds;
+    if (animateCoins) {
+      // Driving: coins bob and spin every frame.
+      this.staticCoinCount = -1;
+      this.updateCoins(snapshot.collectedCoinIds);
+    } else if (this.staticCoinCount !== snapshot.collectedCoinIds.length) {
+      // Parked boards freeze the coins in place; re-lay only on collection.
+      this.staticCoinCount = snapshot.collectedCoinIds.length;
+      this.updateCoins(snapshot.collectedCoinIds);
+      // A re-lay while parked invalidates any compacted coin prefix.
+      this.idleCulled = false;
+    }
     if (this.activeRoute.length >= 2 && this.breadcrumbDistances.length > 0) {
       const progressed = nearestRouteSample(shown.position, this.activeRoute).distanceAlongRoute;
       let retired = 0;
@@ -1113,21 +1247,83 @@ export class CityWorld {
     return mesh;
   }
 
-  update(deltaSeconds: number, car: CityCarSnapshot, pose?: CityRenderPose): void {
+  update(
+    deltaSeconds: number,
+    car: CityCarSnapshot,
+    pose?: CityRenderPose,
+    parkedIdle = false,
+  ): void {
     if (!this.built) return;
     this.elapsed += deltaSeconds;
-    this.setCar(car, pose);
-    this.markerRoot.rotation.y += deltaSeconds * (this.reducedMotion ? 0.1 : 0.32);
+    this.setCar(car, pose, !parkedIdle);
+    // Parked boards drop the marker beacon to a low-rate tick; driving restores it.
+    this.markerRoot.rotation.y += deltaSeconds * (this.reducedMotion || parkedIdle ? 0.1 : 0.32);
     this.updateCamera(deltaSeconds, car, pose);
+    this.updateIdleCulling(parkedIdle);
   }
 
-  private updateCoins(collected: readonly string[]): void {
+  /**
+   * Parked boards leave the camera (nearly) static, so the world switches to
+   * cached culling: chunk cells hide behind exact bounding-box tests and
+   * instanced props/coins compact down to the frustum-visible prefix. The
+   * cache refreshes only when the camera or viewport actually changes, and
+   * everything restores on the first driving frame.
+   */
+  private updateIdleCulling(parkedIdle: boolean): void {
+    if (!parkedIdle) {
+      if (this.idleCulled) this.clearIdleCulling();
+      return;
+    }
+    const camera = this.gameRenderer.camera;
+    if (this.idleCulled && !this.idleCameraChanged(camera)) return;
+    this.idleCulled = true;
+    this.idleCameraPosition.copy(camera.position);
+    this.idleCameraQuaternion.copy(camera.quaternion);
+    this.idleCameraFov = camera.fov;
+    this.idleCameraAspect = camera.aspect;
+    this.idleCameraFar = camera.far;
+    camera.updateMatrixWorld();
+    CULL_MATRIX.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    CULL_FRUSTUM.setFromProjectionMatrix(CULL_MATRIX);
+    for (const entry of this.chunkCulling) {
+      entry.mesh.visible = CULL_FRUSTUM.intersectsBox(entry.box);
+    }
+    this.compactInstancedProps(CULL_FRUSTUM);
+    this.updateCoins(this.lastCollectedIds, CULL_FRUSTUM);
+  }
+
+  private idleCameraChanged(camera: PerspectiveCamera): boolean {
+    return camera.position.distanceToSquared(this.idleCameraPosition) > 1e-6
+      || Math.abs(1 - Math.abs(camera.quaternion.dot(this.idleCameraQuaternion))) > 1e-7
+      || camera.fov !== this.idleCameraFov
+      || camera.aspect !== this.idleCameraAspect
+      || camera.far !== this.idleCameraFar;
+  }
+
+  private clearIdleCulling(): void {
+    this.idleCulled = false;
+    for (const entry of this.chunkCulling) entry.mesh.visible = true;
+    this.restoreInstancedProps();
+    this.staticCoinCount = -1;
+    this.updateCoins(this.lastCollectedIds);
+  }
+
+  /**
+   * Coin layout; with a frustum (parked-idle) the visible coins compact into
+   * the leading instance slots so offscreen coins cost zero triangles.
+   */
+  private updateCoins(collected: readonly string[], frustum: Frustum | null = null): void {
     const spin = this.elapsed * 2.6;
+    let slot = 0;
     for (const [index, coin] of CITY_COINS.entries()) {
       const visible = !collected.includes(coin.id);
+      if (frustum && (
+        !visible
+        || !sphereVisible(frustum, coin.position[0], 0.9, coin.position[1], COIN_CULL_RADIUS)
+      )) continue;
       setMatrix(
         this.coinMesh,
-        index,
+        slot,
         this.coinPosition.set(
           coin.position[0],
           visible ? 0.85 + Math.sin(spin + index) * 0.12 : -20,
@@ -1136,7 +1332,9 @@ export class CityWorld {
         visible ? UNIT_SCALE : HIDDEN_SCALE,
         this.coinQuaternion.setFromEuler(INSTANCE_EULER.set(Math.PI / 2, spin + index * 0.4, 0)),
       );
+      slot += 1;
     }
+    this.coinMesh.count = frustum ? slot : CITY_COINS.length;
     this.coinMesh.instanceMatrix.needsUpdate = true;
   }
 

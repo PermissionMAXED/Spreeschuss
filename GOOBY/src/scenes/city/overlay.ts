@@ -112,8 +112,10 @@ export class CityDriveOverlay {
   private readonly edgePointer: HTMLElement;
   private readonly pointerControls: CityPointerControls;
   private readonly destinationPointerStarts = new Map<number, HTMLButtonElement>();
+  private readonly shopCards: HTMLElement[];
   private destinationSelectionEnabledAt = 0;
   private wasDriving = false;
+  private lastRenderSignature = "";
 
   constructor(
     mount: HTMLElement,
@@ -286,6 +288,7 @@ export class CityDriveOverlay {
     this.recoveryValue = requiredElement(this.root, "[data-recovery]");
     this.wrongWayValue = requiredElement(this.root, "[data-wrongway]");
     this.edgePointer = requiredElement(this.root, ".city-edge-pointer");
+    this.shopCards = [...this.root.querySelectorAll<HTMLElement>("[data-shop]")];
 
     for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-shop]")) {
       button.addEventListener("pointerdown", (event) => {
@@ -330,6 +333,30 @@ export class CityDriveOverlay {
 
   render(state: CityDriveState, metrics: CityOverlayMetrics): void {
     const driving = state.phase === "driving-outbound" || state.phase === "driving-home";
+    const selected = state.phase === "depart-ready" || state.phase === "driving-outbound" || state.phase === "arrived"
+      ? state.selected
+      : null;
+    const returnRequired = state.phase === "return-board" && state.returnRequired;
+    const parkingBonus = state.phase === "arrived" && (metrics.parking?.bonus ?? false);
+    const distanceText = `${Math.max(0, Math.ceil(metrics.distance))} m`;
+    const maneuverText = maneuverCopy(metrics.maneuver);
+    const boostText = metrics.boostSeconds > 0 ? `BOOST ${metrics.boostSeconds.toFixed(1)}s` : "";
+    const wrongWayText = metrics.wrongWay ? "WRONG WAY" : "";
+    const recoveryText = metrics.recoveryMode === "none"
+      ? ""
+      : metrics.recoveryMode === "reverse"
+        ? "RECOVERY · reversing"
+        : metrics.recoveryMode === "re-aim"
+          ? "RECOVERY · re-aiming"
+          : "RECOVERY · safely relocated";
+    // Skip all DOM writes while nothing visible changed (parked boards render
+    // the same frame at 60Hz); any phase transition changes the signature.
+    const signature = `${state.phase}|${selected ?? ""}|${returnRequired}|${parkingBonus}|`
+      + `${distanceText}|${metrics.destinationLabel}|${metrics.districtLabel}|${maneuverText}|`
+      + `${metrics.coinsCollected}|${boostText}|${wrongWayText}|${recoveryText}`;
+    if (signature === this.lastRenderSignature) return;
+    this.lastRenderSignature = signature;
+
     if (this.wasDriving && state.phase === "destination-board") {
       this.destinationSelectionEnabledAt = performance.now() + DESTINATION_REARM_DELAY_MS;
       this.destinationPointerStarts.clear();
@@ -344,10 +371,7 @@ export class CityDriveOverlay {
     this.distanceBanner.hidden = !driving;
     this.edgePointer.hidden = !driving;
 
-    const selected = state.phase === "depart-ready" || state.phase === "driving-outbound" || state.phase === "arrived"
-      ? state.selected
-      : null;
-    for (const card of this.root.querySelectorAll<HTMLElement>("[data-shop]")) {
+    for (const card of this.shopCards) {
       const isSelected = card.dataset.shop === selected;
       card.classList.toggle("is-selected", isSelected);
       const action = card.querySelector("em");
@@ -356,34 +380,27 @@ export class CityDriveOverlay {
     this.startButton.hidden = state.phase !== "depart-ready";
 
     if (state.phase === "return-board") {
-      this.returnCopy.textContent = state.returnRequired
+      this.returnCopy.textContent = returnRequired
         ? "Your first visit makes the return journey part of the adventure."
         : "Drive the scenic route again, or use the unlocked quick trip.";
-      this.quickReturnButton.hidden = state.returnRequired;
+      this.quickReturnButton.hidden = returnRequired;
     }
 
     if (state.phase === "arrived") {
-      const bonus = metrics.parking?.bonus ?? false;
-      this.arrivalHeading.textContent = bonus ? "Perfect parking!" : "Parked!";
-      this.arrivalCopy.textContent = bonus
+      this.arrivalHeading.textContent = parkingBonus ? "Perfect parking!" : "Parked!";
+      this.arrivalCopy.textContent = parkingBonus
         ? "You eased into the bay perfectly — bonus coins earned! The car waits here while you shop."
         : "You reached the selected shop. The car is parked and ready when you return.";
     }
 
-    this.distanceValue.textContent = `${Math.max(0, Math.ceil(metrics.distance))} m`;
+    this.distanceValue.textContent = distanceText;
     this.destinationValue.textContent = metrics.destinationLabel;
     this.districtValue.textContent = metrics.districtLabel;
-    this.maneuverValue.textContent = maneuverCopy(metrics.maneuver);
+    this.maneuverValue.textContent = maneuverText;
     this.coinValue.textContent = metrics.coinsCollected.toString();
-    this.boostValue.textContent = metrics.boostSeconds > 0 ? `BOOST ${metrics.boostSeconds.toFixed(1)}s` : "";
-    this.wrongWayValue.textContent = metrics.wrongWay ? "WRONG WAY" : "";
-    this.recoveryValue.textContent = metrics.recoveryMode === "none"
-      ? ""
-      : metrics.recoveryMode === "reverse"
-        ? "RECOVERY · reversing"
-        : metrics.recoveryMode === "re-aim"
-          ? "RECOVERY · re-aiming"
-          : "RECOVERY · safely relocated";
+    this.boostValue.textContent = boostText;
+    this.wrongWayValue.textContent = wrongWayText;
+    this.recoveryValue.textContent = recoveryText;
   }
 
   placeEdgePointer(layout: EdgePointerLayout): void {

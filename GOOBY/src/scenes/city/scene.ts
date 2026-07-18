@@ -92,6 +92,7 @@ export class CityDriveScene implements GameScene {
   private entered = false;
   private disposed = false;
   private previousMountPosition = "";
+  private parkedTrafficSynced = false;
   private travelSnapshotSeconds = 0;
   private lastEmittedSafePosition: CityPoint | null = null;
   private lifecycleFlushInstalled = false;
@@ -228,13 +229,16 @@ export class CityDriveScene implements GameScene {
       }
     } else {
       car = this.physics.snapshot;
-      // The city stays alive while parked: traffic keeps circulating and
-      // yields around the player's bay at the same deterministic 60Hz rate.
-      this.traffic.step(deltaSeconds, car.position);
+      // Parked boards freeze the deterministic traffic in place so the
+      // static scene renders without per-frame simulation work; the loop
+      // resumes at the same 60Hz cadence on the first driving frame.
     }
 
-    this.world.setTraffic(this.traffic.cars);
-    this.world.update(deltaSeconds, car, driving ? this.physics.renderPose() : undefined);
+    if (driving || !this.parkedTrafficSynced) {
+      this.world.setTraffic(this.traffic.cars);
+      this.parkedTrafficSynced = !driving;
+    }
+    this.world.update(deltaSeconds, car, driving ? this.physics.renderPose() : undefined, !driving);
     this.renderUi(car);
     this.updateEdgePointer();
     this.travelSnapshotSeconds += deltaSeconds;
