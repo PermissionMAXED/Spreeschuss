@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "domain": "audio",
+  "generator": ".asset-cache/audio/build.mjs",
+  "sources": {
+    "kenney-interface-sounds": {
+      "title": "Interface Sounds",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/interface-sounds",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip",
+      "archive": {
+        "bytes": 834536,
+        "sha256": "f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232"
+      },
+      "license": {
+        "spdx": "CC0-1.0",
+        "entry": "License.txt",
+        "bytes": 574,
+        "sha256": "f7966c773bbed0eca6a9c75081c44a178b38eae112724dbb5fdfbd4192d118a9",
+        "evidence": "License (Creative Commons Zero, CC0)"
+      }
+    },
+    "kenney-ui-audio": {
+      "title": "UI Audio",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/ui-audio",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/ui-audio/490d233f68-1677590494/kenney_ui-audio.zip",
+      "archive": {
+        "bytes": 411949,
+        "sha256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6"
+      },
+      "license": {
+        "spdx": "CC0-1.0",
+        "entry": "License.txt",
+        "bytes": 479,
+        "sha256": "4f88ab3c885c87874834441a0d009cea8942f57461d7b870be65cf4e31362073",
+        "evidence": "License (Creative Commons Zero, CC0)"
+      }
+    },
+    "kenney-impact-sounds": {
+      "title": "Impact Sounds",
+      "creator": "Kenney",
+      "pageUrl": "https://kenney.nl/assets/impact-sounds",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/impact-sounds/87b4ddecda-1677589768/kenney_impact-sounds.zip",
+      "archive": {
+        "bytes": 800850,
+        "sha256": "029d734af1582474edf3a694d1b0cebc97c1c152f2f39fa34d4c2bafc5de77f8"
+      },
+      "license": {
+        "spdx": "CC0-1.0",
+        "entry": "License.txt",
+        "bytes": 608,
+        "sha256": "b49aa9c56b04528b95913de13e506a0f7c5e807b9925db9bfef86af1f91120db",
+        "evidence": "License: (Creative Commons Zero, CC0)"
+      }
+    },
+    "kenney-music-jingles": {
+      "title": "Music Jingles",
+      "creator": "Kenney Vleugels",
+      "pageUrl": "https://kenney.nl/assets/music-jingles",
+      "downloadUrl": "https://kenney.nl/media/pages/assets/music-jingles/f37e530b9e-1677590399/kenney_music-jingles.zip",
+      "archive": {
+        "bytes": 1239525,
+        "sha256": "b729ba57959bd58793d2c5cafa348aaf2655d354f3da35ec4729e03ec77197b8"
+      },
+      "license": {
+        "spdx": "CC0-1.0",
+        "entry": "License.txt",
+        "bytes": 482,
+        "sha256": "373b1c880ee6c7a83c1ccf209f251cf45fc9ea9b1f0330844fa7be64a401adc4",
+        "evidence": "License (Creative Commons Zero, CC0)"
+      }
+    },
+    "yannz-indie-meditations": {
+      "title": "Indie Meditations (Minimalist & Cozy Vibes) FREE Music Pack",
+      "creator": "Yanni Ziangos (YannZ)",
+      "pageUrl": "https://opengameart.org/content/indie-meditations-free-music-pack",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "downloadUrl": "https://opengameart.org/sites/default/files/license_cc_by_4.0.txt",
+        "bytes": 1279,
+        "sha256": "6fded7d2dc6a3f3100d106ec5c4991ee926df701a36e68565ff4fbceabd0f2f2",
+        "requiredAttribution": "Music by Yanni Ziangos a.k.a. YannZ — https://yannz.itch.io — licensed under CC BY 4.0; converted from OGG to normalized AAC-LC M4A for Gooby’s Cozy Burrow."
+      },
+      "files": {
+        "lvl_0_the_tutorial.ogg": {
+          "bytes": 4221671,
+          "sha256": "b33ff6b8aa2238b8be8c6810c1b8fc25bc188ebcea0da883c94fd13e411c1499",
+          "downloadUrl": "https://opengameart.org/sites/default/files/lvl_0_the_tutorial.ogg"
+        },
+        "lvl_1_the_royal_palace.ogg": {
+          "bytes": 4642245,
+          "sha256": "5d27e3ead884d300f4774c1e8af86efae14873810cf2e2788c02ba55ef7998f7",
+          "downloadUrl": "https://opengameart.org/sites/default/files/lvl_1_the_royal_palace.ogg"
+        },
+        "lvl_2_the_village.ogg": {
+          "bytes": 4494085,
+          "sha256": "9dbdf97f0a43f7d073b762426e41cf017d05657020eff59a9717ae0200756881",
+          "downloadUrl": "https://opengameart.org/sites/default/files/lvl_2_the_village.ogg"
+        },
+        "lvl_3_the_grassland.ogg": {
+          "bytes": 4653929,
+          "sha256": "3610d8ff8567c09fa2b50f3d9cc3ddfe8f0650a7616691c8581f8c60d5651688",
+          "downloadUrl": "https://opengameart.org/sites/default/files/lvl_3_the_grassland.ogg"
+        },
+        "lvl_5_the_oasis_or_resting_place.ogg": {
+          "bytes": 4205350,
+          "sha256": "99f63291aa4391b7d8ae19bcb5b1f07e149d871c5964b5e190f6b8f0e4d213f2",
+          "downloadUrl": "https://opengameart.org/sites/default/files/lvl_5_the_oasis_or_resting_place.ogg"
+        },
+        "lvl_6_the_beach.ogg": {
+          "bytes": 4570579,
+          "sha256": "8e1d2cba70fa7dc3fba2de36949c2d376f1ac1a74a7352764639b78466b06fb5",
+          "downloadUrl": "https://opengameart.org/sites/default/files/lvl_6_the_beach.ogg"
+        },
+        "lvl_7_the_raft_on_the_ocean.ogg": {
+          "bytes": 4829057,
+          "sha256": "681bd11cf681daf57217b2e5543804babb158cf2cf1ea7492f14117d4827428d",
+          "downloadUrl": "https://opengameart.org/sites/default/files/lvl_7_the_raft_on_the_ocean.ogg"
+        },
+        "lvl_9_the_volcanic_ascent.ogg": {
+          "bytes": 4637657,
+          "sha256": "c351537ad96ce4a78f850047082338af1a2646916d74481c8fc8534c9a9b920b",
+          "downloadUrl": "https://opengameart.org/sites/default/files/lvl_9_the_volcanic_ascent.ogg"
+        }
+      }
+    },
+    "gooby-first-party-synth-recipes": {
+      "title": "Original nonverbal Gooby synth recipes",
+      "creator": "Gooby’s Cozy Burrow project authors",
+      "sourcePath": "src/audio/synth-bank.ts",
+      "bytes": 6546,
+      "sha256": "de1685bd28795bb2c66878e3abe90860e7b25d1cc12fd9c844c75950038cd8de",
+      "license": {
+        "spdx": "LicenseRef-Gooby-First-Party",
+        "evidence": "Original first-party project code rendered offline; no third-party voice recording or unverifiable source."
+      }
+    }
+  },
+  "transform": {
+    "tool": "ffmpeg 6.1.1-3ubuntu5",
+    "sfx": "PCM s16le mono WAV, 44.1 kHz, -16 LUFS target where EBU R128 gating applies; shorter cues true-peak normalized",
+    "voice": "PCM s16le mono WAV, 44.1 kHz, -18 LUFS target where EBU R128 gating applies; shorter cues true-peak normalized",
+    "music": "AAC-LC stereo M4A, 44.1 kHz, 96 kb/s, -18 LUFS target, -5 dBTP encode target",
+    "report": "assets/audio/build-report.json"
+  }
+}

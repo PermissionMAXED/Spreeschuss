@@ -1,4 +1,12 @@
 import type { ShopId } from "../../core/contracts/scenes";
+import {
+  buildCityTopology,
+  laneLoopPolyline,
+  laneRoutePolyline,
+  parkingBayForRoute,
+  type CityParkingBay,
+  type CityRoadTopology,
+} from "./topology";
 
 export type CityPoint = readonly [x: number, z: number];
 
@@ -62,8 +70,9 @@ export const CITY_GARAGE_POSITION: CityPoint = [0, 52];
 export const CITY_GARAGE_HEADING = Math.PI;
 export const PARKING_TRIGGER_RADIUS = 3.6;
 export const GARAGE_TRIGGER_RADIUS = 4.2;
-export const COIN_PICKUP_RADIUS = 1.35;
-export const BOOST_PICKUP_RADIUS = 2;
+/** Coins sit on the road centerline; both 2.5m-offset lanes must reach them. */
+export const COIN_PICKUP_RADIUS = 2.8;
+export const BOOST_PICKUP_RADIUS = 3;
 
 export const CITY_DISTRICTS: readonly CityDistrict[] = [
   { id: "suburb", label: "Maple Suburb", center: [25, 38], size: [54, 38], groundColor: 0xbdd39d },
@@ -73,15 +82,20 @@ export const CITY_DISTRICTS: readonly CityDistrict[] = [
   { id: "promenade", label: "Boutique / Promenade", center: [27, -68], size: [51, 20], groundColor: 0xe7c2b1 },
 ] as const;
 
+/**
+ * All roads share one uniform width so the derived junction tiles (straight,
+ * corner, T, 4-way) join without seams. See `topology.ts` for the derived
+ * graph, tiles, curbs, sidewalks and lane data.
+ */
 export const CITY_ROADS: readonly CityRoad[] = [
-  { id: "main-avenue", from: [0, 59], to: [0, -74], width: 11, district: "suburb" },
-  { id: "market-street", from: [3, -44], to: [-24, -44], width: 11, district: "downtown" },
-  { id: "promenade-way", from: [-3, -68], to: [31, -68], width: 11, district: "promenade" },
-  { id: "old-town-lane", from: [-3, -31], to: [47, -31], width: 11, district: "old-town" },
-  { id: "park-loop-north", from: [-39, 22], to: [39, 22], width: 8, district: "park" },
-  { id: "park-loop-west", from: [-39, 22], to: [-39, -16], width: 8, district: "park" },
-  { id: "park-loop-east", from: [39, 22], to: [39, -16], width: 8, district: "old-town" },
-  { id: "park-loop-south", from: [-39, -16], to: [39, -16], width: 8, district: "park" },
+  { id: "main-avenue", from: [0, 59], to: [0, -74], width: 10, district: "suburb" },
+  { id: "market-street", from: [3, -44], to: [-24, -44], width: 10, district: "downtown" },
+  { id: "promenade-way", from: [-3, -68], to: [31, -68], width: 10, district: "promenade" },
+  { id: "old-town-lane", from: [-3, -31], to: [47, -31], width: 10, district: "old-town" },
+  { id: "park-loop-north", from: [-39, 22], to: [39, 22], width: 10, district: "park" },
+  { id: "park-loop-west", from: [-39, 22], to: [-39, -16], width: 10, district: "park" },
+  { id: "park-loop-east", from: [39, 22], to: [39, -16], width: 10, district: "old-town" },
+  { id: "park-loop-south", from: [-39, -16], to: [39, -16], width: 10, district: "park" },
 ] as const;
 
 export const CITY_DESTINATIONS: Readonly<Record<ShopId, CityDestination>> = {
@@ -111,10 +125,11 @@ export const CITY_DESTINATIONS: Readonly<Record<ShopId, CityDestination>> = {
   },
 } as const;
 
+/** Every lot clears the widened road tiles and sidewalks by ≥ 0.2m. */
 export const CITY_BUILDINGS: readonly CityBuildingLot[] = [
   {
     id: "carrot-market",
-    center: [-18, -52.5],
+    center: [-18, -53],
     halfSize: [5.2, 3.7],
     height: 6.8,
     color: 0xf0a04e,
@@ -123,7 +138,7 @@ export const CITY_BUILDINGS: readonly CityBuildingLot[] = [
   },
   {
     id: "cloud-boutique",
-    center: [26, -76],
+    center: [26, -77],
     halfSize: [6.2, 3.6],
     height: 7.6,
     color: 0xbca8df,
@@ -132,23 +147,23 @@ export const CITY_BUILDINGS: readonly CityBuildingLot[] = [
   },
   {
     id: "fluff-salon",
-    center: [42, -39],
+    center: [42, -40],
     halfSize: [5.4, 3.7],
     height: 6.2,
     color: 0xe8a8b8,
     district: "old-town",
     shop: "fluff-salon",
   },
-  { id: "grocery-row-a", center: [-35, -38], halfSize: [7, 4], height: 8, color: 0xe3b36f, district: "downtown", shop: null },
+  { id: "grocery-row-a", center: [-37, -35], halfSize: [6, 3.5], height: 8, color: 0xe3b36f, district: "downtown", shop: null },
   { id: "grocery-row-b", center: [-34, -58], halfSize: [8, 5], height: 10, color: 0xc98d6b, district: "downtown", shop: null },
   { id: "downtown-corner", center: [-12, -58], halfSize: [4.7, 4.2], height: 11, color: 0xe0c18b, district: "downtown", shop: null },
   { id: "old-clock-house", center: [16, -40], halfSize: [5.2, 3.7], height: 7.8, color: 0xbe8d6a, district: "old-town", shop: null },
-  { id: "furniture-row", center: [29, -22], halfSize: [7, 3.5], height: 6.4, color: 0xcd9f72, district: "old-town", shop: null },
+  { id: "furniture-row", center: [28, -23.5], halfSize: [5.5, 2.2], height: 6.4, color: 0xcd9f72, district: "old-town", shop: null },
   { id: "promenade-cafe", center: [12, -77], halfSize: [4.4, 3.2], height: 5.7, color: 0xe7aa8f, district: "promenade", shop: null },
   { id: "promenade-gallery", center: [43, -69], halfSize: [5.2, 4.4], height: 8.2, color: 0xc99bc0, district: "promenade", shop: null },
   { id: "suburb-home-a", center: [15, 42], halfSize: [5, 4], height: 5.4, color: 0xe9bc82, district: "suburb", shop: null },
   { id: "suburb-home-b", center: [34, 42], halfSize: [5.5, 4], height: 5.8, color: 0xc7a7d8, district: "suburb", shop: null },
-  { id: "suburb-home-c", center: [22, 29], halfSize: [5, 3.8], height: 5.2, color: 0x91bfd2, district: "suburb", shop: null },
+  { id: "suburb-home-c", center: [22, 31], halfSize: [5, 3.8], height: 5.2, color: 0x91bfd2, district: "suburb", shop: null },
   { id: "suburb-home-d", center: [-18, 43], halfSize: [5.5, 4], height: 5.8, color: 0xdfaa8c, district: "suburb", shop: null },
 ] as const;
 
@@ -173,22 +188,27 @@ export const CITY_BOOST_PADS: readonly CityPickup[] = [
   { id: "boost-promenade", position: [10, -68] },
 ] as const;
 
+/**
+ * Deterministic traffic follows right-hand driving lanes derived from the
+ * topology: two opposing park-loop lanes plus a local up/down shuttle on the
+ * main avenue. Points are already in lane space (offset from centerlines).
+ */
 export const CITY_TRAFFIC_LOOPS: readonly CityTrafficLoop[] = [
   {
-    id: "parkwise",
-    points: [[-35, 22], [35, 22], [35, -16], [-35, -16]],
+    id: "park-inner",
+    points: laneLoopPolyline([[-39, 22], [39, 22], [39, -16], [-39, -16]]),
     speed: 7.2,
     phase: 0.08,
   },
   {
-    id: "clockwise",
-    points: [[35, -16], [35, 22], [-35, 22], [-35, -16]],
+    id: "park-outer",
+    points: laneLoopPolyline([[39, -16], [39, 22], [-39, 22], [-39, -16]]),
     speed: 6.4,
     phase: 0.53,
   },
   {
     id: "main-local",
-    points: [[3.2, 48], [3.2, -61], [-3.2, -61], [-3.2, 48]],
+    points: [[-2.5, 44], [-2.5, -58], [2.5, -58], [2.5, 44]],
     speed: 8,
     phase: 0.27,
   },
@@ -196,7 +216,7 @@ export const CITY_TRAFFIC_LOOPS: readonly CityTrafficLoop[] = [
 
 export const CITY_TREE_POSITIONS: readonly CityPoint[] = [
   [-49, 48], [-42, 39], [-48, 28], [-28, 34], [-51, 12], [-45, 1], [-48, -10],
-  [-31, 14], [-23, 17], [-31, 2], [-22, -8], [-31, -12], [48, 51], [42, 39],
+  [-31, 14], [-23, 15], [-31, 2], [-22, -8], [-31, -8], [48, 51], [42, 39],
   [51, 27], [23, 53], [48, 8], [50, -7], [18, 15], [27, 12], [19, 2], [29, -7],
 ] as const;
 
@@ -368,3 +388,94 @@ export function districtAt(position: CityPoint): CityDistrict {
   return CITY_DISTRICTS.reduce((closest, district) =>
     distance2d(position, district.center) < distance2d(position, closest.center) ? district : closest);
 }
+
+/** Shared junction graph, tiles, curbs and sidewalks for all city consumers. */
+export const CITY_TOPOLOGY: CityRoadTopology = buildCityTopology(CITY_ROADS);
+
+/** Marked parking bays: one per shop destination plus the garage stall. */
+export const CITY_PARKING_BAYS: readonly CityParkingBay[] = [
+  parkingBayForRoute("carrot-market", cityRoute("carrot-market")),
+  parkingBayForRoute("cloud-boutique", cityRoute("cloud-boutique")),
+  parkingBayForRoute("fluff-salon", cityRoute("fluff-salon")),
+  parkingBayForRoute("garage", cityRoute("carrot-market", "home")),
+] as const;
+
+/**
+ * Right-hand lane centerline for a shop trip; the polyline the guidance
+ * breadcrumbs and traffic previews follow.
+ */
+export function cityLaneRoute(
+  shop: ShopId,
+  direction: "outbound" | "home" = "outbound",
+): readonly CityPoint[] {
+  return laneRoutePolyline(cityRoute(shop, direction));
+}
+
+export type CityManeuverKind = "left" | "right" | "arrive";
+
+export interface CityRouteManeuver {
+  readonly kind: CityManeuverKind;
+  /** Distance in meters from the queried position to where the maneuver starts. */
+  readonly distance: number;
+}
+
+const MANEUVER_SCAN_STEP = 1.5;
+/** Heading change is accumulated over this window so arc-smoothed lane corners read as one turn. */
+const MANEUVER_WINDOW = 9;
+const MANEUVER_TURN_RADIANS = 0.55;
+const MANEUVER_LOCAL_WINDOW = 3;
+const MANEUVER_LOCAL_RADIANS = 0.2;
+
+function headingDeltaAlong(
+  route: readonly CityPoint[],
+  from: number,
+  to: number,
+): number {
+  const start = pointAlongRoute(route, from);
+  const end = pointAlongRoute(route, to);
+  let delta = end.headingRadians - start.headingRadians;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  return delta;
+}
+
+/**
+ * Next maneuver ahead of `position` along `route`: the first spot where the
+ * lane heading swings hard enough to count as a turn, or the arrival distance
+ * when the remaining route runs straight into the parking bay.
+ */
+export function nextRouteManeuver(
+  position: CityPoint,
+  route: readonly CityPoint[],
+): CityRouteManeuver {
+  const progress = nearestRouteSample(position, route);
+  const total = routeLength(route);
+  for (
+    let cursor = progress.distanceAlongRoute + 0.75;
+    cursor < total - 1.25;
+    cursor += MANEUVER_SCAN_STEP
+  ) {
+    const delta = headingDeltaAlong(route, cursor, Math.min(total, cursor + MANEUVER_WINDOW));
+    if (Math.abs(delta) < MANEUVER_TURN_RADIANS) continue;
+    // The wide window sees the turn early; localize where bending starts.
+    let turnStart = cursor + MANEUVER_WINDOW - MANEUVER_LOCAL_WINDOW;
+    for (let local = cursor; local < cursor + MANEUVER_WINDOW; local += 0.75) {
+      const localDelta = headingDeltaAlong(
+        route,
+        local,
+        Math.min(total, local + MANEUVER_LOCAL_WINDOW),
+      );
+      if (Math.abs(localDelta) >= MANEUVER_LOCAL_RADIANS) {
+        turnStart = local;
+        break;
+      }
+    }
+    return {
+      kind: delta > 0 ? "left" : "right",
+      distance: Math.max(0, turnStart - progress.distanceAlongRoute),
+    };
+  }
+  return { kind: "arrive", distance: progress.remainingDistance };
+}
+
+export * from "./topology";

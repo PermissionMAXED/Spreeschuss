@@ -12,8 +12,8 @@ import {
 import { applyNeedDelta } from "../../core/contracts/simulation";
 import {
   CATALOG_BY_ID,
-  type CatalogItem,
   type FoodCatalogItem,
+  type ShopCatalogItem,
 } from "../../data/catalog";
 
 const PURCHASE_RECEIPT_PREFIX = "__shop_purchase__";
@@ -108,7 +108,7 @@ export type PurchaseStatus =
 export interface PurchaseResult {
   readonly status: PurchaseStatus;
   readonly state: SaveState;
-  readonly item?: CatalogItem;
+  readonly item?: ShopCatalogItem;
   readonly message: string;
 }
 

@@ -7,11 +7,14 @@ import type { ProceduralGooby } from "../../gooby";
 import type { GameRenderer } from "../../render/renderer";
 import {
   ALL_CATALOG_ITEMS,
+  ALL_SHOP_CATALOG_ITEMS,
   CATALOG_BALANCE,
   COSMETIC_CATALOG,
-  COSMETIC_SLOTS,
+  COSMETIC_EQUIP_SLOTS,
+  FLUFF_SALON_CATALOG,
   FOOD_CATALOG,
   FURNITURE_CATALOG,
+  getCatalogItemCopy,
   getCatalogOwnershipMetadata,
   SHOP_CATALOGS,
   validateCatalog,
@@ -31,7 +34,7 @@ import {
   ShopVisitHistory,
   type CityShopArrival,
 } from "./routes";
-import { SHOP_CONTROL_LAYOUT, WalkableShopScene } from "./scene";
+import { SHOP_CONTROL_LAYOUT, SHOP_PAGE_SIZE, WalkableShopScene } from "./scene";
 import { CosmeticTryOnSession, type EquippedCosmetics } from "./try-on";
 
 const PORTRAIT_VIEWPORT = { width: 390, height: 844 } as const;
@@ -39,6 +42,7 @@ const PORTRAIT_VIEWPORT = { width: 390, height: 844 } as const;
 interface SalonSceneInternals {
   readonly gooby: ProceduralGooby;
   buildInterior(): void;
+  cosmeticSocket(slot: (typeof COSMETIC_EQUIP_SLOTS)[number]): Object3D;
   renderTryOn(equipped: EquippedCosmetics): void;
 }
 
@@ -148,29 +152,75 @@ function saveWithEconomy(coins: number, level: number): SaveState {
 }
 
 describe("shop catalogs", () => {
-  it("validates unique schemas and supplies more than fifty balanced items", () => {
-    expect(validateCatalog(ALL_CATALOG_ITEMS)).toHaveLength(56);
-    expect(FOOD_CATALOG.length).toBeGreaterThanOrEqual(14);
-    expect(FURNITURE_CATALOG.length).toBeGreaterThanOrEqual(20);
-    expect(COSMETIC_CATALOG.length).toBeGreaterThanOrEqual(16);
-    expect(new Set(ALL_CATALOG_ITEMS.map(({ id }) => id)).size).toBe(ALL_CATALOG_ITEMS.length);
-    expect(ALL_CATALOG_ITEMS.every(({ availability }) => availability === "always")).toBe(true);
-    expect(Math.max(...ALL_CATALOG_ITEMS.map(({ levelRequired }) => levelRequired))).toBe(
+  it("ships exact unique category counts within the balanced level range", () => {
+    expect(validateCatalog(ALL_CATALOG_ITEMS)).toHaveLength(98);
+    expect(FOOD_CATALOG).toHaveLength(30);
+    expect(FURNITURE_CATALOG).toHaveLength(36);
+    expect(COSMETIC_CATALOG).toHaveLength(48);
+    expect(ALL_SHOP_CATALOG_ITEMS).toHaveLength(114);
+    expect(new Set(ALL_SHOP_CATALOG_ITEMS.map(({ id }) => id)).size).toBe(114);
+    expect(ALL_SHOP_CATALOG_ITEMS.every(({ availability }) => availability === "always")).toBe(true);
+    expect(Math.max(...ALL_SHOP_CATALOG_ITEMS.map(({ levelRequired }) => levelRequired))).toBe(
       CATALOG_BALANCE.maximumLevelGate,
     );
+    expect(ALL_SHOP_CATALOG_ITEMS.every(({ price, levelRequired }) =>
+      price > 0 && price <= 400 && levelRequired >= 1 && levelRequired <= 8)).toBe(true);
   });
 
-  it("includes food benefits, zone-tagged decor, and every cosmetic slot", () => {
+  it("includes food benefits, zone variety, and exactly eight cosmetics per slot", () => {
     expect(FOOD_CATALOG.every(({ hunger, xp, price, rarity }) => hunger > 0 && xp > 0 && price > 0 && !!rarity))
       .toBe(true);
     expect(FURNITURE_CATALOG.every(({ zones }) => zones.length > 0)).toBe(true);
-    expect(new Set(COSMETIC_CATALOG.map(({ slot }) => slot))).toEqual(new Set(COSMETIC_SLOTS));
-    expect(Object.values(SHOP_CATALOGS).flat()).toHaveLength(ALL_CATALOG_ITEMS.length);
+    expect(new Set(FURNITURE_CATALOG.flatMap(({ zones }) => zones))).toEqual(
+      new Set(["living-room", "kitchen", "bathroom", "bedroom", "garden"]),
+    );
+    expect(Object.fromEntries(COSMETIC_EQUIP_SLOTS.map((slot) => [
+      slot,
+      COSMETIC_CATALOG.filter((item) => item.slot === slot).length,
+    ]))).toEqual({ head: 8, ears: 8, neck: 8, back: 8, face: 8, paws: 8 });
+    expect(FLUFF_SALON_CATALOG).toHaveLength(24);
+    expect(SHOP_CATALOGS["cloud-boutique"].length).toBeGreaterThanOrEqual(44);
+    expect(new Set(SHOP_CATALOGS["cloud-boutique"].map(({ kind }) => kind))).toEqual(
+      new Set(["furniture", "cosmetic"]),
+    );
     expect(CATALOG_BALANCE.referenceMinigame.expectedCoins).toBe(30);
   });
 
+  it("provides complete natural English and German catalog copy without protected brands", () => {
+    for (const item of ALL_SHOP_CATALOG_ITEMS) {
+      const en = getCatalogItemCopy(item, "en");
+      const de = getCatalogItemCopy(item, "de");
+      expect(en.name.trim().length, `${item.id}/en name`).toBeGreaterThan(1);
+      expect(en.description.trim().length, `${item.id}/en description`).toBeGreaterThan(7);
+      expect(de.name.trim().length, `${item.id}/de name`).toBeGreaterThan(1);
+      expect(de.description.trim().length, `${item.id}/de description`).toBeGreaterThan(7);
+      expect(
+        de.name !== en.name || de.description !== en.description,
+        `${item.id}/localized copy`,
+      ).toBe(true);
+    }
+    const publicCopy = ALL_SHOP_CATALOG_ITEMS.flatMap((item) => [
+      item.id,
+      getCatalogItemCopy(item, "en").name,
+      getCatalogItemCopy(item, "en").description,
+      getCatalogItemCopy(item, "de").name,
+      getCatalogItemCopy(item, "de").description,
+    ]).join(" ");
+    expect(publicCopy).not.toMatch(/\b(?:nutella|ferrero)\b/iu);
+    expect(FOOD_CATALOG.map(({ id }) => id)).toContain("hazelnut-nougat-spread");
+  });
+
+  it("includes the treasured kitchen Nougatschleuse and paginates large ranges", () => {
+    expect(FURNITURE_CATALOG.find(({ id }) => id === "nougatschleuse")).toMatchObject({
+      rarity: "treasured",
+      zones: ["kitchen"],
+      stackable: false,
+    });
+    expect(Math.ceil(SHOP_CATALOGS["cloud-boutique"].length / SHOP_PAGE_SIZE)).toBeGreaterThan(5);
+  });
+
   it("reports accessible ownership, quantity, and stackability for every item", () => {
-    for (const item of ALL_CATALOG_ITEMS) {
+    for (const item of ALL_SHOP_CATALOG_ITEMS) {
       const quantity = item.stackable ? 3 : 1;
       const metadata = getCatalogOwnershipMetadata(item, { [item.id]: quantity });
       expect(metadata).toMatchObject({
@@ -231,6 +281,22 @@ describe("shop purchases", () => {
     expect(visibleInventory(retry.state.inventory)).toEqual({
       carrot: 3,
       "crisp-carrot": 1,
+    });
+  });
+
+  it("increments stackable food quantity for distinct purchases", () => {
+    const initial = saveWithEconomy(40, 1);
+    const first = purchaseCatalogItem(initial, {
+      itemId: "crisp-carrot",
+      requestId: "quantity-purchase-0001",
+    });
+    const second = purchaseCatalogItem(first.state, {
+      itemId: "crisp-carrot",
+      requestId: "quantity-purchase-0002",
+    });
+    expect(second).toMatchObject({
+      status: "purchased",
+      state: { economy: { coins: 32 }, inventory: { "crisp-carrot": 2 } },
     });
   });
 
@@ -303,6 +369,38 @@ describe("shop purchases", () => {
     expect(SaveStateSchema.parse(record.payload)).toMatchObject({
       economy: { coins: 36 },
       inventory: { "crisp-carrot": 1 },
+    });
+    expect(record.revision).toBe(1);
+  });
+
+  it("persists a paginated Nougatschleuse purchase across a service reload", async () => {
+    const levelEight = saveWithEconomy(400, 8);
+    let record: SaveRecord = {
+      revision: 0,
+      payload: SaveStateSchema.parse({
+        ...levelEight,
+        economy: { ...levelEight.economy, xp: 4_900 },
+      }),
+    };
+    const save: SavePort = {
+      load: () => Promise.resolve(structuredClone(record)),
+      commit: (expectedRevision, payload) => {
+        if (expectedRevision !== record.revision) return Promise.reject(new Error("revision conflict"));
+        record = { revision: expectedRevision + 1, payload };
+        return Promise.resolve(structuredClone(record));
+      },
+      clear: () => Promise.resolve(),
+    };
+    const request = { itemId: "nougatschleuse", requestId: "paged-reload-purchase-0001" };
+    const purchased = await new ShopPurchaseService(save, { now: () => 100 }).purchase(request);
+    expect(purchased).toMatchObject({
+      status: "purchased",
+      state: { inventory: { nougatschleuse: 1 } },
+    });
+    const afterReload = await new ShopPurchaseService(save, { now: () => 200 }).purchase(request);
+    expect(afterReload).toMatchObject({
+      status: "duplicate",
+      state: { economy: { coins: 220 }, inventory: { nougatschleuse: 1 } },
     });
     expect(record.revision).toBe(1);
   });
@@ -403,7 +501,7 @@ describe("cosmetic preview and city handoff", () => {
     expect(applied).toHaveLength(2);
   });
 
-  it("attaches all eighteen salon cosmetics to the same authoritative animated sockets as home", () => {
+  it("attaches all 48 cosmetics to six live animated salon sockets", () => {
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
@@ -411,27 +509,29 @@ describe("cosmetic preview and city handoff", () => {
     });
     const { scene, internals } = salonScene();
     try {
-      expect(COSMETIC_CATALOG).toHaveLength(18);
-      expect(new Set(COSMETIC_CATALOG.map(({ slot }) => slot))).toEqual(new Set(COSMETIC_SLOTS));
+      expect(COSMETIC_CATALOG).toHaveLength(48);
+      expect(new Set(COSMETIC_CATALOG.map(({ slot }) => slot))).toEqual(new Set(COSMETIC_EQUIP_SLOTS));
       for (const item of COSMETIC_CATALOG) {
         internals.renderTryOn({ [item.slot]: item.id });
-        for (const slot of COSMETIC_SLOTS) {
-          const anchor = internals.gooby.getCosmeticSocket(slot);
+        for (const slot of COSMETIC_EQUIP_SLOTS) {
+          const anchor = internals.cosmeticSocket(slot);
           expect(anchor.children, `${item.id}/${slot}`).toHaveLength(slot === item.slot ? 1 : 0);
         }
-        const anchor = internals.gooby.getCosmeticSocket(item.slot);
+        const anchor = internals.cosmeticSocket(item.slot);
         const model = anchor.children[0];
-        const descriptor = COSMETIC_ATTACHMENTS[item.slot];
         expect(model?.name).toBe(`try-on:${item.slot}:${item.id}`);
         expect(model?.parent).toBe(anchor);
         expect(model?.userData.cosmeticSocket).toBe(item.slot);
-        expect(model?.position.toArray()).toEqual([...descriptor.modelPosition]);
-        expect(model?.rotation.toArray().slice(0, 3)).toEqual([...descriptor.modelRotation]);
-        expect(model?.scale.toArray()).toEqual([
-          descriptor.modelScale,
-          descriptor.modelScale,
-          descriptor.modelScale,
-        ]);
+        if (item.slot !== "face" && item.slot !== "paws") {
+          const descriptor = COSMETIC_ATTACHMENTS[item.slot];
+          expect(model?.position.toArray()).toEqual([...descriptor.modelPosition]);
+          expect(model?.rotation.toArray().slice(0, 3)).toEqual([...descriptor.modelRotation]);
+          expect(model?.scale.toArray()).toEqual([
+            descriptor.modelScale,
+            descriptor.modelScale,
+            descriptor.modelScale,
+          ]);
+        }
       }
 
       internals.renderTryOn({ head: "sunny-bucket-hat" });
@@ -461,11 +561,10 @@ describe("cosmetic preview and city handoff", () => {
     });
     const { scene, internals } = salonScene();
     try {
-      let stableResourceCount: number | null = null;
       for (let index = 0; index < COSMETIC_CATALOG.length * 2; index += 1) {
         const item = COSMETIC_CATALOG[index % COSMETIC_CATALOG.length]!;
-        const previous = COSMETIC_SLOTS.flatMap((slot) =>
-          internals.gooby.getCosmeticSocket(slot).children)[0];
+        const previous = COSMETIC_EQUIP_SLOTS.flatMap((slot) =>
+          internals.cosmeticSocket(slot).children)[0];
         const previousResources: ReturnType<typeof modelResources> = previous
           ? modelResources(previous)
           : new Set();
@@ -477,16 +576,14 @@ describe("cosmetic preview and city handoff", () => {
         internals.renderTryOn({ [item.slot]: item.id });
 
         expect(disposals, item.id).toBe(previousResources.size);
-        const active = COSMETIC_SLOTS.flatMap((slot) =>
-          internals.gooby.getCosmeticSocket(slot).children);
+        const active = COSMETIC_EQUIP_SLOTS.flatMap((slot) =>
+          internals.cosmeticSocket(slot).children);
         expect(active, item.id).toHaveLength(1);
-        const activeResourceCount = modelResources(active[0]!).size;
-        stableResourceCount ??= activeResourceCount;
-        expect(activeResourceCount, item.id).toBe(stableResourceCount);
+        expect(modelResources(active[0]!).size, item.id).toBeGreaterThan(0);
       }
 
-      const final = COSMETIC_SLOTS.flatMap((slot) =>
-        internals.gooby.getCosmeticSocket(slot).children)[0]!;
+      const sockets = COSMETIC_EQUIP_SLOTS.map((slot) => internals.cosmeticSocket(slot));
+      const final = sockets.flatMap((socket) => socket.children)[0]!;
       const finalResources = modelResources(final);
       let finalDisposals = 0;
       for (const resource of finalResources) {
@@ -494,11 +591,9 @@ describe("cosmetic preview and city handoff", () => {
       }
       scene.dispose();
       expect(finalDisposals).toBe(finalResources.size);
-      for (const slot of COSMETIC_SLOTS) {
-        expect(internals.gooby.getCosmeticSocket(slot).children).toHaveLength(0);
-      }
+      for (const socket of sockets) expect(socket.children).toHaveLength(0);
       internals.renderTryOn({ head: "sunny-bucket-hat" });
-      expect(internals.gooby.getCosmeticSocket("head").children).toHaveLength(0);
+      expect(sockets[0]?.children).toHaveLength(0);
       scene.dispose();
       expect(finalDisposals).toBe(finalResources.size);
     } finally {
@@ -507,7 +602,7 @@ describe("cosmetic preview and city handoff", () => {
     }
   });
 
-  it("keeps head, ear, neck, and back try-ons aligned and visible at 390×844", () => {
+  it("keeps all six simultaneous try-ons aligned and visible at 390×844", () => {
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
@@ -520,13 +615,15 @@ describe("cosmetic preview and city handoff", () => {
         ears: "clover-ear-clips",
         neck: "gingham-neck-scarf",
         back: "picnic-mini-backpack",
+        face: "round-meadow-glasses",
+        paws: "striped-paw-warmers",
       });
       renderer.scene.updateMatrixWorld(true);
-      const cosmetics = Object.fromEntries(COSMETIC_SLOTS.map((slot) => {
-        const model = internals.gooby.getCosmeticSocket(slot).children[0];
+      const cosmetics = Object.fromEntries(COSMETIC_EQUIP_SLOTS.map((slot) => {
+        const model = internals.cosmeticSocket(slot).children[0];
         if (!model) throw new Error(`Missing ${slot} portrait try-on`);
         return [slot, projectedBounds(model, renderer.camera)];
-      })) as Record<(typeof COSMETIC_SLOTS)[number], ReturnType<typeof projectedBounds>>;
+      })) as Record<(typeof COSMETIC_EQUIP_SLOTS)[number], ReturnType<typeof projectedBounds>>;
       const belly = internals.gooby.root.getObjectByName("Gooby.belly");
       if (!belly) throw new Error("Salon mannequin belly is missing");
       const torso = projectedBounds(belly, renderer.camera);
@@ -544,9 +641,13 @@ describe("cosmetic preview and city handoff", () => {
       expect(Math.abs(cosmetics.head.centerX - torso.centerX)).toBeLessThan(20);
       expect(Math.abs(cosmetics.neck.centerX - torso.centerX)).toBeLessThan(20);
       expect(Math.abs(cosmetics.back.centerX - torso.centerX)).toBeLessThan(20);
+      expect(Math.abs(cosmetics.face.centerX - torso.centerX)).toBeLessThan(20);
+      expect(Math.abs(cosmetics.paws.centerX - torso.centerX)).toBeLessThan(20);
       expect(cosmetics.neck.centerY).toBeLessThan(torso.centerY);
       expect(cosmetics.back.centerY).toBeGreaterThan(torso.top);
       expect(cosmetics.back.centerY).toBeLessThan(torso.bottom);
+      expect(cosmetics.face.centerY).toBeLessThan(torso.centerY - 40);
+      expect(cosmetics.paws.centerY).toBeGreaterThan(torso.centerY);
     } finally {
       scene.dispose();
       vi.unstubAllGlobals();

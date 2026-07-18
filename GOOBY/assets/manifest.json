@@ -38,7 +38,7 @@
             {
               "assetKey": "building.carrot-market",
               "path": "src/scenes/city/world.ts",
-              "marker": "this.assets.clone(`building.${lot.shop}`)"
+              "marker": "this.assets.clone(`building.${shop}`)"
             }
           ]
         },
@@ -53,7 +53,7 @@
             {
               "assetKey": "building.fluff-salon",
               "path": "src/scenes/city/world.ts",
-              "marker": "this.assets.clone(`building.${lot.shop}`)"
+              "marker": "this.assets.clone(`building.${shop}`)"
             }
           ]
         },
@@ -93,7 +93,7 @@
             {
               "assetKey": "building.cloud-boutique",
               "path": "src/scenes/city/world.ts",
-              "marker": "this.assets.clone(`building.${lot.shop}`)"
+              "marker": "this.assets.clone(`building.${shop}`)"
             }
           ]
         },
@@ -307,8 +307,8 @@
       "id": "kenney-asset-licenses",
       "canonicalPath": "assets/LICENSES.md",
       "bundledPath": "assets/LICENSES.md",
-      "bytes": 5579,
-      "sha256": "45907b9ef7152eb28eb03e71000eb92495b9f792a14f7ce0cca370c078616d85",
+      "bytes": 10853,
+      "sha256": "37d2a898678f8c57c477727ef2cee7cac909545ce32f483646d8d5612c441db1",
       "packIds": [
         "city-kit-commercial",
         "city-kit-suburban",

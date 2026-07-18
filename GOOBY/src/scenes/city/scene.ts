@@ -21,6 +21,7 @@ import {
   didReachCityTrigger,
   districtAt,
   nearestRouteSample,
+  nextRouteManeuver,
   pointAlongRoute,
   type CityPoint,
 } from "../../data/city";
@@ -33,8 +34,12 @@ import {
 } from "./overlay";
 import { CityRouteMachine } from "./route-machine";
 import {
+  CITY_PARKING_BONUS_COINS,
   CityDrivePhysics,
+  CityTrafficSim,
+  evaluateParkingArrival,
   type CityCarSnapshot,
+  type ParkingArrivalQuality,
 } from "./simulation";
 import { CityWorld, type CityWorldStats } from "./world";
 import {
@@ -77,6 +82,8 @@ export class CityDriveScene implements GameScene {
   readonly id = "city:drive" as const;
   readonly controller: CityRouteMachine;
   private readonly physics: CityDrivePhysics;
+  private readonly traffic = new CityTrafficSim();
+  private lastParking: ParkingArrivalQuality | null = null;
   private world: CityWorld | null = null;
   private overlay: CityDriveOverlay | null = null;
   private economy: Economy;
@@ -108,6 +115,7 @@ export class CityDriveScene implements GameScene {
       headingRadians: restored?.safeCarPose.headingRadians ?? CITY_GARAGE_HEADING,
       collectedCoinIds: restored?.collectedRouteState.coinIds ?? [],
     });
+    this.physics.attachTraffic(this.traffic);
     if (
       !restored
       || restored.phase === "destination-board"
@@ -163,6 +171,7 @@ export class CityDriveScene implements GameScene {
     this.configureWorldForState();
     const car = this.physics.snapshot;
     this.world.setCar(car);
+    this.world.setTraffic(this.traffic.cars);
     this.world.snapCamera(car);
     this.renderUi(car);
     this.emitTravelSnapshot(car);
@@ -171,9 +180,10 @@ export class CityDriveScene implements GameScene {
   update(deltaSeconds: number): void {
     if (!this.entered || this.disposed || !this.world || !this.overlay) return;
     const state = this.controller.state;
+    const driving = state.phase === "driving-outbound" || state.phase === "driving-home";
     let car: CityCarSnapshot;
 
-    if (state.phase === "driving-outbound" || state.phase === "driving-home") {
+    if (driving) {
       const previousPosition = this.physics.snapshot.position;
       const step = this.physics.step(deltaSeconds, this.controls);
       car = step.snapshot;
@@ -194,6 +204,7 @@ export class CityDriveScene implements GameScene {
       if (state.phase === "driving-outbound") {
         const arrived = this.controller.tryArriveAlong(previousPosition, step.snapshot.position);
         if (arrived) {
+          this.applyParkingArrival(car);
           this.physics.park(true);
           this.world.showDestination(null);
           this.overlay.releaseControls();
@@ -217,9 +228,13 @@ export class CityDriveScene implements GameScene {
       }
     } else {
       car = this.physics.snapshot;
+      // The city stays alive while parked: traffic keeps circulating and
+      // yields around the player's bay at the same deterministic 60Hz rate.
+      this.traffic.step(deltaSeconds, car.position);
     }
 
-    this.world.update(deltaSeconds, car);
+    this.world.setTraffic(this.traffic.cars);
+    this.world.update(deltaSeconds, car, driving ? this.physics.renderPose() : undefined);
     this.renderUi(car);
     this.updateEdgePointer();
     this.travelSnapshotSeconds += deltaSeconds;
@@ -271,6 +286,18 @@ export class CityDriveScene implements GameScene {
     this.renderUi(this.physics.snapshot);
   }
 
+  /**
+   * Grades the swept arrival into the bay and pays the perfect-parking bonus
+   * when the car rolled in slowly while pointing down the bay heading.
+   */
+  private applyParkingArrival(car: CityCarSnapshot): void {
+    const quality = evaluateParkingArrival(car, this.activeRoute);
+    this.lastParking = quality;
+    if (!quality.bonus) return;
+    this.economy = grantReward(this.economy, { coins: CITY_PARKING_BONUS_COINS });
+    this.options.onEconomyChanged?.(this.economy);
+  }
+
   recoverCar(reason: "off-route" | "stalled" | "invalid-pose"): void {
     const recovered = this.physics.recoverNow(reason);
     this.controller.pinSafePose(
@@ -296,6 +323,7 @@ export class CityDriveScene implements GameScene {
         headingRadians: end.headingRadians,
       });
       this.physics.park(true);
+      this.applyParkingArrival(this.physics.snapshot);
       this.world?.showDestination(null);
     } else if (state.phase === "driving-home") {
       this.controller.arriveHome();
@@ -325,6 +353,7 @@ export class CityDriveScene implements GameScene {
     const state = this.controller.state;
     if (state.phase !== "depart-ready") return;
     this.controller.confirmDeparture();
+    this.lastParking = null;
     this.activeRoute = cityRoute(state.selected, "outbound");
     const start = pointAlongRoute(this.activeRoute, 0);
     this.physics.setRoute(this.activeRoute, {
@@ -346,6 +375,7 @@ export class CityDriveScene implements GameScene {
     const state = this.controller.state;
     if (state.phase !== "return-board") return;
     this.controller.confirmReturnDeparture();
+    this.lastParking = null;
     this.activeRoute = cityRoute(state.visited, "home");
     const start = pointAlongRoute(this.activeRoute, 0);
     this.physics.setRoute(this.activeRoute, {
@@ -389,7 +419,8 @@ export class CityDriveScene implements GameScene {
     } else if (state.phase === "return-board" || state.phase === "driving-home") {
       destinationLabel = state.phase === "return-board" ? "Gooby Garage" : "Gooby Garage";
     }
-    const routeDistance = state.phase === "driving-outbound" || state.phase === "driving-home"
+    const driving = state.phase === "driving-outbound" || state.phase === "driving-home";
+    const routeDistance = driving
       ? nearestRouteSample(car.position, this.activeRoute).remainingDistance
       : Math.hypot(car.position[0] - targetX, car.position[1] - targetZ);
     const metrics: CityOverlayMetrics = {
@@ -399,6 +430,9 @@ export class CityDriveScene implements GameScene {
       coinsCollected: car.collectedCoinIds.length,
       boostSeconds: car.boostSeconds,
       recoveryMode: car.recoveryMode,
+      maneuver: driving ? nextRouteManeuver(car.position, this.activeRoute) : null,
+      wrongWay: driving && car.wrongWay,
+      parking: state.phase === "arrived" ? this.lastParking : null,
     };
     this.overlay.render(state, metrics);
   }

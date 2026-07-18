@@ -9,6 +9,7 @@ import {
   Texture,
   TorusGeometry,
 } from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type { GoobyActor, GoobyMood, GoobyReaction } from "../core/contracts/gooby";
 import type { AssetKey, AssetLoader, LoadedAsset } from "../core/contracts/assets";
 import type { Needs } from "../core/contracts/simulation";
@@ -29,6 +30,8 @@ export type CharacterReaction =
   | "shiver"
   | "fall-asleep"
   | "wake-stretch"
+  | "belly-rub"
+  | "greet"
   | "celebrate"
   | "sad";
 
@@ -160,6 +163,11 @@ export class ProceduralGooby implements GoobyActor {
   private bellyVelocity = 0;
   private lookX = 0;
   private lookY = 0;
+  private sleepBlend = 0;
+  private eyeOpenBlend = 1;
+  private reducedMotion = false;
+  private wakeStretchStarts = 0;
+  private idlePose = "sway";
   private disposed = false;
 
   constructor(options: ProceduralGoobyOptions = {}) {
@@ -169,8 +177,8 @@ export class ProceduralGooby implements GoobyActor {
     this.rig.name = "Gooby.animation-rig";
     this.root.add(this.rig);
 
-    const sphere = this.track(new SphereGeometry(1, 18, 12));
-    const capsule = this.track(new CapsuleGeometry(0.5, 1, 5, 12));
+    const sphere = this.track(new SphereGeometry(1, 16, 10));
+    const capsule = this.track(new CapsuleGeometry(0.5, 1, 4, 10));
     const box = this.track(new BoxGeometry(1, 1, 1));
     const mouthArc = this.track(new TorusGeometry(0.16, 0.022, 6, 12, Math.PI));
     const cream = this.createMaterial(0xf6d6a7);
@@ -195,12 +203,10 @@ export class ProceduralGooby implements GoobyActor {
     this.tummyPatch.scale.set(0.88, 1.1, 0.73);
     this.tummyPatch.position.set(0, 1.34, 0.58);
 
-    const haunchLeft = this.createMesh(sphere, apricot, "Gooby.haunch.left");
-    haunchLeft.scale.set(0.76, 0.66, 0.72);
-    haunchLeft.position.set(-0.78, 0.67, -0.02);
-    const haunchRight = this.createMesh(sphere, apricot, "Gooby.haunch.right");
-    haunchRight.scale.copy(haunchLeft.scale);
-    haunchRight.position.set(0.78, 0.67, -0.02);
+    const haunches = this.createMergedParts(sphere, apricot, "Gooby.haunches", [
+      { position: [-0.78, 0.67, -0.02], scale: [0.76, 0.66, 0.72] },
+      { position: [0.78, 0.67, -0.02], scale: [0.76, 0.66, 0.72] },
+    ]);
 
     const headShape = this.createMesh(sphere, cream, "Gooby.head");
     headShape.scale.set(0.92, 0.84, 0.84);
@@ -304,14 +310,10 @@ export class ProceduralGooby implements GoobyActor {
     footRight.scale.copy(footLeft.scale);
     footRight.position.set(0.62, 0.24, 0.38);
     this.feet = [footLeft, footRight];
-    const padLeft = this.createMesh(sphere, innerEar, "Gooby.foot.left.pad");
-    padLeft.scale.set(0.28, 0.08, 0.38);
-    padLeft.position.set(-0.62, 0.21, 1.04);
-    const padRight = this.createMesh(sphere, innerEar, "Gooby.foot.right.pad");
-    padRight.scale.copy(padLeft.scale);
-    padRight.position.x = 0.62;
-    padRight.position.y = 0.21;
-    padRight.position.z = 1.04;
+    const footPads = this.createMergedParts(sphere, innerEar, "Gooby.foot.pads", [
+      { position: [-0.62, 0.21, 1.04], scale: [0.28, 0.08, 0.38] },
+      { position: [0.62, 0.21, 1.04], scale: [0.28, 0.08, 0.38] },
+    ]);
 
     this.tail.name = "Gooby.tail-rig";
     this.tail.position.set(0.94, 1.22, -0.69);
@@ -351,8 +353,7 @@ export class ProceduralGooby implements GoobyActor {
       ...this.brows,
     );
     this.rig.add(
-      haunchLeft,
-      haunchRight,
+      haunches,
       this.tail,
       this.belly,
       this.tummyPatch,
@@ -363,8 +364,7 @@ export class ProceduralGooby implements GoobyActor {
       armRight,
       footLeft,
       footRight,
-      padLeft,
-      padRight,
+      footPads,
     );
 
     const triangles = countCharacterTriangles(this.root);
@@ -393,6 +393,28 @@ export class ProceduralGooby implements GoobyActor {
     value.castShadow = true;
     value.receiveShadow = true;
     return value;
+  }
+
+  private createMergedParts(
+    geometry: BufferGeometry,
+    meshMaterial: MeshStandardMaterial,
+    name: string,
+    parts: readonly {
+      readonly position: readonly [number, number, number];
+      readonly scale: readonly [number, number, number];
+    }[],
+  ): CharacterMesh {
+    const transformed = parts.map(({ position, scale }) => {
+      const transform = new Object3D();
+      transform.position.set(...position);
+      transform.scale.set(...scale);
+      transform.updateMatrix();
+      return geometry.clone().applyMatrix4(transform.matrix);
+    });
+    const merged = mergeGeometries(transformed, false);
+    for (const part of transformed) part.dispose();
+    if (!merged) throw new Error(`Unable to merge static Gooby parts: ${name}`);
+    return this.createMesh(this.track(merged), meshMaterial, name);
   }
 
   private createCosmeticSlot(anchor: Group): CosmeticSlotState {
@@ -451,6 +473,22 @@ export class ProceduralGooby implements GoobyActor {
     return count;
   }
 
+  get wakeStretchCount(): number {
+    return this.wakeStretchStarts;
+  }
+
+  get currentIdlePose(): string {
+    return this.idlePose;
+  }
+
+  get sleepingBlend(): number {
+    return this.sleepBlend;
+  }
+
+  get eyeOpenAmount(): number {
+    return this.eyeOpenBlend;
+  }
+
   setMood(mood: GoobyMood): void {
     this.currentMood = mood;
   }
@@ -481,7 +519,9 @@ export class ProceduralGooby implements GoobyActor {
       return;
     }
     if (reaction === "wake" || reaction === "wake-stretch") {
+      if (this.reaction === "wake-stretch") return;
       this.sleeping = false;
+      this.wakeStretchStarts += 1;
       this.beginReaction("wake-stretch", 1.45);
       this.currentMood = legacyMoodFor(this.currentCareMood);
       return;
@@ -492,6 +532,10 @@ export class ProceduralGooby implements GoobyActor {
     }
     const duration = reaction === "pet"
       ? 1.15
+      : reaction === "belly-rub"
+        ? 1.65
+        : reaction === "greet"
+          ? 1.3
       : reaction === "tickle"
         ? 0.95 + this.tickleLevel * 0.12
         : reaction === "poke"
@@ -506,14 +550,25 @@ export class ProceduralGooby implements GoobyActor {
                   ? 1.7
                   : 1.8;
     this.beginReaction(reaction, duration);
-    if (reaction === "pet" || reaction === "tickle" || reaction === "feed" || reaction === "celebrate") {
+    if (
+      reaction === "pet" ||
+      reaction === "belly-rub" ||
+      reaction === "greet" ||
+      reaction === "tickle" ||
+      reaction === "feed" ||
+      reaction === "celebrate"
+    ) {
       this.currentMood = "delighted";
     } else if (reaction === "poke" || reaction === "bathe" || reaction === "shiver") {
       this.currentMood = "curious";
     } else if (reaction === "sad") {
       this.currentMood = "grumpy";
     }
-    const impulse = reaction === "tickle" ? 1.3 + this.tickleLevel * 0.45 : 0.65;
+    const impulse = reaction === "tickle"
+      ? 1.3 + this.tickleLevel * 0.45
+      : reaction === "belly-rub"
+        ? 0.42
+        : 0.65;
     this.leftEarVelocity += impulse;
     this.rightEarVelocity -= impulse * 0.72;
     this.tailVelocity += reaction === "sad" ? -0.8 : impulse * 1.25;
@@ -528,7 +583,7 @@ export class ProceduralGooby implements GoobyActor {
 
   setSleeping(sleeping: boolean): void {
     if (this.disposed) return;
-    if (sleeping && this.sleeping && this.reaction === "fall-asleep") return;
+    if (sleeping === this.sleeping) return;
     this.sleeping = sleeping;
     if (sleeping) {
       this.currentMood = "sleepy";
@@ -537,10 +592,29 @@ export class ProceduralGooby implements GoobyActor {
       this.rightEarVelocity += 0.28;
     } else {
       this.currentMood = legacyMoodFor(this.currentCareMood);
+      this.wakeStretchStarts += 1;
       this.beginReaction("wake-stretch", 1.45);
       this.leftEarVelocity -= 0.65;
       this.rightEarVelocity -= 0.42;
     }
+  }
+
+  restoreSleepingPose(): void {
+    if (this.disposed) return;
+    this.sleeping = true;
+    this.currentMood = "sleepy";
+    this.reaction = null;
+    this.reactionAge = 0;
+    this.reactionDuration = 0;
+    this.sleepBlend = 1;
+    this.eyeOpenBlend = 0.045;
+    this.leftEarSpring = 0.46;
+    this.rightEarSpring = 0.34;
+    this.tailSpring = -0.35;
+  }
+
+  setReducedMotion(reduced: boolean): void {
+    this.reducedMotion = reduced;
   }
 
   update(deltaSeconds: number, elapsedSeconds: number): void {
@@ -564,9 +638,21 @@ export class ProceduralGooby implements GoobyActor {
       }
     }
 
+    const blendDelta = Math.min(0.25, Math.max(0, deltaSeconds));
+    const sleepTarget = this.sleeping ? 1 : 0;
+    const sleepBlendRate = this.reducedMotion ? 12 : 5.5;
+    this.sleepBlend +=
+      (sleepTarget - this.sleepBlend) *
+      (1 - Math.exp(-blendDelta * sleepBlendRate));
+    if (Math.abs(this.sleepBlend - sleepTarget) < 0.001) this.sleepBlend = sleepTarget;
+
+    const motionScale = this.reducedMotion ? 0.24 : 1;
     const breathRate = this.sleeping ? 2.05 : this.currentCareMood === "ecstatic" ? 4.1 : 3.05;
     const breath = Math.sin(elapsedSeconds * breathRate) * (this.sleeping ? 0.026 : 0.018);
-    const weightShift = Math.sin(elapsedSeconds * 0.72) * (this.sleeping ? 0.008 : 0.024);
+    const weightShift =
+      Math.sin(elapsedSeconds * 0.72) *
+      (this.sleeping ? 0.008 : 0.024) *
+      motionScale;
     let hop = 0;
     let shake = 0;
     let lean = 0;
@@ -574,8 +660,9 @@ export class ProceduralGooby implements GoobyActor {
     let stretch = 0;
     let armLift = 0;
     let chew = 0;
+    let yawn = 0;
     let headNod = 0;
-    let sleepBlend = this.sleeping && this.reaction !== "fall-asleep" ? 1 : 0;
+    let sleepBlend = this.sleepBlend;
     let earTargetLeft = this.sleeping ? 0.46 : 0;
     let earTargetRight = this.sleeping ? 0.34 : 0.08;
     let tailTarget = this.sleeping ? -0.35 : Math.sin(elapsedSeconds * 1.4) * 0.055;
@@ -595,12 +682,37 @@ export class ProceduralGooby implements GoobyActor {
       lean += Math.sin(elapsedSeconds * 0.38) * 0.035;
     }
 
+    if (!this.reaction && !this.sleeping) {
+      const idleIndex = Math.floor(elapsedSeconds / 4.8) % 4;
+      this.idlePose = ["sway", "ear-perk", "toe-tap", "star-peek"][idleIndex] ?? "sway";
+      if (idleIndex === 1) {
+        earTargetLeft -= Math.sin(elapsedSeconds * 2.1) * 0.08;
+        headNod -= 0.025;
+      } else if (idleIndex === 2) {
+        hop += Math.max(0, Math.sin(elapsedSeconds * 2.4)) * 0.018;
+      } else if (idleIndex === 3) {
+        this.lookY += (-0.18 - this.lookY) * Math.min(1, delta * 2.2);
+        headNod -= 0.035;
+      }
+    }
+
     if (this.reaction === "pet") {
       lean += reactionEnvelope * 0.085;
       headNod -= reactionEnvelope * 0.12;
       tailTarget += Math.sin(this.reactionAge * 16) * reactionEnvelope * 0.38;
       earTargetLeft -= reactionEnvelope * 0.12;
       armLift += reactionEnvelope * 0.08;
+    } else if (this.reaction === "belly-rub") {
+      lean += Math.sin(this.reactionAge * 2.8) * reactionEnvelope * 0.045;
+      headNod -= reactionEnvelope * 0.08;
+      squash += Math.sin(this.reactionAge * 5.2) * reactionEnvelope * 0.022;
+      tailTarget += Math.sin(this.reactionAge * 10) * reactionEnvelope * 0.32;
+      armLift += reactionEnvelope * 0.12;
+    } else if (this.reaction === "greet") {
+      hop += Math.sin(reactionProgress * Math.PI) * 0.06;
+      armLift += reactionEnvelope * 0.5;
+      lean += Math.sin(this.reactionAge * 5.5) * reactionEnvelope * 0.04;
+      earTargetLeft -= reactionEnvelope * 0.14;
     } else if (this.reaction === "tickle") {
       const ticklePower = 0.72 + this.tickleLevel * 0.18;
       shake += Math.sin(this.reactionAge * (18 + this.tickleLevel * 6))
@@ -633,7 +745,8 @@ export class ProceduralGooby implements GoobyActor {
       earTargetRight += reactionEnvelope * 0.25;
       this.lookY = clamp(this.lookY + deltaSeconds * 0.8, -0.7, 0.2);
     } else if (this.reaction === "fall-asleep") {
-      sleepBlend = smoothstep(reactionProgress);
+      sleepBlend = Math.max(this.sleepBlend, smoothstep(reactionProgress));
+      this.sleepBlend = sleepBlend;
       headNod += sleepBlend * 0.18;
       earTargetLeft += sleepBlend * 0.46;
       earTargetRight += sleepBlend * 0.26;
@@ -642,6 +755,7 @@ export class ProceduralGooby implements GoobyActor {
       stretch += reactionEnvelope * 0.13;
       armLift += reactionEnvelope * 0.72;
       headNod -= reactionEnvelope * 0.12;
+      yawn = Math.sin(Math.min(1, reactionProgress * 1.35) * Math.PI) * 0.82;
       earTargetLeft -= reactionEnvelope * 0.2;
       earTargetRight -= reactionEnvelope * 0.12;
       hop += Math.sin(reactionProgress * Math.PI) * 0.075;
@@ -658,6 +772,14 @@ export class ProceduralGooby implements GoobyActor {
       earTargetRight += reactionEnvelope * 0.25;
       tailTarget -= reactionEnvelope * 0.32;
     }
+
+    hop *= motionScale;
+    shake *= motionScale;
+    lean *= motionScale;
+    squash *= motionScale;
+    stretch *= motionScale;
+    armLift *= motionScale;
+    if (this.reducedMotion) yawn *= 0.55;
 
     this.bellyVelocity += (-this.bellySpring * 42 - this.bellyVelocity * 8.5) * delta;
     this.bellySpring += this.bellyVelocity * delta;
@@ -692,7 +814,7 @@ export class ProceduralGooby implements GoobyActor {
     this.muzzles[0].position.x = -0.2 - chew * 0.018;
     this.muzzles[1].position.x = 0.2 + chew * 0.018;
     this.tooth.position.y = -0.48 - chew * 0.035;
-    this.mouth.scale.y = 1 + chew * 0.45;
+    this.mouth.scale.set(1 + yawn * 0.18, 1 + chew * 0.45 + yawn * 0.9, 1);
 
     this.arms[0].rotation.z = -0.24 - armLift;
     this.arms[1].rotation.z = 0.24 + armLift;
@@ -703,17 +825,22 @@ export class ProceduralGooby implements GoobyActor {
 
     const blinkPeriod = this.currentCareMood === "sleepy" ? 3.1 : 4.55;
     const blinkCycle = elapsedSeconds % blinkPeriod;
-    let eyeOpen = this.sleeping ? 0.045 : 1;
+    let eyeOpenTarget = this.sleeping ? 0.045 : 1;
     if (!this.sleeping && blinkCycle > blinkPeriod - 0.18) {
-      eyeOpen = Math.max(0.055, Math.abs(blinkCycle - (blinkPeriod - 0.09)) * 10.5);
+      eyeOpenTarget = Math.max(0.055, Math.abs(blinkCycle - (blinkPeriod - 0.09)) * 10.5);
     }
-    if (this.currentCareMood === "sleepy" && !this.reaction) eyeOpen *= 0.58;
-    if (this.currentCareMood === "sad" || this.reaction === "sad") eyeOpen *= 0.78;
+    if (this.currentCareMood === "sleepy" && !this.reaction) eyeOpenTarget *= 0.58;
+    if (this.currentCareMood === "sad" || this.reaction === "sad") eyeOpenTarget *= 0.78;
     if (this.reaction === "tickle" || this.reaction === "celebrate") {
-      eyeOpen = Math.max(eyeOpen, 0.9 + reactionEnvelope * 0.18);
+      eyeOpenTarget = Math.max(eyeOpenTarget, 0.9 + reactionEnvelope * 0.18);
     }
-    if (this.reaction === "poke") eyeOpen = 1 + reactionEnvelope * 0.24;
-    if (this.reaction === "fall-asleep") eyeOpen *= 1 - sleepBlend * 0.95;
+    if (this.reaction === "poke") eyeOpenTarget = 1 + reactionEnvelope * 0.24;
+    eyeOpenTarget *= 1 - sleepBlend * 0.955;
+    const eyeRate = this.reducedMotion ? 14 : 9;
+    this.eyeOpenBlend +=
+      (eyeOpenTarget - this.eyeOpenBlend) *
+      (1 - Math.exp(-blendDelta * eyeRate));
+    const eyeOpen = clamp(this.eyeOpenBlend, 0.035, 1.24);
 
     const idleLookX = Math.sin(elapsedSeconds * 0.37) * 0.018;
     const idleLookY = Math.sin(elapsedSeconds * 0.29) * 0.012;

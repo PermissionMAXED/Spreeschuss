@@ -301,9 +301,23 @@ export function buildAssetConsumerAudit({
   };
 }
 
+// Inert XML namespace identifiers are not network requests. This mirrors the
+// allowlist in scripts/audit/no-network-scan.mjs, which owns the production
+// network scan.
+const INERT_NAMESPACE_URLS = [
+  "http://www.w3.org/1999/xhtml",
+  "http://www.w3.org/2000/svg",
+  "http://www.w3.org/1999/xlink",
+  "http://www.w3.org/2000/xmlns/",
+];
+
 export function runtimeReferenceViolations(path, source) {
   const violations = [];
-  if (/(?:https?:)?\/\/[a-z0-9.-]+\.[a-z]{2,}/iu.test(source)) {
+  let masked = source;
+  for (const namespace of INERT_NAMESPACE_URLS) {
+    masked = masked.replaceAll(namespace, " ".repeat(namespace.length));
+  }
+  if (/(?:https?:)?\/\/[a-z0-9.-]+\.[a-z]{2,}/iu.test(masked)) {
     violations.push(`${path}: external runtime URL`);
   }
   if (/["'`](?:[^"'`\r\n]*\/)?[^"'`\r\n]*\.ogg(?:[?#][^"'`]*)?["'`]/iu.test(source)) {

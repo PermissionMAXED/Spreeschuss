@@ -167,6 +167,47 @@ describe("ProceduralGooby reactions", () => {
     expect(actor.resourceCount).toBe(resources);
     actor.dispose();
   });
+
+  it("restores sleep instantly and coalesces double wake triggers frame by frame", () => {
+    const actor = new ProceduralGooby();
+    actor.restoreSleepingPose();
+    expect(actor.reactionPhase).toBe("sleep");
+    expect(actor.sleepingBlend).toBe(1);
+    expect(actor.eyeOpenAmount).toBeCloseTo(0.045);
+
+    actor.setSleeping(false);
+    actor.react("wake");
+    expect(actor.wakeStretchCount).toBe(1);
+    const openness: number[] = [];
+    for (let frame = 0; frame < 12; frame += 1) {
+      actor.update(1 / 60, frame / 60);
+      openness.push(actor.eyeOpenAmount);
+    }
+    expect(openness[0]).toBeGreaterThan(0.045);
+    expect(openness.at(-1)).toBeGreaterThan(openness[0] ?? 0);
+    expect(openness.at(-1)).toBeLessThan(1);
+    actor.dispose();
+  });
+
+  it("keeps reduced-motion wake and idle amplitudes gentle", () => {
+    const normal = new ProceduralGooby();
+    const reduced = new ProceduralGooby();
+    normal.restoreSleepingPose();
+    reduced.restoreSleepingPose();
+    reduced.setReducedMotion(true);
+    normal.setSleeping(false);
+    reduced.setSleeping(false);
+    const normalRig = normal.root.getObjectByName("Gooby.animation-rig");
+    const reducedRig = reduced.root.getObjectByName("Gooby.animation-rig");
+    if (!normalRig || !reducedRig) throw new Error("Animation rigs are missing");
+
+    normal.update(0.45, 0.45);
+    reduced.update(0.45, 0.45);
+    expect(Math.abs(reducedRig.scale.y - 1)).toBeLessThan(Math.abs(normalRig.scale.y - 1));
+    expect(reduced.wakeStretchCount).toBe(1);
+    normal.dispose();
+    reduced.dispose();
+  });
 });
 
 describe("ProceduralGooby production constraints", () => {

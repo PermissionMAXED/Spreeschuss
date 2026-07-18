@@ -1,0 +1,362 @@
+{
+  "schemaVersion": 1,
+  "domain": "audio",
+  "generator": ".asset-cache/audio/build.mjs",
+  "normalization": {
+    "sfxLufs": -16,
+    "voiceLufs": -18,
+    "musicLufs": -18,
+    "truePeakDb": -1.5
+  },
+  "sourceLock": "assets/audio/sources.lock.json",
+  "bindings": {
+    "sfx": {
+      "ui-tap": "sfx.ui",
+      "ui-confirm": "sfx.confirm",
+      "ui-back": "sfx.back",
+      "ui-open": "sfx.toggle",
+      "ui-close": "sfx.slider",
+      "ui-denied": "sfx.error",
+      "ui-toggle": "sfx.toggle",
+      "ui-slider": "sfx.slider",
+      "ui-error": "sfx.error",
+      "pet": "sfx.confirm",
+      "tickle": "sfx.combo",
+      "poke": "sfx.hit",
+      "feed": "sfx.pickup",
+      "chew": "sfx.hit",
+      "bathe": "sfx.slider",
+      "sleep": "sfx.back",
+      "wake": "sfx.confirm",
+      "coin": "sfx.coin",
+      "purchase": "sfx.purchase",
+      "engine-start": "sfx.brake",
+      "engine-loop": "sfx.skid",
+      "engine-stop": "sfx.brake",
+      "skid": "sfx.skid",
+      "brake": "sfx.brake",
+      "pickup": "sfx.pickup",
+      "recovery": "sfx.win",
+      "minigame-hit": "sfx.hit",
+      "minigame-miss": "sfx.miss",
+      "minigame-combo": "sfx.combo",
+      "minigame-countdown": "sfx.ui",
+      "minigame-go": "sfx.go",
+      "minigame-win": "sfx.win",
+      "minigame-lose": "sfx.lose",
+      "minigame-score": "sfx.coin",
+      "voice-greeting": "voice.happy",
+      "voice-happy": "voice.happy",
+      "voice-giggle": "voice.giggle",
+      "voice-curious": "voice.curious",
+      "voice-hungry": "voice.curious",
+      "voice-munch-happy": "voice.giggle",
+      "voice-sleepy": "voice.sleepy",
+      "voice-yawn": "voice.sleepy",
+      "voice-goodnight": "voice.sleepy",
+      "voice-good-morning": "voice.happy",
+      "voice-cheer": "voice.happy",
+      "voice-sad": "voice.sad"
+    },
+    "music": {
+      "home": "music.home",
+      "city": "music.city",
+      "shop": "music.shop",
+      "calm": "music.calm",
+      "action": "music.action",
+      "lullaby": "music.lullaby",
+      "surf": "music.surf",
+      "cake": "music.cake"
+    }
+  },
+  "sfx": {
+    "ui-tap": {
+      "output": {
+        "path": "/assets/audio/sfx/ui.wav"
+      }
+    },
+    "ui-confirm": {
+      "output": {
+        "path": "/assets/audio/sfx/confirm.wav"
+      }
+    },
+    "ui-back": {
+      "output": {
+        "path": "/assets/audio/sfx/back.wav"
+      }
+    },
+    "ui-open": {
+      "output": {
+        "path": "/assets/audio/sfx/toggle.wav"
+      }
+    },
+    "ui-close": {
+      "output": {
+        "path": "/assets/audio/sfx/slider.wav"
+      }
+    },
+    "ui-denied": {
+      "output": {
+        "path": "/assets/audio/sfx/error.wav"
+      }
+    },
+    "ui-toggle": {
+      "output": {
+        "path": "/assets/audio/sfx/toggle.wav"
+      }
+    },
+    "ui-slider": {
+      "output": {
+        "path": "/assets/audio/sfx/slider.wav"
+      }
+    },
+    "ui-error": {
+      "output": {
+        "path": "/assets/audio/sfx/error.wav"
+      }
+    },
+    "pet": {
+      "output": {
+        "path": "/assets/audio/sfx/confirm.wav"
+      }
+    },
+    "tickle": {
+      "output": {
+        "path": "/assets/audio/sfx/combo.wav"
+      }
+    },
+    "poke": {
+      "output": {
+        "path": "/assets/audio/sfx/hit.wav"
+      }
+    },
+    "feed": {
+      "output": {
+        "path": "/assets/audio/sfx/pickup.wav"
+      }
+    },
+    "chew": {
+      "output": {
+        "path": "/assets/audio/sfx/hit.wav"
+      }
+    },
+    "bathe": {
+      "output": {
+        "path": "/assets/audio/sfx/slider.wav"
+      }
+    },
+    "sleep": {
+      "output": {
+        "path": "/assets/audio/sfx/back.wav"
+      }
+    },
+    "wake": {
+      "output": {
+        "path": "/assets/audio/sfx/confirm.wav"
+      }
+    },
+    "coin": {
+      "output": {
+        "path": "/assets/audio/sfx/coin.wav"
+      }
+    },
+    "purchase": {
+      "output": {
+        "path": "/assets/audio/sfx/purchase.wav"
+      }
+    },
+    "engine-start": {
+      "output": {
+        "path": "/assets/audio/sfx/brake.wav"
+      }
+    },
+    "engine-loop": {
+      "output": {
+        "path": "/assets/audio/sfx/skid.wav"
+      }
+    },
+    "engine-stop": {
+      "output": {
+        "path": "/assets/audio/sfx/brake.wav"
+      }
+    },
+    "skid": {
+      "output": {
+        "path": "/assets/audio/sfx/skid.wav"
+      }
+    },
+    "brake": {
+      "output": {
+        "path": "/assets/audio/sfx/brake.wav"
+      }
+    },
+    "pickup": {
+      "output": {
+        "path": "/assets/audio/sfx/pickup.wav"
+      }
+    },
+    "recovery": {
+      "output": {
+        "path": "/assets/audio/sfx/win.wav"
+      }
+    },
+    "minigame-hit": {
+      "output": {
+        "path": "/assets/audio/sfx/hit.wav"
+      }
+    },
+    "minigame-miss": {
+      "output": {
+        "path": "/assets/audio/sfx/miss.wav"
+      }
+    },
+    "minigame-combo": {
+      "output": {
+        "path": "/assets/audio/sfx/combo.wav"
+      }
+    },
+    "minigame-countdown": {
+      "output": {
+        "path": "/assets/audio/sfx/ui.wav"
+      }
+    },
+    "minigame-go": {
+      "output": {
+        "path": "/assets/audio/sfx/go.wav"
+      }
+    },
+    "minigame-win": {
+      "output": {
+        "path": "/assets/audio/sfx/win.wav"
+      }
+    },
+    "minigame-lose": {
+      "output": {
+        "path": "/assets/audio/sfx/lose.wav"
+      }
+    },
+    "minigame-score": {
+      "output": {
+        "path": "/assets/audio/sfx/coin.wav"
+      }
+    },
+    "voice-greeting": {
+      "output": {
+        "path": "/assets/audio/voice/happy.wav"
+      }
+    },
+    "voice-happy": {
+      "output": {
+        "path": "/assets/audio/voice/happy.wav"
+      }
+    },
+    "voice-giggle": {
+      "output": {
+        "path": "/assets/audio/voice/giggle.wav"
+      }
+    },
+    "voice-curious": {
+      "output": {
+        "path": "/assets/audio/voice/curious.wav"
+      }
+    },
+    "voice-hungry": {
+      "output": {
+        "path": "/assets/audio/voice/curious.wav"
+      }
+    },
+    "voice-munch-happy": {
+      "output": {
+        "path": "/assets/audio/voice/giggle.wav"
+      }
+    },
+    "voice-sleepy": {
+      "output": {
+        "path": "/assets/audio/voice/sleepy.wav"
+      }
+    },
+    "voice-yawn": {
+      "output": {
+        "path": "/assets/audio/voice/sleepy.wav"
+      }
+    },
+    "voice-goodnight": {
+      "output": {
+        "path": "/assets/audio/voice/sleepy.wav"
+      }
+    },
+    "voice-good-morning": {
+      "output": {
+        "path": "/assets/audio/voice/happy.wav"
+      }
+    },
+    "voice-cheer": {
+      "output": {
+        "path": "/assets/audio/voice/happy.wav"
+      }
+    },
+    "voice-sad": {
+      "output": {
+        "path": "/assets/audio/voice/sad.wav"
+      }
+    }
+  },
+  "music": {
+    "home": {
+      "output": {
+        "path": "/assets/audio/music/home.m4a",
+        "loopStartSeconds": 0,
+        "loopEndSeconds": 88
+      }
+    },
+    "city": {
+      "output": {
+        "path": "/assets/audio/music/city.m4a",
+        "loopStartSeconds": 0,
+        "loopEndSeconds": 88
+      }
+    },
+    "shop": {
+      "output": {
+        "path": "/assets/audio/music/shop.m4a",
+        "loopStartSeconds": 0,
+        "loopEndSeconds": 88
+      }
+    },
+    "calm": {
+      "output": {
+        "path": "/assets/audio/music/calm.m4a",
+        "loopStartSeconds": 0,
+        "loopEndSeconds": 88
+      }
+    },
+    "action": {
+      "output": {
+        "path": "/assets/audio/music/action.m4a",
+        "loopStartSeconds": 0,
+        "loopEndSeconds": 88
+      }
+    },
+    "lullaby": {
+      "output": {
+        "path": "/assets/audio/music/lullaby.m4a",
+        "loopStartSeconds": 0,
+        "loopEndSeconds": 88
+      }
+    },
+    "surf": {
+      "output": {
+        "path": "/assets/audio/music/surf.m4a",
+        "loopStartSeconds": 0,
+        "loopEndSeconds": 88
+      }
+    },
+    "cake": {
+      "output": {
+        "path": "/assets/audio/music/cake.m4a",
+        "loopStartSeconds": 0,
+        "loopEndSeconds": 88
+      }
+    }
+  }
+}

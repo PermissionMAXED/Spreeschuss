@@ -20,7 +20,8 @@ import {
   wakeEarly,
 } from "../core/contracts/simulation";
 import type { StickerId } from "../core/contracts/stickers";
-import { CATALOG_BY_ID, COSMETIC_SLOTS } from "../data/catalog";
+import { CATALOG_BY_ID, COSMETIC_EQUIP_SLOTS } from "../data/catalog";
+import { markAllUnlockedStickersSeen, markStickerSeen } from "../stickers/progression";
 import type { UiPersistedState } from "../ui/model";
 import type { ReplayableSaveReducer } from "./save-coordinator";
 
@@ -99,7 +100,7 @@ export function ownedEquipped(
   equipped: Readonly<Record<string, string>>,
 ): Record<string, string> {
   const valid: Record<string, string> = {};
-  for (const slot of COSMETIC_SLOTS) {
+  for (const slot of COSMETIC_EQUIP_SLOTS) {
     const itemId = equipped[slot];
     if (!itemId) continue;
     const item = CATALOG_BY_ID.get(itemId);
@@ -308,6 +309,38 @@ export function setDevWorkshopFlagReducer(flag: string, enabled: boolean): Repla
           flags: { ...state.devWorkshop.flags, [flag]: enabled },
         },
       });
+}
+
+/** Persists the "seen" flag for an unlocked sticker; a no-op for locked or already-seen ones. */
+export function markStickerSeenReducer(id: StickerId, seenAt: number): ReplayableSaveReducer {
+  return (state) => markStickerSeen(state, id, seenAt);
+}
+
+/** Marks every currently unlocked sticker as seen (e.g. closing the sticker book). */
+export function markAllStickersSeenReducer(seenAt: number): ReplayableSaveReducer {
+  return (state) => markAllUnlockedStickersSeen(state, seenAt);
+}
+
+/**
+ * Equips or clears one of the six wardrobe sockets. Unknown slots, unowned
+ * items, and slot mismatches are rejected wholesale so a replay can never
+ * persist an invalid outfit.
+ */
+export function setEquippedCosmeticReducer(
+  slot: string,
+  itemId: string | null,
+): ReplayableSaveReducer {
+  return (state) => {
+    if (!(COSMETIC_EQUIP_SLOTS as readonly string[]).includes(slot)) return state;
+    const equipped: Record<string, string> = { ...state.ui.equipped };
+    if (itemId === null) delete equipped[slot];
+    else equipped[slot] = itemId;
+    const valid = ownedEquipped(state, equipped);
+    if (itemId !== null && valid[slot] !== itemId) return state;
+    return same(valid, state.ui.equipped)
+      ? state
+      : SaveStateSchema.parse({ ...state, ui: { ...state.ui, equipped: valid } });
+  };
 }
 
 /** Sticker unlocks are exactly-once: an existing unlock time is never rewritten. */

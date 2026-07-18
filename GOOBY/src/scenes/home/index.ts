@@ -66,5 +66,6 @@ export type {
   SelectedDecorPlacementRequest,
 } from "./base";
 export { HomeZoneScene } from "./base";
+export * from "./gestures";
 export * from "./state";
 export * from "../../data/home";

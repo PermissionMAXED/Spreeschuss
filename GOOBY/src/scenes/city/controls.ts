@@ -35,12 +35,25 @@ export function hitRegionsOverlap(a: NormalizedHitRegion, b: NormalizedHitRegion
     && a.y + a.height > b.y;
 }
 
+interface HeldPointer {
+  readonly region: DriveControlRegion;
+  readonly magnitude: number;
+}
+
 export class DriveControlState {
-  private readonly pointers = new Map<number, DriveControlRegion>();
+  private readonly pointers = new Map<number, HeldPointer>();
   private readonly keys = new Set<CityDriveKey>();
 
-  press(pointerId: number, region: DriveControlRegion): DriveControls {
-    this.pointers.set(pointerId, region);
+  /**
+   * Registers or updates a held pointer. `magnitude` carries the analog touch
+   * position within a steer button (1 = full lock); the default keeps digital
+   * taps at full strength.
+   */
+  press(pointerId: number, region: DriveControlRegion, magnitude = 1): DriveControls {
+    this.pointers.set(pointerId, {
+      region,
+      magnitude: Math.max(0, Math.min(1, magnitude)),
+    });
     return this.controls;
   }
 
@@ -66,18 +79,18 @@ export class DriveControlState {
   }
 
   get controls(): DriveControls {
-    let left = this.keys.has("ArrowLeft") || this.keys.has("KeyA");
-    let right = this.keys.has("ArrowRight") || this.keys.has("KeyD");
+    let left = this.keys.has("ArrowLeft") || this.keys.has("KeyA") ? 1 : 0;
+    let right = this.keys.has("ArrowRight") || this.keys.has("KeyD") ? 1 : 0;
     let brake = this.keys.has("ArrowDown") || this.keys.has("KeyS") || this.keys.has("Space");
-    for (const region of this.pointers.values()) {
-      left ||= region === "steer-left";
-      right ||= region === "steer-right";
-      brake ||= region === "brake";
+    for (const held of this.pointers.values()) {
+      if (held.region === "steer-left") left = Math.max(left, held.magnitude);
+      else if (held.region === "steer-right") right = Math.max(right, held.magnitude);
+      else brake = true;
     }
     return {
-      steering: left === right ? 0 : left ? 1 : -1,
+      steering: Math.max(-1, Math.min(1, left - right)),
       braking: brake,
-      steeringHeld: left || right,
+      steeringHeld: left > 0 || right > 0,
       brakeHeld: brake,
     };
   }
@@ -93,10 +106,27 @@ export function isCityDriveKey(code: string): code is CityDriveKey {
     || code === "Space";
 }
 
+/**
+ * Analog magnitude for a steer press: touches near the button's inner edge
+ * (toward the brake) steer gently, the center and outer half give full lock.
+ */
+export function analogSteerMagnitude(
+  region: DriveControlRegion,
+  buttonLeft: number,
+  buttonWidth: number,
+  pointerX: number,
+): number {
+  if (region === "brake" || buttonWidth <= 0) return 1;
+  const across = Math.max(0, Math.min(1, (pointerX - buttonLeft) / buttonWidth));
+  const outward = region === "steer-left" ? 1 - across : across;
+  return Math.max(0.35, Math.min(1, 0.35 + outward * 1.3));
+}
+
 export class CityPointerControls {
   private readonly state = new DriveControlState();
   private readonly disposers: Array<() => void> = [];
   private enabled = false;
+  private readonly heldRegions = new Map<number, DriveControlRegion>();
 
   constructor(
     private readonly buttons: Readonly<Record<DriveControlRegion, HTMLButtonElement>>,
@@ -104,23 +134,40 @@ export class CityPointerControls {
   ) {
     for (const region of ["steer-left", "brake", "steer-right"] as const) {
       const button = buttons[region];
+      const pressAt = (event: PointerEvent): void => {
+        const rect = button.getBoundingClientRect();
+        this.onChange(this.state.press(
+          event.pointerId,
+          region,
+          analogSteerMagnitude(region, rect.left, rect.width, event.clientX),
+        ));
+        this.syncHeldClasses();
+      };
       const down = (event: PointerEvent): void => {
         event.preventDefault();
         button.setPointerCapture(event.pointerId);
-        this.onChange(this.state.press(event.pointerId, region));
-        this.syncHeldClasses();
+        this.heldRegions.set(event.pointerId, region);
+        pressAt(event);
+      };
+      const move = (event: PointerEvent): void => {
+        if (this.heldRegions.get(event.pointerId) !== region) return;
+        event.preventDefault();
+        pressAt(event);
       };
       const end = (event: PointerEvent): void => {
         event.preventDefault();
+        this.heldRegions.delete(event.pointerId);
         this.onChange(this.state.release(event.pointerId));
         this.syncHeldClasses();
       };
       button.addEventListener("pointerdown", down);
+      button.addEventListener("pointermove", move);
       button.addEventListener("pointerup", end);
       button.addEventListener("pointercancel", end);
       button.addEventListener("lostpointercapture", end);
       this.disposers.push(() => {
         button.removeEventListener("pointerdown", down);
+        button.removeEventListener("pointermove", move);
         button.removeEventListener("pointerup", end);
         button.removeEventListener("pointercancel", end);
         button.removeEventListener("lostpointercapture", end);
@@ -168,6 +215,7 @@ export class CityPointerControls {
   }
 
   releaseAll(): void {
+    this.heldRegions.clear();
     this.onChange(this.state.releaseAll());
     this.syncHeldClasses();
   }

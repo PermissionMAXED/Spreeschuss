@@ -16,6 +16,7 @@ import {
 } from "./audit-lib.mjs";
 import { PACKS } from "./catalog.mjs";
 import {
+  domainNoticeProvenanceViolations,
   licenseNoticeDocument,
   licenseNoticeRecord,
   licenseNoticeViolations,
@@ -103,6 +104,14 @@ test("runtime references reject CDN URLs and OGG load paths", () => {
     ],
   );
   assert.deepEqual(runtimeReferenceViolations("fixture.ts", 'load("assets/audio/tap.wav")'), []);
+  assert.deepEqual(
+    runtimeReferenceViolations("fixture.ts", '<svg xmlns="http://www.w3.org/2000/svg">'),
+    [],
+  );
+  assert.deepEqual(
+    runtimeReferenceViolations("fixture.ts", 'xmlns="http://www.w3.org/2000/svg" src="https://cdn.example/x.png"'),
+    ["fixture.ts: external runtime URL"],
+  );
 });
 
 test("runtime audio allowlist accepts only m4a, mp3, and wav", () => {
@@ -153,6 +162,49 @@ test("license notice generation covers genuine three-pack, seven-file provenance
     assert.match(document, new RegExp(pack.title.replace(/[()]/gu, "\\$&"), "u"));
     for (const file of pack.files) assert.ok(document.includes(file.path));
   }
+});
+
+test("license notice generation merges domain sections deterministically", () => {
+  const sources = new Map([["test-pack", "License: Creative Commons Zero (CC0)"]]);
+  const merged = licenseNoticeDocument(NOTICE_PACKS, sources, [
+    { id: "audio", markdown: "## Audio\n\nAudio provenance body.\n" },
+    { id: "stickers", markdown: "## Stickers\n\nSticker provenance body.\n" },
+  ]);
+  assert.ok(merged.startsWith(NOTICE_DOCUMENT.trimEnd()));
+  assert.ok(merged.indexOf("## Audio") < merged.indexOf("## Stickers"));
+  assert.ok(merged.endsWith("Sticker provenance body.\n"));
+  const repeated = licenseNoticeDocument(NOTICE_PACKS, sources, [
+    { id: "audio", markdown: "## Audio\n\nAudio provenance body.\n" },
+    { id: "stickers", markdown: "## Stickers\n\nSticker provenance body.\n" },
+  ]);
+  assert.equal(merged, repeated);
+  assert.equal(
+    licenseNoticeDocument(NOTICE_PACKS, sources, [{ id: "audio", markdown: "  \n" }]),
+    NOTICE_DOCUMENT,
+  );
+});
+
+test("domain provenance checks require lock titles, hashes, and sticker sheets", () => {
+  const audioLock = {
+    sources: {
+      pack: { title: "Pack Title", archive: { sha256: "1".repeat(64) }, license: { sha256: "2".repeat(64) } },
+      firstParty: { title: "First Party", sha256: "3".repeat(64), license: {} },
+    },
+  };
+  const stickerManifest = {
+    license: "original first-party artwork",
+    sourceSheets: [{ page: "home-life", sha256: "4".repeat(64) }],
+  };
+  const complete = `Pack Title ${"1".repeat(64)} ${"2".repeat(64)} First Party ${"3".repeat(64)} `
+    + `original first-party artwork ${"4".repeat(64)}`;
+  assert.deepEqual(
+    domainNoticeProvenanceViolations({ document: complete, audioLock, stickerManifest }),
+    [],
+  );
+  const missing = domainNoticeProvenanceViolations({ document: "empty", audioLock, stickerManifest });
+  assert.equal(missing.length, 7);
+  assert.ok(missing.every((violation) => violation.startsWith("assets/LICENSES.md: missing")));
+  assert.deepEqual(domainNoticeProvenanceViolations({ document: "empty" }), []);
 });
 
 test("license notice audit rejects missing and stale bundled copies", () => {

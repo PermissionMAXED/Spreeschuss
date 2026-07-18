@@ -17,12 +17,15 @@ import type { SaveState } from "../../core/contracts/save";
 import { ProceduralGooby } from "../../gooby";
 import type { GameRenderer } from "../../render/renderer";
 import {
-  COSMETIC_SLOTS,
+  CATALOG_BY_ID,
+  COSMETIC_EQUIP_SLOTS,
+  getCatalogItemCopy,
   getCatalogOwnershipMetadata,
   SHOP_CATALOGS,
-  type CatalogItem,
-  type CosmeticSlot,
+  type CosmeticEquipSlot,
+  type ShopCatalogItem,
 } from "../../data/catalog";
+import { activeCatalog, getActiveLanguage, onLanguageChanged } from "../../i18n";
 import {
   purchaseCatalogItem,
   PurchaseRequestIdSource,
@@ -41,12 +44,13 @@ import {
   createCosmeticModel,
   createDisplayFixture,
   disposeObjectTree,
+  hydrateCuratedCatalogModel,
   ProceduralShopkeeper,
 } from "./visuals";
 
+export const SHOP_PAGE_SIZE = 8;
+
 interface ShopTheme {
-  readonly title: string;
-  readonly subtitle: string;
   readonly wall: number;
   readonly floor: number;
   readonly fixture: number;
@@ -55,24 +59,18 @@ interface ShopTheme {
 
 const SHOP_THEMES: Readonly<Record<ShopId, ShopTheme>> = {
   "carrot-market": {
-    title: "Carrot Market",
-    subtitle: "Fresh bites for happy bellies",
     wall: 0xffd99a,
     floor: 0xc78d5d,
     fixture: 0x9b6847,
     sky: 0xf7c870,
   },
   "cloud-boutique": {
-    title: "Cloud Boutique",
-    subtitle: "Cozy pieces for every room",
     wall: 0xcbd7b5,
     floor: 0xa47d60,
     fixture: 0x80674f,
     sky: 0xaec4a1,
   },
   "fluff-salon": {
-    title: "Fluff Salon",
-    subtitle: "Cosmetics to try before you buy",
     wall: 0xe2c7df,
     floor: 0xb494aa,
     fixture: 0x8a7291,
@@ -115,6 +113,12 @@ function shopStyles(): string {
       display:flex;gap:6px;overflow-x:auto;padding:4px;pointer-events:auto;scrollbar-width:none}
     .shop-catalog::-webkit-scrollbar{display:none}.shop-catalog button{flex:0 0 auto;padding:7px 10px;border-radius:999px;
       background:#fff8e9e8;box-shadow:0 5px 14px #51342524;font-size:9px;font-weight:800;white-space:nowrap}
+    .shop-pages{position:absolute;top:max(218px,calc(env(safe-area-inset-top) + 204px));right:12px;left:12px;
+      display:flex;align-items:center;justify-content:center;gap:8px;pointer-events:auto}
+    .shop-pages button{min-width:44px;min-height:32px;border-radius:999px;background:#fff8e9e8;
+      box-shadow:0 5px 14px #51342524;font-size:14px;font-weight:900}
+    .shop-pages button:disabled{opacity:.38}.shop-page-status{min-width:92px;text-align:center;padding:6px 9px;
+      border-radius:999px;background:#4e403bd9;color:#fff;font-size:9px;font-weight:850}
     .shop-walk-pad{position:absolute;left:16px;bottom:max(158px,calc(env(safe-area-inset-bottom) + 145px));
       width:94px;height:94px;border-radius:50%;pointer-events:auto;touch-action:none;background:#fff9e555;
       border:2px solid #fff9;box-shadow:inset 0 0 0 25px #5c4b4530}
@@ -126,11 +130,12 @@ function shopStyles(): string {
     .shop-meta{display:flex;gap:5px;flex-wrap:wrap}.shop-meta span{padding:3px 6px;border-radius:99px;background:#ead8c6;font-size:8px;font-weight:800}
     .shop-actions{display:flex;gap:6px;margin-top:8px}.shop-actions button{flex:1;padding:8px 5px;border-radius:10px;background:#6f5a8d;color:white;font-size:10px;font-weight:850}
     .shop-actions .shop-close,.shop-actions .shop-revert{background:#decdbd;color:#594943}
-    .shop-greeting{position:absolute;top:220px;right:18px;left:18px;padding:8px 12px;border-radius:13px;
+    .shop-greeting{position:absolute;top:258px;right:18px;left:18px;padding:8px 12px;border-radius:13px;
       opacity:0;transform:translateY(-5px);background:#4e403be8;color:#fff;font-size:10px;text-align:center;transition:180ms}
     .shop-greeting.show{opacity:1;transform:none}
     @media(max-height:690px){.shop-heading,.shop-town{top:max(106px,calc(env(safe-area-inset-top) + 92px))}
-      .shop-catalog{top:max(158px,calc(env(safe-area-inset-top) + 144px))}.shop-greeting{top:198px}
+      .shop-catalog{top:max(158px,calc(env(safe-area-inset-top) + 144px))}
+      .shop-pages{top:max(198px,calc(env(safe-area-inset-top) + 184px))}.shop-greeting{top:236px}
       .shop-walk-pad{bottom:132px}.shop-inspect{bottom:126px}}
   `;
 }
@@ -141,17 +146,22 @@ export class WalkableShopScene implements GameScene {
   private readonly raycaster = new Raycaster();
   private readonly pointer = new Vector2();
   private readonly displayRoots: Group[] = [];
+  private readonly displayPages: Group[][] = [];
+  private readonly pageGroups: Group[] = [];
   private readonly keys = new Set<string>();
   private readonly shopkeeper: ProceduralShopkeeper;
   private readonly gooby = new ProceduralGooby();
   private readonly tryOnSession: CosmeticTryOnSession | null;
-  private readonly tryOnModels = new Map<CosmeticSlot, Group>();
+  private readonly tryOnModels = new Map<CosmeticEquipSlot, Group>();
+  private readonly extendedTryOnSockets = new Map<CosmeticEquipSlot, Group>();
   private readonly arrival: CityShopArrival;
   private readonly requestIds = new PurchaseRequestIdSource();
   private overlay: HTMLElement | null = null;
   private style: HTMLStyleElement | null = null;
-  private selected: CatalogItem | null = null;
+  private selected: ShopCatalogItem | null = null;
   private preview: Group | null = null;
+  private catalogPage = 0;
+  private unsubscribeLanguage: (() => void) | null = null;
   private elapsed = 0;
   private walkX = 0;
   private walkY = 0;
@@ -183,6 +193,7 @@ export class WalkableShopScene implements GameScene {
     this.entered = true;
     this.buildInterior();
     this.buildOverlay();
+    this.unsubscribeLanguage = onLanguageChanged(() => this.refreshLocalizedOverlay());
     this.resize(context);
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
@@ -232,6 +243,8 @@ export class WalkableShopScene implements GameScene {
     canvas.removeEventListener("pointerdown", this.onCanvasPointerDown);
     canvas.removeEventListener("pointerup", this.onCanvasPointerUp);
     this.tryOnSession?.dispose();
+    this.unsubscribeLanguage?.();
+    this.unsubscribeLanguage = null;
     this.clearTryOnModels();
     this.gooby.dispose();
     this.clearPreview();
@@ -241,16 +254,24 @@ export class WalkableShopScene implements GameScene {
     this.overlay = null;
     this.style = null;
     this.displayRoots.length = 0;
+    this.displayPages.length = 0;
+    this.pageGroups.length = 0;
+    this.extendedTryOnSockets.clear();
   }
 
-  inspectItem(itemId: string): CatalogItem | null {
-    const item = SHOP_CATALOGS[this.shopId].find((entry) => entry.id === itemId) ?? null;
+  inspectItem(itemId: string): ShopCatalogItem | null {
+    const shopCatalog = SHOP_CATALOGS[this.shopId];
+    const itemIndex = shopCatalog.findIndex((entry) => entry.id === itemId);
+    const item = itemIndex >= 0 ? shopCatalog[itemIndex] ?? null : null;
     if (!item) return null;
+    const itemPage = Math.floor(itemIndex / SHOP_PAGE_SIZE);
+    if (itemPage !== this.catalogPage) this.showCatalogPage(itemPage, false);
     this.selected = item;
     this.clearPreview();
     this.preview = createCatalogItemModel(item);
     this.preview.scale.setScalar(item.kind === "furniture" ? 0.34 : 0.44);
     this.dependencies.renderer.scene.add(this.preview);
+    void hydrateCuratedCatalogModel(item, this.preview);
     this.refreshInspectPanel();
     return item;
   }
@@ -288,10 +309,20 @@ export class WalkableShopScene implements GameScene {
 
     const catalog = SHOP_CATALOGS[this.shopId];
     catalog.forEach((item, index) => {
-      const row = Math.floor(index / 2);
-      const side = index % 2 === 0 ? -1 : 1;
+      const page = Math.floor(index / SHOP_PAGE_SIZE);
+      const pageIndex = index % SHOP_PAGE_SIZE;
+      const row = Math.floor(pageIndex / 2);
+      const side = pageIndex % 2 === 0 ? -1 : 1;
+      const pageGroup = this.pageGroups[page] ?? new Group();
+      if (!this.pageGroups[page]) {
+        pageGroup.name = `Catalog page ${page + 1}`;
+        pageGroup.visible = page === 0;
+        this.pageGroups[page] = pageGroup;
+        this.displayPages[page] = [];
+        this.root.add(pageGroup);
+      }
       const display = new Group();
-      display.position.set(side * 3.18, 0.82, 4.2 - row * 1.72);
+      display.position.set(side * 3.18, 0.82, 3.65 - row * 3.9);
       display.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2;
       const fixture = createDisplayFixture(item.display.fixture, theme.fixture);
       const model = createCatalogItemModel(item);
@@ -299,9 +330,11 @@ export class WalkableShopScene implements GameScene {
       model.scale.setScalar(item.kind === "furniture" ? 0.58 : 0.72);
       display.userData.catalogItemId = item.id;
       display.add(fixture, model);
-      this.displayRoots.push(display);
-      this.root.add(display);
+      this.displayPages[page]?.push(display);
+      pageGroup.add(display);
+      void hydrateCuratedCatalogModel(item, model);
     });
+    this.showCatalogPage(0, false);
 
     this.shopkeeper.root.position.set(-1, 0, 0);
     this.shopkeeper.root.rotation.y = 0.25;
@@ -362,20 +395,42 @@ export class WalkableShopScene implements GameScene {
   private createTryOnMannequin(): Group {
     this.gooby.root.name = "Live Gooby cosmetic try-on";
     this.gooby.root.scale.setScalar(0.62);
+    const head = this.gooby.root.getObjectByName("Gooby.head-rig");
+    const rig = this.gooby.root.getObjectByName("Gooby.animation-rig");
+    if (!head || !rig) throw new Error("The salon mannequin is missing its animated attachment parents");
+    const face = new Group();
+    face.name = "Gooby.socket.face";
+    face.position.set(0, -0.07, 0.91);
+    head.add(face);
+    const paws = new Group();
+    paws.name = "Gooby.socket.paws";
+    paws.position.set(0, 0.27, 0.98);
+    rig.add(paws);
+    this.extendedTryOnSockets.set("face", face);
+    this.extendedTryOnSockets.set("paws", paws);
     return this.gooby.root;
+  }
+
+  private cosmeticSocket(slot: CosmeticEquipSlot): Group {
+    if (slot === "face" || slot === "paws") {
+      const socket = this.extendedTryOnSockets.get(slot);
+      if (!socket) throw new Error(`Missing live salon socket: ${slot}`);
+      return socket;
+    }
+    return this.gooby.getCosmeticSocket(slot) as Group;
   }
 
   private renderTryOn(equipped: EquippedCosmetics): void {
     if (this.disposed) return;
     this.clearTryOnModels();
-    for (const slot of COSMETIC_SLOTS) {
+    for (const slot of COSMETIC_EQUIP_SLOTS) {
       const itemId = equipped[slot];
       if (!itemId) continue;
-      const item = SHOP_CATALOGS["fluff-salon"].find((candidate) => candidate.id === itemId);
+      const item = CATALOG_BY_ID.get(itemId);
       if (!item || item.kind !== "cosmetic" || item.slot !== slot) continue;
       const model = createCosmeticModel(item);
       model.name = `try-on:${slot}:${item.id}`;
-      this.gooby.getCosmeticSocket(slot).add(model);
+      this.cosmeticSocket(slot).add(model);
       this.tryOnModels.set(slot, model);
     }
   }
@@ -390,14 +445,19 @@ export class WalkableShopScene implements GameScene {
     this.style.dataset.shopStyles = this.shopId;
     this.style.textContent = shopStyles();
     document.head.append(this.style);
-    const theme = SHOP_THEMES[this.shopId];
+    const shopCopy = activeCatalog().shops[this.shopId];
     this.overlay = document.createElement("section");
     this.overlay.className = "shop-layer";
     this.overlay.dataset.shop = this.shopId;
     this.overlay.innerHTML = `
-      <header class="shop-heading"><b>${theme.title}</b><small>${theme.subtitle}</small></header>
-      <button class="shop-town" data-shop-action="town" aria-label="Return to Town">Town</button>
-      <nav class="shop-catalog" aria-label="${theme.title} catalog"></nav>
+      <header class="shop-heading"><b>${shopCopy.title}</b><small>${shopCopy.description}</small></header>
+      <button class="shop-town" data-shop-action="town" aria-label="Return to Town">${activeCatalog().strings.chrome.town}</button>
+      <nav class="shop-catalog" aria-label="${shopCopy.title} catalog"></nav>
+      <nav class="shop-pages" aria-label="Catalog pages">
+        <button type="button" data-shop-page="previous" aria-label="Previous catalog page">‹</button>
+        <output class="shop-page-status" aria-live="polite"></output>
+        <button type="button" data-shop-page="next" aria-label="Next catalog page">›</button>
+      </nav>
       <div class="shop-greeting" role="status" aria-live="polite"></div>
       <div class="shop-walk-pad" aria-label="Walk around shop" role="application">
         <i class="shop-walk-knob"></i>
@@ -412,15 +472,7 @@ export class WalkableShopScene implements GameScene {
       </article>
     `;
     this.dependencies.mount.append(this.overlay);
-    const catalog = this.overlay.querySelector<HTMLElement>(".shop-catalog");
-    catalog?.replaceChildren(...SHOP_CATALOGS[this.shopId].map((item) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.shopItem = item.id;
-      button.textContent = item.name;
-      button.addEventListener("click", () => this.inspectItem(item.id));
-      return button;
-    }));
+    this.renderCatalogPage();
     this.refreshCatalogMetadata();
     this.overlay.querySelector('[data-shop-action="town"]')?.addEventListener("click", () => {
       void this.leaveForTown();
@@ -434,11 +486,84 @@ export class WalkableShopScene implements GameScene {
       this.showMessage("Your original look is back.");
     });
     this.overlay.querySelector('[data-shop-action="close"]')?.addEventListener("click", () => this.closeInspect());
+    this.overlay.querySelector('[data-shop-page="previous"]')?.addEventListener("click", () => {
+      this.showCatalogPage(this.catalogPage - 1);
+    });
+    this.overlay.querySelector('[data-shop-page="next"]')?.addEventListener("click", () => {
+      this.showCatalogPage(this.catalogPage + 1);
+    });
     const pad = this.overlay.querySelector<HTMLElement>(".shop-walk-pad");
     pad?.addEventListener("pointerdown", this.onPadPointer);
     pad?.addEventListener("pointermove", this.onPadPointer);
     pad?.addEventListener("pointerup", this.onPadEnd);
     pad?.addEventListener("pointercancel", this.onPadEnd);
+  }
+
+  private showCatalogPage(page: number, announce = true): void {
+    const pageCount = Math.max(1, Math.ceil(SHOP_CATALOGS[this.shopId].length / SHOP_PAGE_SIZE));
+    this.catalogPage = Math.max(0, Math.min(pageCount - 1, page));
+    this.pageGroups.forEach((group, index) => {
+      group.visible = index === this.catalogPage;
+    });
+    this.displayRoots.splice(0, this.displayRoots.length, ...(this.displayPages[this.catalogPage] ?? []));
+    this.renderCatalogPage();
+    if (announce) {
+      const language = getActiveLanguage();
+      this.showMessage(language === "de"
+        ? `Katalogseite ${this.catalogPage + 1} von ${pageCount}.`
+        : `Catalog page ${this.catalogPage + 1} of ${pageCount}.`);
+    }
+  }
+
+  private renderCatalogPage(): void {
+    if (!this.overlay) return;
+    const catalog = SHOP_CATALOGS[this.shopId];
+    const pageCount = Math.max(1, Math.ceil(catalog.length / SHOP_PAGE_SIZE));
+    const catalogNav = this.overlay.querySelector<HTMLElement>(".shop-catalog");
+    const buttons = catalog.map((item, index) => {
+      const button = document.createElement("button");
+      const copy = getCatalogItemCopy(item);
+      button.type = "button";
+      button.dataset.shopItem = item.id;
+      button.dataset.shopItemPage = String(Math.floor(index / SHOP_PAGE_SIZE) + 1);
+      if (Math.floor(index / SHOP_PAGE_SIZE) === this.catalogPage) {
+        button.setAttribute("aria-current", "page");
+      }
+      button.textContent = copy.name;
+      button.addEventListener("click", () => this.inspectItem(item.id));
+      return button;
+    });
+    catalogNav?.replaceChildren(...buttons);
+    const previous = this.overlay.querySelector<HTMLButtonElement>('[data-shop-page="previous"]');
+    const next = this.overlay.querySelector<HTMLButtonElement>('[data-shop-page="next"]');
+    if (previous) previous.disabled = this.catalogPage === 0;
+    if (next) next.disabled = this.catalogPage >= pageCount - 1;
+    const status = this.overlay.querySelector<HTMLOutputElement>(".shop-page-status");
+    if (status) {
+      status.value = getActiveLanguage() === "de"
+        ? `Seite ${this.catalogPage + 1} / ${pageCount}`
+        : `Page ${this.catalogPage + 1} / ${pageCount}`;
+    }
+    const pageStart = buttons[this.catalogPage * SHOP_PAGE_SIZE];
+    if (this.catalogPage > 0 && pageStart) {
+      requestAnimationFrame(() => pageStart.scrollIntoView({ block: "nearest", inline: "start" }));
+    }
+    this.refreshCatalogMetadata();
+  }
+
+  private refreshLocalizedOverlay(): void {
+    if (!this.overlay) return;
+    const shopCopy = activeCatalog().shops[this.shopId];
+    const heading = this.overlay.querySelector<HTMLElement>(".shop-heading b");
+    const subtitle = this.overlay.querySelector<HTMLElement>(".shop-heading small");
+    const town = this.overlay.querySelector<HTMLButtonElement>('[data-shop-action="town"]');
+    const catalog = this.overlay.querySelector<HTMLElement>(".shop-catalog");
+    if (heading) heading.textContent = shopCopy.title;
+    if (subtitle) subtitle.textContent = shopCopy.description;
+    if (town) town.textContent = activeCatalog().strings.chrome.town;
+    catalog?.setAttribute("aria-label", `${shopCopy.title} catalog`);
+    this.renderCatalogPage();
+    this.refreshInspectPanel();
   }
 
   private refreshInspectPanel(): void {
@@ -450,8 +575,9 @@ export class WalkableShopScene implements GameScene {
     const description = panel.querySelector("p");
     const meta = panel.querySelector<HTMLElement>(".shop-meta");
     const buy = panel.querySelector<HTMLButtonElement>('[data-shop-action="buy"]');
-    if (heading) heading.textContent = item.name;
-    if (description) description.textContent = item.description;
+    const copy = getCatalogItemCopy(item);
+    if (heading) heading.textContent = copy.name;
+    if (description) description.textContent = copy.description;
     const ownership = getCatalogOwnershipMetadata(item, this.dependencies.getState().inventory);
     if (meta) {
       const details = [`${item.price} coins`, item.rarity, `level ${item.levelRequired}`];

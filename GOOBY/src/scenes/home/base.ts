@@ -50,7 +50,15 @@ import {
   type DecorPlacement,
   type PlacementRequest,
   type PlacementValidation,
+  NOUGAT_DISPENSER_DECOR_ID,
 } from "./state";
+import { BellyGestureTracker } from "./gestures";
+import {
+  batchSolidColorModel,
+  batchStaticHomeGeometry,
+  makeNougatDispenser,
+  type StaticBatchResult,
+} from "./primitives";
 
 export interface HomeViewport {
   readonly width: number;
@@ -161,6 +169,40 @@ export function projectObjectToScreen(
 export type HomeEvent =
   | { readonly type: "inventory:opened"; readonly items: Readonly<Record<string, number>> }
   | { readonly type: "need:changed"; readonly need: "hunger" | "energy" | "hygiene" | "fun"; readonly value: number }
+  | {
+      readonly type: "care:performed";
+      readonly action: "pet" | "tickle" | "poke" | "belly-rub" | "scrub" | "feed";
+      readonly need: "hunger" | "hygiene" | "fun";
+      readonly amount: number;
+      readonly value: number;
+      readonly itemId?: string;
+    }
+  | {
+      readonly type: "care:effect";
+      readonly action: "purr" | "giggle" | "munch";
+      readonly particles: "hearts" | "sparkles" | "crumbs";
+      readonly x?: number;
+      readonly y?: number;
+    }
+  | {
+      readonly type: "achievement:hook";
+      readonly action: "belly-rub" | "nougat-dispensed" | "care" | "greeting";
+      readonly amount: number;
+    }
+  | {
+      readonly type: "item:dispensed";
+      readonly itemId: "hazelnut-nougat-spread";
+      readonly source: "nougatschleuse";
+    }
+  | {
+      readonly type: "gooby:greeting";
+      readonly zone: HomeZoneId;
+      readonly greeting: "wave" | "ear-perk" | "happy-hop";
+    }
+  | {
+      readonly type: "tv:channel";
+      readonly channel: "meadow-watch" | "butterfly-cam" | "cozy-cooking" | "off";
+    }
   | { readonly type: "home:navigate"; readonly destination: NormalUiDestination }
   | { readonly type: "minigame:selected"; readonly game: MinigameId }
   | { readonly type: "decor:changed"; readonly placements: readonly DecorPlacement[] }
@@ -195,6 +237,17 @@ export abstract class HomeZoneScene implements GameScene {
   private readonly catalogCosmetics = new Map<CosmeticSlot, Object3D>();
   private readonly dynamicObjects = new Set<Object3D>();
   private readonly essentialTargets = new Map<string, EssentialInteractionTarget>();
+  private readonly staticBatchExclusions = new Set<Object3D>();
+  private staticBatchResult: StaticBatchResult = {
+    sourceMeshes: 0,
+    batchedMeshes: 0,
+    drawCallsSaved: 0,
+  };
+  private readonly bellyGesture = new BellyGestureTracker();
+  private bellyGestureScale = 100;
+  private bellyGestureClaimed: "belly-rub" | "tickle" | null = null;
+  private suppressFollowupGesture = false;
+  private greetingSent = false;
   private selectedDecor: { readonly decorId: string; readonly instanceId: string | null } | null = null;
   private complete = false;
   private disposed = false;
@@ -206,13 +259,16 @@ export abstract class HomeZoneScene implements GameScene {
     options: HomeSceneOptions = {},
   ) {
     this.id = `home:${zoneId}`;
-    this.gooby = new ProceduralGooby(options.assetLoader ? { assetLoader: options.assetLoader } : {});
     this.root.name = `home-zone:${zoneId}`;
     this.clock = options.clock ?? new RealClock();
     this.readSave = options.readSave ?? (() => null);
     this.writeSave = options.writeSave ?? (() => undefined);
     this.eventHandler = options.onEvent ?? (() => undefined);
     this.navigationHandler = options.navigate ?? (() => undefined);
+    this.gooby = new ProceduralGooby(options.assetLoader ? { assetLoader: options.assetLoader } : {});
+    this.staticBatchExclusions.add(this.gooby.root);
+    this.gooby.setReducedMotion(this.readSave()?.settings.reducedMotion ?? false);
+    if (this.readSave()?.simulation.sleep) this.gooby.restoreSleepingPose();
     this.placements = restoreDecorPlacements(this.readSave() ?? this.emptySaveForDecor());
     externalTracker.track(this.resources);
     this.applyScenePresentation();
@@ -251,6 +307,7 @@ export abstract class HomeZoneScene implements GameScene {
     this.root.add(ambient, key);
     this.gameRenderer.scene.add(this.root);
     this.gameRenderer.scene.background = new Color(blueprint.palette.background);
+    this.staticBatchResult = batchStaticHomeGeometry(this.root, this.staticBatchExclusions);
     this.resources.trackTree(this.root);
     this.syncDecorObjects();
     this.frameCamera();
@@ -269,6 +326,14 @@ export abstract class HomeZoneScene implements GameScene {
 
   protected trackDynamic(object: Object3D): void {
     this.dynamicObjects.add(object);
+  }
+
+  protected excludeFromStaticBatch(...objects: Object3D[]): void {
+    for (const object of objects) this.staticBatchExclusions.add(object);
+  }
+
+  get staticBatchStats(): StaticBatchResult {
+    return this.staticBatchResult;
   }
 
   protected disposeDynamic(object: Object3D): void {
@@ -316,6 +381,8 @@ export abstract class HomeZoneScene implements GameScene {
     hitTarget.name = `essential-hit:${this.zoneId}:${id}`;
     hitTarget.position.set(...center);
     this.root.add(hitTarget);
+    this.staticBatchExclusions.add(visual);
+    this.staticBatchExclusions.add(hitTarget);
     if (this.complete) this.trackDynamic(hitTarget);
     this.essentialTargets.set(id, { id, visual, hitTarget });
   }
@@ -387,6 +454,25 @@ export abstract class HomeZoneScene implements GameScene {
   }
 
   hitGooby(clientX: number, clientY: number): boolean {
+    if (this.blocksGenericGoobyGesture()) return false;
+    const hit = this.hitGoobyRaw(clientX, clientY);
+    if (!hit || this.suppressFollowupGesture) return false;
+    if (!this.bellyGesture.active) return true;
+
+    const metrics = this.bellyGesture.move({ x: clientX, y: clientY });
+    if (this.bellyGestureClaimed) return false;
+    if (
+      metrics.samples <= 3 &&
+      metrics.normalizedMaximumSegment >= 0.34 &&
+      metrics.angularTravel < 0.45
+    ) {
+      this.bellyGestureClaimed = "tickle";
+      return true;
+    }
+    return false;
+  }
+
+  protected hitGoobyRaw(clientX: number, clientY: number): boolean {
     return this.hit(this.gooby.interactionTarget, clientX, clientY);
   }
 
@@ -394,7 +480,23 @@ export abstract class HomeZoneScene implements GameScene {
     this.gooby.react(reaction);
     if (reaction !== "pet" && reaction !== "tickle" && reaction !== "poke") return;
     const save = this.currentSave();
-    if (save) this.commitNeed(petGooby(save, reaction, this.clock), "fun");
+    if (!save) return;
+    const changed = petGooby(save, reaction, this.clock);
+    const amount = Math.max(0, changed.simulation.needs.fun - save.simulation.needs.fun);
+    this.commitNeed(changed, "fun");
+    this.emit({
+      type: "care:performed",
+      action: reaction,
+      need: "fun",
+      amount,
+      value: changed.simulation.needs.fun,
+    });
+    this.emit({
+      type: "care:effect",
+      action: reaction === "tickle" ? "giggle" : "purr",
+      particles: reaction === "tickle" ? "sparkles" : "hearts",
+    });
+    this.emit({ type: "achievement:hook", action: "care", amount: 1 });
   }
 
   setSleeping(sleeping: boolean): void {
@@ -403,6 +505,45 @@ export abstract class HomeZoneScene implements GameScene {
 
   handleGesture(gesture: Gesture): boolean {
     if (this.handleZoneGesture(gesture)) return true;
+    if (
+      this.suppressFollowupGesture &&
+      (gesture.type === "tap" || gesture.type === "double-tap" || gesture.type === "swipe")
+    ) {
+      this.suppressFollowupGesture = false;
+      return true;
+    }
+    if (gesture.type === "press-start" && this.hitGooby(gesture.x, gesture.y)) {
+      const projection = projectObjectToScreen(
+        this.gooby.interactionTarget,
+        this.gameRenderer.camera,
+        this.gameRenderer.renderer.domElement.getBoundingClientRect(),
+      );
+      this.bellyGestureScale = Math.max(44, Math.min(projection.width, projection.height));
+      this.bellyGesture.begin({ x: gesture.x, y: gesture.y }, this.bellyGestureScale);
+      this.bellyGestureClaimed = null;
+      return true;
+    }
+    if (gesture.type === "press-move" && this.bellyGesture.active) {
+      const metrics = this.bellyGesture.move({ x: gesture.x, y: gesture.y });
+      const explicitFastMove =
+        metrics.samples <= 3 &&
+        Math.hypot(gesture.dx, gesture.dy) >= this.bellyGestureScale * 0.5 &&
+        metrics.angularTravel < 0.45;
+      if (!this.bellyGestureClaimed && explicitFastMove) {
+        this.bellyGestureClaimed = "tickle";
+        this.react("tickle");
+      }
+      return true;
+    }
+    if (gesture.type === "press-end" && this.bellyGesture.active) {
+      const classification = this.bellyGestureClaimed ?? this.bellyGesture.classify(gesture.durationMs);
+      if (classification === "belly-rub") this.performBellyRub(gesture.x, gesture.y);
+      else if (classification === "tickle" && !this.bellyGestureClaimed) this.react("tickle");
+      this.bellyGesture.reset();
+      this.bellyGestureClaimed = null;
+      this.suppressFollowupGesture = classification !== "none";
+      return classification !== "none";
+    }
     if (
       gesture.type === "press-move" &&
       Math.hypot(gesture.dx, gesture.dy) > 18 &&
@@ -420,6 +561,29 @@ export abstract class HomeZoneScene implements GameScene {
       return true;
     }
     return false;
+  }
+
+  protected blocksGenericGoobyGesture(): boolean {
+    return false;
+  }
+
+  private performBellyRub(x: number, y: number): void {
+    this.gooby.react("belly-rub");
+    const save = this.currentSave();
+    if (!save) return;
+    const changed = petGooby(save, "belly-rub", this.clock);
+    const amount = Math.max(0, changed.simulation.needs.fun - save.simulation.needs.fun);
+    this.commitNeed(changed, "fun");
+    this.emit({
+      type: "care:performed",
+      action: "belly-rub",
+      need: "fun",
+      amount,
+      value: changed.simulation.needs.fun,
+    });
+    this.emit({ type: "care:effect", action: "purr", particles: "hearts", x, y });
+    this.emit({ type: "achievement:hook", action: "belly-rub", amount: 1 });
+    this.emit({ type: "toast", message: "Prrrr… that slow belly rub feels wonderful! Fun is up." });
   }
 
   protected abstract handleZoneGesture(gesture: Gesture): boolean;
@@ -460,7 +624,7 @@ export abstract class HomeZoneScene implements GameScene {
     if (
       !definition ||
       !definition.allowedZones.includes(this.zoneId) ||
-      (definition.catalogItem && (!save || (save.inventory[decorId] ?? 0) <= 0))
+      (definition.inventoryId && (!save || (save.inventory[definition.inventoryId] ?? 0) <= 0))
     ) {
       this.selectedDecor = null;
       return false;
@@ -598,6 +762,7 @@ export abstract class HomeZoneScene implements GameScene {
       const item = itemId ? CATALOG_BY_ID.get(itemId) : null;
       if (item?.kind !== "cosmetic" || item.slot !== slot) continue;
       const object = createCosmeticModel(item);
+      batchSolidColorModel(object);
       object.name = `equipped:${slot}:${item.id}`;
       this.gooby.getCosmeticSocket(slot).add(object);
       this.trackDynamic(object);
@@ -617,9 +782,11 @@ export abstract class HomeZoneScene implements GameScene {
     for (const placement of this.placements.filter(({ zone }) => zone === this.zoneId)) {
       const definition = resolveDecorDefinition(placement.decorId);
       if (!definition) continue;
-      const object = definition.catalogItem
-        ? createCatalogItemModel(definition.catalogItem)
-        : createProceduralAsset(definition.assetKey!);
+      const object = placement.decorId === NOUGAT_DISPENSER_DECOR_ID
+        ? makeNougatDispenser()
+        : definition.catalogItem
+          ? createCatalogItemModel(definition.catalogItem)
+          : createProceduralAsset(definition.assetKey!);
       object.name = `decor:${placement.instanceId}`;
       object.position.set(
         placement.gridX * HOME_GRID_SIZE,
@@ -631,18 +798,39 @@ export abstract class HomeZoneScene implements GameScene {
       this.trackDynamic(object);
       this.decorObjects.set(placement.instanceId, object);
     }
+    this.onDecorObjectsChanged();
+  }
+
+  protected getDecorObject(instanceId: string): Object3D | null {
+    return this.decorObjects.get(instanceId) ?? null;
+  }
+
+  protected onDecorObjectsChanged(): void {
+    // Zones can wire interactions to newly synchronized special furniture.
   }
 
   enter(context: SceneContext): void {
     if (this.disposed) throw new Error(`Cannot enter disposed home zone: ${this.zoneId}`);
     this.root.visible = true;
     if (!this.root.parent) this.gameRenderer.scene.add(this.root);
+    if (this.currentSave()?.simulation.sleep) this.gooby.restoreSleepingPose();
+    else if (!this.greetingSent) {
+      const greetings = ["wave", "ear-perk", "happy-hop"] as const;
+      const greeting = greetings[
+        Math.abs(Math.floor(this.clock.now() / 1_000) + this.zoneId.length) % greetings.length
+      ] ?? "wave";
+      this.greetingSent = true;
+      this.gooby.react("greet");
+      this.emit({ type: "gooby:greeting", zone: this.zoneId, greeting });
+      this.emit({ type: "achievement:hook", action: "greeting", amount: 1 });
+    }
     this.resize(context);
   }
 
   update(deltaSeconds: number): void {
-    if (this.disposed) return;
+    if (this.disposed || !this.root.visible) return;
     this.elapsed += Math.max(0, deltaSeconds);
+    this.gooby.setReducedMotion(this.currentSave()?.settings.reducedMotion ?? false);
     this.gooby.update(deltaSeconds, this.elapsed);
     this.updateZone(deltaSeconds);
   }

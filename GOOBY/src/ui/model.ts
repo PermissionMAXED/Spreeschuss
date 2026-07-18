@@ -1,5 +1,10 @@
 import { xpRequiredForLevel, type Economy } from "../core/contracts/economy";
+import type { AppLanguage } from "../core/contracts/i18n";
 import { isDuringQuietHours, type QuietHours } from "../core/contracts/platform";
+import {
+  UI_SCALE_MAX,
+  UI_SCALE_MIN,
+} from "../core/contracts/save";
 import {
   MINIGAME_IDS,
   type MinigameId,
@@ -7,11 +12,15 @@ import {
   type ShopId,
 } from "../core/contracts/scenes";
 import type { Needs } from "../core/contracts/simulation";
-import { CATALOG_BY_ID, COSMETIC_SLOTS, type CosmeticSlot } from "../data/catalog";
+import {
+  CATALOG_BY_ID,
+  COSMETIC_EQUIP_SLOTS,
+  type CosmeticEquipSlot,
+} from "../data/catalog";
 import { MINIGAME_COPY } from "../data/strings";
 
-export type PanelId = "places" | "play" | "wardrobe" | "items" | "settings";
-export type WardrobeSlot = CosmeticSlot;
+export type PanelId = "places" | "play" | "wardrobe" | "items" | "stickers" | "settings";
+export type WardrobeSlot = CosmeticEquipSlot;
 export type PreferenceKey = "audio" | "haptics" | "reducedMotion" | "notifications";
 
 export interface UiPreferences {
@@ -98,7 +107,7 @@ function parseEquipped(value: unknown): Partial<Record<WardrobeSlot, string>> {
   if (typeof value !== "object" || value === null) return { ...DEFAULT_STATE.equipped };
   const candidate = value as Partial<Record<WardrobeSlot, unknown>>;
   const equipped: Partial<Record<WardrobeSlot, string>> = {};
-  for (const slot of COSMETIC_SLOTS) {
+  for (const slot of COSMETIC_EQUIP_SLOTS) {
     const itemId = candidate[slot];
     const item = typeof itemId === "string" ? CATALOG_BY_ID.get(itemId) : null;
     if (item?.kind === "cosmetic" && item.slot === slot) equipped[slot] = item.id;
@@ -240,6 +249,241 @@ export function quietHoursPresentation(
       ? `Quiet now — reminders wait until ${end}.`
       : `Not quiet now — the next quiet interval starts at ${start}.`,
   };
+}
+
+/** Frozen presentation grouping of the 24 minigames into four hub categories. */
+export const GAME_CATEGORY_IDS = ["reflex", "puzzle", "rhythm", "errand"] as const;
+export type GameCategoryId = (typeof GAME_CATEGORY_IDS)[number];
+
+export const GAME_CATEGORY_BY_GAME: Readonly<Record<MinigameId, GameCategoryId>> = Object.freeze({
+  "carrot-catch": "reflex",
+  "bunny-hop": "reflex",
+  "pancake-peak": "errand",
+  "bubble-bath-blast": "reflex",
+  "veggie-sort": "puzzle",
+  "gooby-says": "puzzle",
+  "garden-moles": "reflex",
+  "carrot-cannon": "reflex",
+  "delivery-dash": "errand",
+  "memory-meadow": "puzzle",
+  "pond-fishing": "errand",
+  "rhythm-hop": "rhythm",
+  "cake-atelier": "errand",
+  "shopping-surf": "errand",
+  "picnic-packer": "puzzle",
+  "firefly-lantern": "rhythm",
+  "puddle-hopper": "reflex",
+  "market-scales": "puzzle",
+  "burrow-dig": "reflex",
+  "cloud-bounce": "reflex",
+  "snail-mail": "errand",
+  "topiary-trim": "rhythm",
+  "honey-drizzle": "rhythm",
+  "library-stack": "puzzle",
+});
+
+export function gamesInCategory(category: GameCategoryId): readonly MinigameCard[] {
+  return MINIGAME_CARDS.filter((card) => GAME_CATEGORY_BY_GAME[card.id] === category);
+}
+
+/** Preset stops offered alongside the free slider; bounds match the contract. */
+export const UI_SCALE_PRESETS = [0.85, 1, 1.15, 1.35] as const;
+
+export function formatUiScale(scale: number): string {
+  return `${Math.round(scale * 100)}%`;
+}
+
+export function clampUiScaleInput(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(UI_SCALE_MAX, Math.max(UI_SCALE_MIN, value));
+}
+
+/** Converts a canonical 0–1 bus volume into the 0–100 slider percentage. */
+export function volumeToPercent(volume: number): number {
+  if (!Number.isFinite(volume)) return 100;
+  return Math.round(Math.min(1, Math.max(0, volume)) * 100);
+}
+
+/** Converts a 0–100 slider percentage into the canonical 0–1 bus volume. */
+export function percentToVolume(percent: number): number {
+  if (!Number.isFinite(percent)) return 1;
+  return Math.min(1, Math.max(0, percent / 100));
+}
+
+export interface PageSlice<T> {
+  readonly items: readonly T[];
+  readonly page: number;
+  readonly pages: number;
+}
+
+/** Clamped, zero-based paging used by the 48-item wardrobe lists. */
+export function paginate<T>(
+  items: readonly T[],
+  page: number,
+  perPage: number,
+): PageSlice<T> {
+  const safePerPage = Math.max(1, Math.floor(perPage));
+  const pages = Math.max(1, Math.ceil(items.length / safePerPage));
+  const safePage = Math.min(Math.max(0, Math.floor(page)), pages - 1);
+  const start = safePage * safePerPage;
+  return { items: items.slice(start, start + safePerPage), page: safePage, pages };
+}
+
+export const DEV_UNLOCK_TAPS = 7;
+export const DEV_UNLOCK_WINDOW_MS = 10_000;
+
+/**
+ * Hidden developer-workshop unlock: exactly seven taps on the "Automatic"
+ * language option inside a sliding ten-second window. Six taps, or taps
+ * spread wider than the window, never unlock.
+ */
+export class DevUnlockTracker {
+  private taps: number[] = [];
+
+  tap(now: number): boolean {
+    this.taps = this.taps.filter((at) => now - at < DEV_UNLOCK_WINDOW_MS);
+    this.taps.push(now);
+    if (this.taps.length >= DEV_UNLOCK_TAPS) {
+      this.taps = [];
+      return true;
+    }
+    return false;
+  }
+
+  get count(): number {
+    return this.taps.length;
+  }
+
+  reset(): void {
+    this.taps = [];
+  }
+}
+
+/**
+ * UI-only copy that is not part of the frozen CP1 `AppStrings` surface.
+ * Kept bilingual here so the runtime language switch covers every new
+ * CP2 surface without touching the read-only i18n catalogs.
+ */
+export interface UiExtraCopy {
+  readonly categories: Readonly<Record<GameCategoryId, string>>;
+  readonly wardrobeSlots: Readonly<Record<CosmeticEquipSlot, string>>;
+  readonly page: (current: number, total: number) => string;
+  readonly previousPage: string;
+  readonly nextPage: string;
+  readonly lockedItem: string;
+  readonly carrotsWord: string;
+  readonly mutedNote: string;
+  readonly volumeValue: (label: string, percent: number) => string;
+  readonly devUnlocked: string;
+  readonly stickerUnlocked: (title: string) => string;
+  readonly pageReward: (page: string, coins: number) => string;
+  readonly dev: {
+    readonly open: string;
+    readonly back: string;
+    readonly sceneJump: string;
+    readonly audioTests: string;
+    readonly cueFor: (bus: string) => string;
+    readonly fpsOverlay: string;
+    readonly fpsShow: string;
+    readonly fpsHide: string;
+    readonly stickerPreview: string;
+    readonly licenses: string;
+    readonly cheats: string;
+    readonly cheatsUnavailable: string;
+    readonly grantXp: string;
+    readonly advanceHour: string;
+  };
+}
+
+export const UI_EXTRA_COPY: Readonly<Record<AppLanguage, UiExtraCopy>> = Object.freeze({
+  en: {
+    categories: {
+      reflex: "Quick reflexes",
+      puzzle: "Puzzles & sorting",
+      rhythm: "Rhythm & timing",
+      errand: "Errands & adventures",
+    },
+    wardrobeSlots: {
+      head: "Head",
+      ears: "Ears",
+      neck: "Neck",
+      back: "Back",
+      face: "Face",
+      paws: "Paws",
+    },
+    page: (current, total) => `Page ${current} of ${total}`,
+    previousPage: "Previous page",
+    nextPage: "Next page",
+    lockedItem: "Locked",
+    carrotsWord: "carrots",
+    mutedNote: "Sound is off — levels are kept and used again when sound returns.",
+    volumeValue: (label, percent) => `${label} volume, ${percent} percent`,
+    devUnlocked: "Developer workshop unlocked",
+    stickerUnlocked: (title) => `New sticker: ${title}`,
+    pageReward: (page, coins) => `${page} complete! +${coins} coins`,
+    dev: {
+      open: "Open developer workshop",
+      back: "Back to settings",
+      sceneJump: "Scene jump",
+      audioTests: "Audio bus tests",
+      cueFor: (bus) => `Play ${bus} cue`,
+      fpsOverlay: "FPS overlay",
+      fpsShow: "Show FPS overlay",
+      fpsHide: "Hide FPS overlay",
+      stickerPreview: "Sticker previews",
+      licenses: "Licenses",
+      cheats: "Mutation cheats",
+      cheatsUnavailable: "Cheats are available only in development and test builds.",
+      grantXp: "Grant 200 XP",
+      advanceHour: "Advance time 1 hour",
+    },
+  },
+  de: {
+    categories: {
+      reflex: "Schnelle Reflexe",
+      puzzle: "Rätsel & Sortieren",
+      rhythm: "Rhythmus & Timing",
+      errand: "Besorgungen & Abenteuer",
+    },
+    wardrobeSlots: {
+      head: "Kopf",
+      ears: "Ohren",
+      neck: "Hals",
+      back: "Rücken",
+      face: "Gesicht",
+      paws: "Pfoten",
+    },
+    page: (current, total) => `Seite ${current} von ${total}`,
+    previousPage: "Vorherige Seite",
+    nextPage: "Nächste Seite",
+    lockedItem: "Gesperrt",
+    carrotsWord: "Karotten",
+    mutedNote: "Ton ist aus — die Pegel bleiben erhalten und gelten wieder, sobald der Ton an ist.",
+    volumeValue: (label, percent) => `Lautstärke ${label}, ${percent} Prozent`,
+    devUnlocked: "Entwicklerwerkstatt freigeschaltet",
+    stickerUnlocked: (title) => `Neuer Sticker: ${title}`,
+    pageReward: (page, coins) => `${page} vollständig! +${coins} Münzen`,
+    dev: {
+      open: "Entwicklerwerkstatt öffnen",
+      back: "Zurück zu den Einstellungen",
+      sceneJump: "Szenenwechsel",
+      audioTests: "Audio-Bus-Tests",
+      cueFor: (bus) => `${bus}-Klang abspielen`,
+      fpsOverlay: "FPS-Anzeige",
+      fpsShow: "FPS-Anzeige einblenden",
+      fpsHide: "FPS-Anzeige ausblenden",
+      stickerPreview: "Sticker-Vorschau",
+      licenses: "Lizenzen",
+      cheats: "Mutations-Cheats",
+      cheatsUnavailable: "Cheats gibt es nur in Entwicklungs- und Testversionen.",
+      grantXp: "200 XP vergeben",
+      advanceHour: "Zeit 1 Stunde vorstellen",
+    },
+  },
+});
+
+export function uiExtraCopy(language: AppLanguage): UiExtraCopy {
+  return UI_EXTRA_COPY[language];
 }
 
 export function formatCountdown(remainingMs: number): string {

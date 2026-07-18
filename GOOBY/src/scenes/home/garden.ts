@@ -17,6 +17,7 @@ interface Butterfly {
   readonly root: Group;
   readonly wings: readonly [Object3D, Object3D];
   readonly offset: number;
+  readonly basePosition: readonly [number, number, number];
 }
 
 export class Garden extends HomeZoneScene {
@@ -25,6 +26,7 @@ export class Garden extends HomeZoneScene {
   private readonly signs = new Map<MinigameId, Group>();
   private readonly livingDoor: Group;
   private remainingToday = 3;
+  private butterflyUpdateAge = 0;
 
   constructor(
     renderer: GameRenderer,
@@ -77,8 +79,13 @@ export class Garden extends HomeZoneScene {
         });
       }
       root.add(left, right, body);
-      root.position.set(-2.8 + index * 1.55, 2 + (index % 2) * 0.55, -0.5 + (index % 3) * 0.7);
-      this.butterflies.push({ root, wings: [left, right], offset: index * 1.37 });
+      const basePosition = [
+        -2.8 + index * 1.55,
+        2 + (index % 2) * 0.55,
+        -0.5 + (index % 3) * 0.7,
+      ] as const;
+      root.position.set(...basePosition);
+      this.butterflies.push({ root, wings: [left, right], offset: index * 1.37, basePosition });
     }
 
     GARDEN_SIGNPOSTS.forEach((descriptor, index) => {
@@ -120,6 +127,7 @@ export class Garden extends HomeZoneScene {
 
     this.gooby.root.position.set(0, 0.04, 0.55);
     this.gooby.root.scale.setScalar(0.84);
+    this.excludeFromStaticBatch(...this.butterflies.map(({ root }) => root));
     this.add(
       path,
       tree,
@@ -186,13 +194,22 @@ export class Garden extends HomeZoneScene {
     return false;
   }
 
-  protected override updateZone(): void {
-    this.butterflies.forEach(({ root, wings, offset }, index) => {
+  protected override updateZone(deltaSeconds: number): void {
+    this.butterflyUpdateAge += deltaSeconds;
+    const reducedMotion = this.currentSave()?.settings.reducedMotion ?? false;
+    const updateInterval = reducedMotion ? 0.2 : 1 / 30;
+    if (this.butterflyUpdateAge < updateInterval) return;
+    this.butterflyUpdateAge = 0;
+    this.butterflies.forEach(({ root, wings, offset, basePosition }, index) => {
       const time = this.elapsed + offset;
-      root.position.x += Math.sin(time * 0.8 + index) * 0.002;
-      root.position.y += Math.sin(time * 1.6) * 0.003;
-      root.rotation.y = Math.sin(time * 0.65) * 0.5;
-      const flap = Math.sin(time * 10) * 0.7;
+      const travel = reducedMotion ? 0.035 : 0.16;
+      root.position.set(
+        basePosition[0] + Math.sin(time * 0.8 + index) * travel,
+        basePosition[1] + Math.sin(time * 1.6) * travel * 0.65,
+        basePosition[2] + Math.cos(time * 0.55 + index) * travel * 0.45,
+      );
+      root.rotation.y = Math.sin(time * 0.65) * (reducedMotion ? 0.12 : 0.5);
+      const flap = Math.sin(time * (reducedMotion ? 3 : 10)) * (reducedMotion ? 0.18 : 0.7);
       wings[0].rotation.y = flap;
       wings[1].rotation.y = -flap;
     });

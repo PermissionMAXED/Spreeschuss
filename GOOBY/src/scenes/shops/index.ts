@@ -104,7 +104,7 @@ export type {
   CityShopArrival,
   TownExitHandoff,
 } from "./routes";
-export { SHOP_CONTROL_LAYOUT, WalkableShopScene } from "./scene";
+export { SHOP_CONTROL_LAYOUT, SHOP_PAGE_SIZE, WalkableShopScene } from "./scene";
 export type { ShopSceneDependencies } from "./scene";
 export { CosmeticTryOnSession } from "./try-on";
 export type { EquippedCosmetics, TryOnResult } from "./try-on";
@@ -112,5 +112,6 @@ export {
   createCatalogItemModel,
   createCosmeticModel,
   createDisplayFixture,
+  hydrateCuratedCatalogModel,
   ProceduralShopkeeper,
 } from "./visuals";

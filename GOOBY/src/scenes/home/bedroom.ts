@@ -1,4 +1,5 @@
 import {
+  CircleGeometry,
   Color,
   Mesh,
   MeshStandardMaterial,
@@ -20,11 +21,13 @@ export class Bedroom extends HomeZoneScene {
   private readonly bed: Group;
   private readonly curtains: readonly [Mesh, Mesh];
   private readonly bedsideLamp: Group;
+  private readonly peekStar: Mesh;
   private readonly doors = new Map<HomeZoneId, Group>();
   private curtainClosed = false;
   private dimmed = false;
   private wakeConfirmationPending = false;
   private wakePoseAge = Number.POSITIVE_INFINITY;
+  private wakeSessionStart: number | null = null;
 
   constructor(
     renderer: GameRenderer,
@@ -63,6 +66,18 @@ export class Bedroom extends HomeZoneScene {
     sleepIcon.name = "bedroom:moon";
     sleepIcon.position.set(1, 4.25, -2.86);
     sleepIcon.scale.setScalar(1.15);
+    this.peekStar = new Mesh(
+      new CircleGeometry(0.24, 4),
+      new MeshStandardMaterial({
+        color: 0xffe995,
+        roughness: 0.45,
+        emissive: 0x6b4a12,
+        emissiveIntensity: 0.35,
+      }),
+    );
+    this.peekStar.name = "bedroom:peek-star";
+    this.peekStar.position.set(2.3, 3.85, -2.92);
+    this.peekStar.rotation.z = Math.PI / 4;
 
     const bathroomDoor = makeDoor(0x8ebfbd, "right");
     bathroomDoor.name = "door:bathroom";
@@ -79,6 +94,12 @@ export class Bedroom extends HomeZoneScene {
 
     this.gooby.root.position.set(0.25, 0.06, 0.6);
     this.gooby.root.scale.setScalar(0.96);
+    this.excludeFromStaticBatch(
+      this.bed,
+      ...this.curtains,
+      this.bedsideLamp,
+      this.peekStar,
+    );
     this.add(
       this.bed,
       blanket,
@@ -87,6 +108,7 @@ export class Bedroom extends HomeZoneScene {
       this.bedsideLamp,
       rug,
       sleepIcon,
+      this.peekStar,
       bathroomDoor,
       livingDoor,
       this.gooby.root,
@@ -109,9 +131,11 @@ export class Bedroom extends HomeZoneScene {
   }
 
   private applySleepingPose(): void {
-    this.setSleeping(true);
+    this.gooby.restoreSleepingPose();
     this.curtainClosed = true;
     this.dimmed = true;
+    this.wakeSessionStart = null;
+    this.wakePoseAge = Number.POSITIVE_INFINITY;
     this.gooby.root.position.set(-2.25, 0.58, -1.72);
     this.gooby.root.rotation.z = -0.32;
     this.gooby.root.scale.setScalar(0.62);
@@ -133,21 +157,31 @@ export class Bedroom extends HomeZoneScene {
     const save = this.currentSave();
     if (!save?.simulation.sleep || !this.wakeConfirmationPending) return false;
     const awake = { ...save, simulation: wakeEarly(save.simulation, this.clock.now()) };
+    const sleepStartedAt = save.simulation.sleep.startedAt;
     this.wakeConfirmationPending = false;
     this.commitNeed(awake, "energy");
-    this.beginWakePose();
+    this.beginWakePose(sleepStartedAt);
     this.emit({ type: "toast", message: "Good morning, sleepy bun." });
     return true;
   }
 
-  private beginWakePose(): void {
+  private beginWakePose(sleepStartedAt: number): void {
+    if (this.wakeSessionStart === sleepStartedAt) return;
+    this.wakeSessionStart = sleepStartedAt;
     this.setSleeping(false);
     this.curtainClosed = false;
     this.dimmed = false;
-    this.wakePoseAge = 0;
-    this.gooby.root.position.set(-2.15, 0.62, -1.62);
-    this.gooby.root.rotation.z = -0.22;
-    this.gooby.root.scale.setScalar(0.7);
+    const reducedMotion = this.currentSave()?.settings.reducedMotion ?? false;
+    this.wakePoseAge = reducedMotion ? Number.POSITIVE_INFINITY : 0;
+    if (reducedMotion) {
+      this.gooby.root.position.set(0.25, 0.06, 0.6);
+      this.gooby.root.rotation.z = 0;
+      this.gooby.root.scale.setScalar(0.96);
+    } else {
+      this.gooby.root.position.set(-2.25, 0.58, -1.72);
+      this.gooby.root.rotation.z = -0.32;
+      this.gooby.root.scale.setScalar(0.62);
+    }
     this.gooby.react("wake");
   }
 
@@ -183,15 +217,20 @@ export class Bedroom extends HomeZoneScene {
 
   protected override updateZone(deltaSeconds: number): void {
     const save = this.currentSave();
-    if (save?.simulation.sleep && this.clock.now() >= save.simulation.sleep.completesAt) {
+    const sleep = save?.simulation.sleep;
+    if (
+      sleep &&
+      this.clock.now() >= sleep.completesAt &&
+      this.wakeSessionStart !== sleep.startedAt
+    ) {
       const completed = {
         ...save,
         simulation: advanceSimulation(save.simulation, this.clock.now()),
       };
       this.commitNeed(completed, "energy");
-      this.beginWakePose();
+      this.beginWakePose(sleep.startedAt);
     }
-    if (save?.simulation.sleep) {
+    if (sleep && this.wakeSessionStart !== sleep.startedAt) {
       this.gooby.root.position.set(-2.25, 0.58, -1.72);
       this.gooby.root.rotation.z = -0.32;
       this.gooby.root.scale.setScalar(0.62);
@@ -216,15 +255,24 @@ export class Bedroom extends HomeZoneScene {
       }
     });
 
+    const reducedMotion = this.currentSave()?.settings.reducedMotion ?? false;
+    const peek = reducedMotion
+      ? 0.62
+      : 0.42 + Math.max(0, Math.sin(this.elapsed * 0.7 - 0.8)) * 0.58;
+    this.peekStar.scale.setScalar(peek);
+    if (!reducedMotion) this.peekStar.rotation.z += deltaSeconds * 0.12;
+
     if (Number.isFinite(this.wakePoseAge)) {
       this.wakePoseAge += deltaSeconds;
-      const progress = Math.min(1, this.wakePoseAge / 0.8);
-      this.gooby.root.rotation.z = -0.85 * (1 - progress);
-      const blend = progress * 0.12;
-      this.gooby.root.position.x += (0.25 - this.gooby.root.position.x) * blend;
-      this.gooby.root.position.y += (0.06 - this.gooby.root.position.y) * blend;
-      this.gooby.root.position.z += (0.6 - this.gooby.root.position.z) * blend;
-      this.gooby.root.scale.setScalar(0.8 + progress * 0.16);
+      const progress = Math.min(1, this.wakePoseAge / 1.05);
+      const blend = progress * progress * (3 - 2 * progress);
+      this.gooby.root.rotation.z = -0.32 * (1 - blend);
+      this.gooby.root.position.set(
+        -2.25 + (0.25 + 2.25) * blend,
+        0.58 + (0.06 - 0.58) * blend,
+        -1.72 + (0.6 + 1.72) * blend,
+      );
+      this.gooby.root.scale.setScalar(0.62 + (0.96 - 0.62) * blend);
       if (progress >= 1) {
         this.gooby.root.position.set(0.25, 0.06, 0.6);
         this.gooby.root.rotation.z = 0;

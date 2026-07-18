@@ -1,0 +1,1450 @@
+{
+  "schemaVersion": 1,
+  "license": "original first-party artwork generated for Gooby's Cozy Burrow",
+  "generator": "scripts/stickers/process.py",
+  "contract": {
+    "pages": [
+      "home-life",
+      "city-days",
+      "game-medals",
+      "dreams-seasons"
+    ],
+    "stickersPerPage": 9,
+    "stickerCount": 36
+  },
+  "constraints": {
+    "masterSize": 512,
+    "runtimeSize": 256,
+    "maxRuntimeFileBytes": 40960,
+    "maxTotalRuntimeBytes": 1572864
+  },
+  "sourceSheets": [
+    {
+      "page": "home-life",
+      "path": "assets/stickers/sources/gooby_stickers_home_life_sheet.png",
+      "sha256": "7d283433e8cfb01c10305d332182fa1190096c284c84bcc21b8da3398047e32c",
+      "bytes": 1353355,
+      "width": 1024,
+      "height": 1024,
+      "sourceAlphaDetected": false,
+      "detectedGrid": {
+        "columns": 3,
+        "rows": 3,
+        "xCuts": [
+          341,
+          675
+        ],
+        "yCuts": [
+          341,
+          675
+        ],
+        "checkerPeriod": 37
+      },
+      "alphaCorrection": "baked checkerboard removed with phase sampling and silhouette reconstruction"
+    },
+    {
+      "page": "city-days",
+      "path": "assets/stickers/sources/gooby_stickers_city_days_sheet.png",
+      "sha256": "6384e7eb028e12e5ad2f9d5a001c848acb6458b637486ee795174a5be12bdd31",
+      "bytes": 1210513,
+      "width": 1024,
+      "height": 1024,
+      "sourceAlphaDetected": false,
+      "detectedGrid": {
+        "columns": 3,
+        "rows": 3,
+        "xCuts": [
+          341,
+          683
+        ],
+        "yCuts": [
+          341,
+          683
+        ],
+        "checkerPeriod": 33
+      },
+      "alphaCorrection": "baked checkerboard removed with phase sampling and silhouette reconstruction"
+    },
+    {
+      "page": "game-medals",
+      "path": "assets/stickers/sources/gooby_stickers_game_medals_sheet.png",
+      "sha256": "060c2def32326822af1e0ecb4eb2c899936fdb0f9f36510d75c65c31ca6e9462",
+      "bytes": 1266344,
+      "width": 1024,
+      "height": 1024,
+      "sourceAlphaDetected": false,
+      "detectedGrid": {
+        "columns": 3,
+        "rows": 3,
+        "xCuts": [
+          341,
+          682
+        ],
+        "yCuts": [
+          341,
+          676
+        ],
+        "checkerPeriod": 43
+      },
+      "alphaCorrection": "baked checkerboard removed with phase sampling and silhouette reconstruction"
+    },
+    {
+      "page": "dreams-seasons",
+      "path": "assets/stickers/sources/gooby_stickers_dreams_seasons_sheet.png",
+      "sha256": "efedd70e05b6f9b4f6aa7bb6ab5ef41d121d355ec88b8ec1fd5402929e58d155",
+      "bytes": 1397587,
+      "width": 1024,
+      "height": 1024,
+      "sourceAlphaDetected": false,
+      "detectedGrid": {
+        "columns": 3,
+        "rows": 3,
+        "xCuts": [
+          341,
+          682
+        ],
+        "yCuts": [
+          341,
+          675
+        ],
+        "checkerPeriod": 42
+      },
+      "alphaCorrection": "baked checkerboard removed with phase sampling and silhouette reconstruction"
+    }
+  ],
+  "stickers": [
+    {
+      "id": "sticker.care.first-pet",
+      "page": "home-life",
+      "slot": 0,
+      "sourceCell": {
+        "row": 0,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/care-first-pet.png",
+        "sha256": "26fa6e0e2d22ada62764a1413614c56c2e492566cd70a3978183cdaa18784531",
+        "bytes": 196870,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/care-first-pet.webp",
+        "sha256": "b454d29b3cc4cacc73f9a9ed4679aed72224044fde03db39dc3d0cda3d9a05be",
+        "bytes": 11680,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby sits while a hand strokes its head, surrounded by hearts.",
+        "de": "Gooby sitzt, wird am Kopf gestreichelt und ist von Herzen umgeben."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.care.first-feed",
+      "page": "home-life",
+      "slot": 1,
+      "sourceCell": {
+        "row": 0,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/care-first-feed.png",
+        "sha256": "f80d53b9941814cd8ea0ba966908decc1be9814569abbfc1bd4cd8900c24f37d",
+        "bytes": 181594,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/care-first-feed.webp",
+        "sha256": "9b20d548f02455933e9f6aed4bdf29f684663a62b73d8c71fded7b6426116a1b",
+        "bytes": 10122,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby sits and holds a large freshly picked carrot.",
+        "de": "Gooby sitzt da und hält eine große, frisch geerntete Karotte."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.care.first-bath",
+      "page": "home-life",
+      "slot": 2,
+      "sourceCell": {
+        "row": 0,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/care-first-bath.png",
+        "sha256": "3ff516e2a2d63c767c88736fdd768baf0d89439a2957a23ab1b4d7e735d4ceea",
+        "bytes": 189144,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/care-first-bath.webp",
+        "sha256": "8f8907ff98e42dda482f77ca66014007ee9958b2e4b49bb853c6abaae0f9bd35",
+        "bytes": 11736,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby relaxes in a green bathtub overflowing with bubbles.",
+        "de": "Gooby entspannt in einer grünen Badewanne voller Schaumblasen."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.care.full-night-sleep",
+      "page": "home-life",
+      "slot": 3,
+      "sourceCell": {
+        "row": 1,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/care-full-night-sleep.png",
+        "sha256": "2e0b0962cc57da80025aa6449c4a6e1abdb816dad425385859c93f3ce312c5e5",
+        "bytes": 226559,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/care-full-night-sleep.webp",
+        "sha256": "f2f728382d25e7775f3b90b797c809d6b1808adbaa9bb2618544b7e8ef44dcdf",
+        "bytes": 13644,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby sleeps under a starry blanket on a crescent moon.",
+        "de": "Gooby schläft unter einer Sternendecke auf einer Mondsichel."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.care.gentle-wake",
+      "page": "home-life",
+      "slot": 4,
+      "sourceCell": {
+        "row": 1,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/care-gentle-wake.png",
+        "sha256": "a4f71090990227b522656d4761cc00a4b31e74c9bd969af0f58a5d553b79f0e8",
+        "bytes": 192277,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/care-gentle-wake.webp",
+        "sha256": "d98cceabd71786ce4a346b72be20b7fb96d2b55203589b2a91bce0ef56f8a4a8",
+        "bytes": 11834,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby lies back as a hand gently rubs its belly.",
+        "de": "Gooby liegt auf dem Rücken und wird sanft am Bauch gestreichelt."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.care.garden-harvest",
+      "page": "home-life",
+      "slot": 5,
+      "sourceCell": {
+        "row": 1,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/care-garden-harvest.png",
+        "sha256": "2a1ab361ba87666b7b13dae855c54d8e2cdaf94e861f88c0a3dd94cda1a497ae",
+        "bytes": 237813,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/care-garden-harvest.webp",
+        "sha256": "1718fc8bff76f181bfe63be330b50edc1783dc673818e6251d41d1168e5df3a2",
+        "bytes": 13464,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby gardens in overalls beside a basket of carrots.",
+        "de": "Gooby gärtnert in einer Latzhose neben einem Korb voller Karotten."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.care.wardrobe-first-outfit",
+      "page": "home-life",
+      "slot": 6,
+      "sourceCell": {
+        "row": 2,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/care-wardrobe-first-outfit.png",
+        "sha256": "fdae56b841fac614a9dfaae7dee21f0fc334ba9f42dc731d6ca0f71857866a0f",
+        "bytes": 220992,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/care-wardrobe-first-outfit.webp",
+        "sha256": "df37dec4404574440659be98fe003c12206eb03520aa55be7eefe0a42fda8450",
+        "bytes": 12054,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby sits on a plaid rug and watches a tiny television.",
+        "de": "Gooby sitzt auf einem karierten Teppich und schaut einen kleinen Fernseher."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.care.decorated-room",
+      "page": "home-life",
+      "slot": 7,
+      "sourceCell": {
+        "row": 2,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/care-decorated-room.png",
+        "sha256": "6b0c1c0ad30d2ac544fd6740713170f0829727b3a9711e592579f64c31b95f86",
+        "bytes": 254287,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/care-decorated-room.webp",
+        "sha256": "56e7f58523424e4d55c2f995355a1745d5a2a80e9f172523490231090d72eff3",
+        "bytes": 11982,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby sits at the entrance of a cozy room with a green sofa.",
+        "de": "Gooby sitzt am Eingang eines gemütlichen Zimmers mit grünem Sofa."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.care.level-five",
+      "page": "home-life",
+      "slot": 8,
+      "sourceCell": {
+        "row": 2,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/care-level-five.png",
+        "sha256": "3d8cd8d1da51169396f933d46fa002f39d730933c160190e590238f1a78f056b",
+        "bytes": 246785,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/care-level-five.webp",
+        "sha256": "0a6ec124eebc68e0179a97bcb4b898808c924aa487f8f827ca35547605aa9a90",
+        "bytes": 13548,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby stands beside a wooden nut grinder and a filled glass jar.",
+        "de": "Gooby steht neben einer hölzernen Nussmühle und einem gefüllten Glas."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.city.first-trip",
+      "page": "city-days",
+      "slot": 0,
+      "sourceCell": {
+        "row": 0,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/city-first-trip.png",
+        "sha256": "f467779fa7cd309eb1c0e0ed39d7247f145f04ec3aad3c74f27fb8f06d3e51f6",
+        "bytes": 184472,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/city-first-trip.webp",
+        "sha256": "a256f1a447e8269b5c2173e3d54e778948ab364c3e8a9cf893581b4da4f0eff2",
+        "bytes": 10944,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby happily drives a small pink convertible.",
+        "de": "Gooby fährt fröhlich in einem kleinen rosa Cabrio."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.city.all-shops",
+      "page": "city-days",
+      "slot": 1,
+      "sourceCell": {
+        "row": 0,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/city-all-shops.png",
+        "sha256": "297ce0fdc27e562b589d14a06642f0aeef5c3cb6f6242c6acc923ca204d682be",
+        "bytes": 157609,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/city-all-shops.webp",
+        "sha256": "64d747aa4f8c51d99367393bc5ee37da7428ded3341d13a3d9ed71174fff54df",
+        "bytes": 9276,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby stands proudly beside a mint green compact car.",
+        "de": "Gooby steht stolz neben einem mintgrünen Kleinwagen."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.city.smooth-driver",
+      "page": "city-days",
+      "slot": 2,
+      "sourceCell": {
+        "row": 0,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/city-smooth-driver.png",
+        "sha256": "486fbe782d2e77df6a75d1612f2ffea8b4c8dfb4858b310968a07db4dde435c2",
+        "bytes": 191317,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/city-smooth-driver.webp",
+        "sha256": "024754a681e100c71e9447896a4ff75601005df89d825e059c2ca9da1925f965",
+        "bytes": 11684,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby returns from shopping with four colorful bags.",
+        "de": "Gooby kommt mit vier bunten Einkaufstaschen vom Einkaufen zurück."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.city.market-day",
+      "page": "city-days",
+      "slot": 3,
+      "sourceCell": {
+        "row": 1,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/city-market-day.png",
+        "sha256": "560be579e49a247e5678f945fcc0225b19496c565c1ce917e00a4f70a7fa014a",
+        "bytes": 201190,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/city-market-day.webp",
+        "sha256": "d067fb497a667f3f5e3cd77465eea571f0691efb2c9f30800d061f0f92c59606",
+        "bytes": 9230,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby looks through a striped shop window at toys and gifts.",
+        "de": "Gooby schaut durch ein gestreiftes Schaufenster auf Spielzeug und Geschenke."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.city.boutique-day",
+      "page": "city-days",
+      "slot": 4,
+      "sourceCell": {
+        "row": 1,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/city-boutique-day.png",
+        "sha256": "f00f2a2cc4d795100759ebc1c90ba4197923723825a959545ddb10453ef762b7",
+        "bytes": 186887,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/city-boutique-day.webp",
+        "sha256": "5221ec8ca6e5d5cf9307917f2008b9caa1a96be00e4074268a10511e64d9694b",
+        "bytes": 12016,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby drives a yellow car through friendly city traffic.",
+        "de": "Gooby fährt in einem gelben Auto durch den freundlichen Stadtverkehr."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.city.salon-day",
+      "page": "city-days",
+      "slot": 5,
+      "sourceCell": {
+        "row": 1,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/city-salon-day.png",
+        "sha256": "7b0cbdaffda6c969fb2a6c419a79df8bebced3a449b8e51d1f7e5860f58e3acb",
+        "bytes": 251305,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/city-salon-day.webp",
+        "sha256": "471ec10cf3cba73a0622588894d45c4afd469a258cbdfaa157ed331ccb5a3111",
+        "bytes": 13038,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby drives a blue car beneath a moonlit city sky.",
+        "de": "Gooby fährt in einem blauen Auto unter einem mondhellen Stadthimmel."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.city.first-return",
+      "page": "city-days",
+      "slot": 6,
+      "sourceCell": {
+        "row": 2,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/city-first-return.png",
+        "sha256": "bdb8cf51c4a9978a6f0bad72485932e51b87f703a74a47b8028f61a4eb6be9be",
+        "bytes": 161973,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/city-first-return.webp",
+        "sha256": "7b90034a5ea4b197d8c175f88431e6eae120845175e42b9ff71744560d6546c4",
+        "bytes": 9514,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby wears a warm green hat, blue scarf, and yellow coat.",
+        "de": "Gooby trägt eine warme grüne Mütze, einen blauen Schal und eine gelbe Jacke."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.city.five-trips",
+      "page": "city-days",
+      "slot": 7,
+      "sourceCell": {
+        "row": 2,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/city-five-trips.png",
+        "sha256": "d6c16adb9f9e9c21ab067087946c036d1c68bdec7f85ddbbeab8ff1ab8822f38",
+        "bytes": 188955,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/city-five-trips.webp",
+        "sha256": "a02746999df8ea9e2004cbaf7877c4ab205c8b0c8832faa9829bfd53c450cded",
+        "bytes": 11496,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby pulls a green wagon carrying a wooden chair.",
+        "de": "Gooby zieht einen grünen Wagen mit einem Holzstuhl."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.city.souvenir-spree",
+      "page": "city-days",
+      "slot": 8,
+      "sourceCell": {
+        "row": 2,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/city-souvenir-spree.png",
+        "sha256": "d79b3fe74ae3c77696eb9d3995835148c8d5c83515bf05862447c777e2983760",
+        "bytes": 171524,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/city-souvenir-spree.webp",
+        "sha256": "65825132f14f7248fc1f531fdf96d3b3c3df468050e0f05548f701784ee03f60",
+        "bytes": 9748,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby studies a folded city map held in both paws.",
+        "de": "Gooby betrachtet einen gefalteten Stadtplan in beiden Pfoten."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.games.first-round",
+      "page": "game-medals",
+      "slot": 0,
+      "sourceCell": {
+        "row": 0,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/games-first-round.png",
+        "sha256": "52082a4cddb860812df2c3f3eb7a8a46eaf570920dc2f44b1d41c70213080b60",
+        "bytes": 238703,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/games-first-round.webp",
+        "sha256": "4c18798ddcf51bc5c18858610ce836ef709eca57bcaa3ea1d50621b13752b895",
+        "bytes": 12132,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby plays at a cheerful wooden arcade cabinet.",
+        "de": "Gooby spielt an einem fröhlichen hölzernen Arcade-Automaten."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.games.new-best",
+      "page": "game-medals",
+      "slot": 1,
+      "sourceCell": {
+        "row": 0,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/games-new-best.png",
+        "sha256": "d43535aef3928578a591843a2b625c2368cbb865aa612a11aa85826a101c9577",
+        "bytes": 208981,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/games-new-best.webp",
+        "sha256": "0f906ac9c2e8b1931b5d8384f44629b196efe1ec9246640437ec19dedfaa2855",
+        "bytes": 13364,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby jumps among colorful game tokens and sparkling prizes.",
+        "de": "Gooby springt zwischen bunten Spielmarken und funkelnden Preisen."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.games.three-games",
+      "page": "game-medals",
+      "slot": 2,
+      "sourceCell": {
+        "row": 0,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/games-three-games.png",
+        "sha256": "2e3c4a23dec73ada347f2205cd8d16e040e1cc71d9e870937281ed05b6939f6b",
+        "bytes": 215094,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/games-three-games.webp",
+        "sha256": "5d82484b4e9600df23a6f531b7a317680846114a2830b7c7fe72627858ce9cd6",
+        "bytes": 13512,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby cheers inside a ring of colorful arcade tokens.",
+        "de": "Gooby jubelt in einem Ring aus bunten Arcade-Spielmarken."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.games.six-games",
+      "page": "game-medals",
+      "slot": 3,
+      "sourceCell": {
+        "row": 1,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/games-six-games.png",
+        "sha256": "f29037663f1b0796e6fcaa0e90c7b4063fd0101ec68e009c824d02feb058463e",
+        "bytes": 215623,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/games-six-games.webp",
+        "sha256": "54c069b6447291f85a555a47f652550d622001b2953e65e0c970423cc436dd47",
+        "bytes": 12530,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby wears a chef hat beside a tall strawberry cake.",
+        "de": "Gooby trägt eine Kochmütze neben einer hohen Erdbeertorte."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.games.twelve-games",
+      "page": "game-medals",
+      "slot": 4,
+      "sourceCell": {
+        "row": 1,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/games-twelve-games.png",
+        "sha256": "5409dbd227207a665cc4b0918d09b5e4a94c0526ac7ad18d4dcb0ade83ff4c17",
+        "bytes": 217643,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/games-twelve-games.webp",
+        "sha256": "699a21d5e73b3ea02e53185ce1090ecd1f7e1c5ced494fb3909b888750dd9a93",
+        "bytes": 14556,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby rides a shopping cart with bright swooshing arrows.",
+        "de": "Gooby fährt in einem Einkaufswagen mit leuchtenden Schwungpfeilen."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.games.all-games",
+      "page": "game-medals",
+      "slot": 5,
+      "sourceCell": {
+        "row": 1,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/games-all-games.png",
+        "sha256": "8ef13d987767dbbfd50b0a0bc3bda307e411a1d50e988ea69a4787789d9e91c2",
+        "bytes": 204646,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/games-all-games.webp",
+        "sha256": "479494b4e1a22fee005fa4621688ca407195dd397d6d146f09fc4adf6f5ecadb",
+        "bytes": 13756,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby celebrates with raised paws among golden stars.",
+        "de": "Gooby feiert mit erhobenen Pfoten zwischen goldenen Sternen."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.games.ten-rounds",
+      "page": "game-medals",
+      "slot": 6,
+      "sourceCell": {
+        "row": 2,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/games-ten-rounds.png",
+        "sha256": "b8682843ae16cd51bd42d8663eff3d7688792e0da9f5a720850d1f8a732121db",
+        "bytes": 204564,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/games-ten-rounds.webp",
+        "sha256": "4029725ddc1d146b00a92068a5c31024f8461182efad807db8ed6be3520fd737",
+        "bytes": 12950,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby proudly holds a gold medal and star trophy.",
+        "de": "Gooby hält stolz eine Goldmedaille und einen Sternpokal."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.games.fifty-rounds",
+      "page": "game-medals",
+      "slot": 7,
+      "sourceCell": {
+        "row": 2,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/games-fifty-rounds.png",
+        "sha256": "0747b785edcd170a5d78c09032b2be99b4adc5405598dd4d79b52e52cd8e1a56",
+        "bytes": 229889,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/games-fifty-rounds.webp",
+        "sha256": "1c28d1a726827b2e5ab46afdb8d4283095b6cd1aae4370c59c8e878ef67b798b",
+        "bytes": 12402,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby rests in a green chair with a controller and snacks.",
+        "de": "Gooby ruht in einem grünen Sessel mit Controller und Snacks."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.games.hundred-rounds",
+      "page": "game-medals",
+      "slot": 8,
+      "sourceCell": {
+        "row": 2,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/games-hundred-rounds.png",
+        "sha256": "0761b1181ab66baadfe2ed2e1fac6ee2b5e88c7d46e59b5c650602caaeef2387",
+        "bytes": 198809,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/games-hundred-rounds.webp",
+        "sha256": "2b3c62a4232f20504812dfa734330187b6c276fe5c1470895d569a32a142ab9a",
+        "bytes": 13450,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby crosses a finish ribbon as colorful confetti falls.",
+        "de": "Gooby durchquert ein Zielband, während buntes Konfetti fällt."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.dreams.first-dream",
+      "page": "dreams-seasons",
+      "slot": 0,
+      "sourceCell": {
+        "row": 0,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/dreams-first-dream.png",
+        "sha256": "79705c38a372f693409cee1c8dba392ede6cf010e04a7ab59b8c88399f07380b",
+        "bytes": 215402,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/dreams-first-dream.webp",
+        "sha256": "ece0f04783843f38343d7524902259aa7301ac4ec0271140f623dab057a4d4f4",
+        "bytes": 12934,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby sits in a spring garden of tulips and butterflies.",
+        "de": "Gooby sitzt in einem Frühlingsgarten mit Tulpen und Schmetterlingen."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.dreams.dream-week",
+      "page": "dreams-seasons",
+      "slot": 1,
+      "sourceCell": {
+        "row": 0,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/dreams-dream-week.png",
+        "sha256": "1a74bc5131d8d9dc72cc4677dceedc296bed260b0e4c7486a1bc9baed968a7c3",
+        "bytes": 204217,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/dreams-dream-week.webp",
+        "sha256": "f228bc0ab9be0ab28c31586824889404c928274b640708483af4c22e7578321e",
+        "bytes": 12194,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby splashes in a blue pool beside a yellow duck.",
+        "de": "Gooby planscht in einem blauen Becken neben einer gelben Ente."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.dreams.night-owl",
+      "page": "dreams-seasons",
+      "slot": 2,
+      "sourceCell": {
+        "row": 0,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/dreams-night-owl.png",
+        "sha256": "d8825bcb160be8f5ee56bc9b659cdff8574ebfeda9d3986fdf2149b9d93a7a3f",
+        "bytes": 232079,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/dreams-night-owl.webp",
+        "sha256": "a43d412547493a504d53a9cf193209418121de5c37a17209e4029405e3136d0b",
+        "bytes": 16326,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby wears a plaid scarf among swirling autumn leaves.",
+        "de": "Gooby trägt einen karierten Schal zwischen wirbelnden Herbstblättern."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.dreams.early-bird",
+      "page": "dreams-seasons",
+      "slot": 3,
+      "sourceCell": {
+        "row": 1,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/dreams-early-bird.png",
+        "sha256": "b9789f8acac3731919c518ea97b7b949e0cab61b34b4cedff71a2945109cc918",
+        "bytes": 240242,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/dreams-early-bird.webp",
+        "sha256": "3b31c0e3405e9b47140c471a0a1338fb4f0bf0f8605eb770a97355c9456a97f0",
+        "bytes": 14276,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby bundles up in a snowy forest with a red hat and scarf.",
+        "de": "Gooby sitzt warm eingepackt mit roter Mütze und Schal im Schneewald."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.dreams.starry-night",
+      "page": "dreams-seasons",
+      "slot": 4,
+      "sourceCell": {
+        "row": 1,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/dreams-starry-night.png",
+        "sha256": "6c491d50f614d8b61811282f918717eb83383c238dacf31ebe2d333e2759c379",
+        "bytes": 269452,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/dreams-starry-night.webp",
+        "sha256": "1b636210493bfe5cbd17f7e2b6472ea3c63e817a13325225e308c787223a5f35",
+        "bytes": 13130,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby looks through a telescope beneath a starry night sky.",
+        "de": "Gooby schaut unter einem sternklaren Nachthimmel durch ein Teleskop."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.seasons.spring-bloom",
+      "page": "dreams-seasons",
+      "slot": 5,
+      "sourceCell": {
+        "row": 1,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/seasons-spring-bloom.png",
+        "sha256": "92b72b93409624f8f67d1ea579f09f590543e1b379816a08e557e039a8985b1e",
+        "bytes": 241520,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/seasons-spring-bloom.webp",
+        "sha256": "12243329ef3f1065942b15295d2b3464d9373460735d58fadb6b5f8e0443ab80",
+        "bytes": 13826,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby shelters under a green leaf umbrella in spring rain.",
+        "de": "Gooby schützt sich im Frühlingsregen unter einem grünen Blattschirm."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.seasons.summer-sun",
+      "page": "dreams-seasons",
+      "slot": 6,
+      "sourceCell": {
+        "row": 2,
+        "column": 0
+      },
+      "master": {
+        "path": "assets/stickers/masters/seasons-summer-sun.png",
+        "sha256": "1fc79082995474c19399da63b44c6007b992db1861b748f1c93c649aed502b08",
+        "bytes": 195254,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/seasons-summer-sun.webp",
+        "sha256": "66095e1cc4040ba80a938c0638aab2029d396d2de547f7b500634799f6276767",
+        "bytes": 12624,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby carries a pink birthday cake with one glowing candle.",
+        "de": "Gooby trägt eine rosa Geburtstagstorte mit einer leuchtenden Kerze."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.seasons.autumn-leaf",
+      "page": "dreams-seasons",
+      "slot": 7,
+      "sourceCell": {
+        "row": 2,
+        "column": 1
+      },
+      "master": {
+        "path": "assets/stickers/masters/seasons-autumn-leaf.png",
+        "sha256": "71c6fb8010e4aa9fe30d566f63413286eb2e85e5ce051a9409f78eb9021fc0e4",
+        "bytes": 229298,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/seasons-autumn-leaf.webp",
+        "sha256": "519fb14b6525942b205ba53b87b082a05cd18a94e43483cdbceb7435a26a2274",
+        "bytes": 11008,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "Gooby rests on a purple cloud beneath a golden crescent moon.",
+        "de": "Gooby ruht auf einer lila Wolke unter einer goldenen Mondsichel."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    },
+    {
+      "id": "sticker.seasons.winter-frost",
+      "page": "dreams-seasons",
+      "slot": 8,
+      "sourceCell": {
+        "row": 2,
+        "column": 2
+      },
+      "master": {
+        "path": "assets/stickers/masters/seasons-winter-frost.png",
+        "sha256": "d14d8171147e9e8eff65d8cc4fd56ba92a6a2047967ebc1204bd25f0d34c6309",
+        "bytes": 235438,
+        "width": 512,
+        "height": 512,
+        "format": "png"
+      },
+      "runtime": {
+        "path": "public/assets/stickers/seasons-winter-frost.webp",
+        "sha256": "171eb771576c6ccc250d5cfc480e8bd5bc0f5def26a09a5cd048052536f1846d",
+        "bytes": 12120,
+        "width": 256,
+        "height": 256,
+        "format": "webp",
+        "quality": 82
+      },
+      "alt": {
+        "en": "A shiny golden Gooby statue stands on a round pedestal.",
+        "de": "Eine glänzende goldene Gooby-Statue steht auf einem runden Sockel."
+      },
+      "review": {
+        "goobyCharacter": "approved",
+        "leftEar": "upright",
+        "rightEar": "lop",
+        "textLogoTrademark": "none",
+        "crop": "approved"
+      }
+    }
+  ],
+  "totalRuntimeBytes": 444100
+}

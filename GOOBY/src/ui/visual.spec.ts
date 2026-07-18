@@ -3,8 +3,11 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 const VIEWPORTS = [
   { name: "iphone-se", width: 375, height: 667 },
   { name: "iphone-portrait", width: 390, height: 844 },
+  { name: "iphone-pro-max", width: 430, height: 932 },
   { name: "ipad-portrait", width: 820, height: 1180 },
 ] as const;
+
+const ALL_PANELS = ["places", "play", "wardrobe", "items", "stickers", "settings"] as const;
 
 async function freshStart(page: Page): Promise<void> {
   await page.goto("/");
@@ -37,7 +40,10 @@ async function assertPanelLayout(page: Page, panel: string): Promise<void> {
     const shell = document.querySelector<HTMLElement>(".game-shell");
     const sheetElement = document.querySelector<HTMLElement>(".sheet");
     if (!shell || !sheetElement) return { shellOverflow: true, sheetOverflow: true, clippedTargets: ["missing shell"] };
+    // The sticker book component scales itself via --sticker-ui-scale and is
+    // covered by its own acceptance suite, so its internals are skipped here.
     const clippedTargets = [...sheetElement.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")]
+      .filter((target) => !target.closest(".sticker-book"))
       .filter((target) => target.getClientRects().length > 0)
       .filter((target) => {
         const rect = target.getBoundingClientRect();
@@ -54,6 +60,35 @@ async function assertPanelLayout(page: Page, panel: string): Promise<void> {
     };
   });
   expect(layout).toEqual({ shellOverflow: false, sheetOverflow: false, clippedTargets: [] });
+}
+
+/** Every visible enabled button in the shell (sticker-book internals excluded). */
+async function undersizedTargets(page: Page): Promise<readonly string[]> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll<HTMLButtonElement>(".game-shell button:not(:disabled)")]
+      .filter((target) => !target.closest(".sticker-book"))
+      .filter((target) => target.getClientRects().length > 0)
+      .filter((target) => {
+        const rect = target.getBoundingClientRect();
+        return rect.width < 43.5 || rect.height < 43.5;
+      })
+      .map((target) => {
+        const rect = target.getBoundingClientRect();
+        return `${target.dataset.uiAction ?? target.textContent?.trim() ?? "button"}:${Math.round(rect.width)}x${Math.round(rect.height)}`;
+      }));
+}
+
+async function setRangeValue(page: Page, selector: string, value: string): Promise<void> {
+  await page.locator(selector).evaluate((element, rangeValue) => {
+    const input = element as HTMLInputElement;
+    input.value = rangeValue;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
+}
+
+async function rootFontSize(page: Page): Promise<string> {
+  return page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
 }
 
 async function closePanel(page: Page): Promise<void> {
@@ -95,31 +130,41 @@ async function exerciseSurfaces(page: Page, viewportName: string, capture: boole
   await expect(page.locator('[data-ui-action="home-zone"]')).toHaveCount(5);
   await expect(page.getByTestId("open-city-board")).toBeVisible();
   if (capture && viewportName === "ipad-portrait") {
-    await page.screenshot({ path: "/opt/cursor/artifacts/sol_ui_places_ipad_final.png" });
+    await page.screenshot({ path: "/opt/cursor/artifacts/gooby_ui_places_ipad_cp2.png" });
   }
   await closePanel(page);
 
   await assertPanelLayout(page, "play");
   await expect(page.locator(".game-card")).toHaveCount(24);
+  await expect(page.locator(".game-category")).toHaveCount(4);
   if (capture && viewportName === "iphone-portrait") {
-    await page.screenshot({ path: "/opt/cursor/artifacts/sol_ui_games_390_final.png" });
+    await page.screenshot({ path: "/opt/cursor/artifacts/gooby_ui_games_390_cp2.png" });
   }
   await closePanel(page);
 
   await assertPanelLayout(page, "wardrobe");
-  await expect(page.locator(".wardrobe-slot")).toHaveCount(4);
+  await expect(page.locator(".wardrobe-slot")).toHaveCount(6);
   await expect(page.locator('[data-ui-action="wardrobe-preview"][data-item]')).toHaveCount(0);
   if (capture && viewportName === "iphone-se") {
     await page.waitForTimeout(2_500);
-    await page.screenshot({ path: "/opt/cursor/artifacts/sol_ui_wardrobe_se_v3.png" });
+    await page.screenshot({ path: "/opt/cursor/artifacts/gooby_ui_wardrobe_se_cp2.png" });
   }
   await closePanel(page);
 
   await assertPanelLayout(page, "items");
+  await expect(page.locator("[data-catalog-food]")).toHaveCount(30);
   await page.getByRole("tab", { name: "Furniture" }).click();
-  await expect(page.locator(".empty-state")).toContainText("Cloud Boutique");
+  await expect(page.locator("[data-catalog-decor]")).toHaveCount(36);
   if (capture && viewportName === "iphone-portrait") {
-    await page.screenshot({ path: "/opt/cursor/artifacts/sol_ui_items_390_final.png" });
+    await page.screenshot({ path: "/opt/cursor/artifacts/gooby_ui_items_390_cp2.png" });
+  }
+  await closePanel(page);
+
+  await assertPanelLayout(page, "stickers");
+  await expect(page.locator(".sticker-book")).toBeVisible();
+  await expect(page.locator(".sticker-card")).toHaveCount(36);
+  if (capture && viewportName === "iphone-portrait") {
+    await page.screenshot({ path: "/opt/cursor/artifacts/gooby_ui_stickers_390_cp2.png" });
   }
   await closePanel(page);
 
@@ -128,7 +173,7 @@ async function exerciseSurfaces(page: Page, viewportName: string, capture: boole
   await expect(page.getByRole("switch", { name: /Reduce motion/ })).toHaveAttribute("aria-checked", "true");
   if (capture && viewportName === "ipad-portrait") {
     await page.waitForTimeout(2_500);
-    await page.screenshot({ path: "/opt/cursor/artifacts/sol_ui_settings_ipad_final.png" });
+    await page.screenshot({ path: "/opt/cursor/artifacts/gooby_ui_settings_ipad_cp2.png" });
   }
   await closePanel(page);
 }
@@ -176,7 +221,7 @@ async function recordWalkthrough(browser: Browser): Promise<void> {
   await expect(page.getByRole("heading", { name: "Good morning!" })).toBeVisible();
   const video = page.video();
   await context.close();
-  await video?.saveAs("/opt/cursor/artifacts/gooby_cozy_burrow_canonical_ui_walkthrough.webm");
+  await video?.saveAs("/opt/cursor/artifacts/gooby_cozy_burrow_cp2_ui_walkthrough.webm");
 }
 
 test("records the portrait UI walkthrough", async ({ browser }) => {
@@ -449,7 +494,7 @@ test("consumes catalog food and exposes selected decor place, move, rotate, and 
   await expect(page.locator("#app")).toHaveAttribute("data-ready", "true");
 
   await page.getByRole("tab", { name: "Items" }).click();
-  await expect(page.locator("[data-catalog-food]")).toHaveCount(16);
+  await expect(page.locator("[data-catalog-food]")).toHaveCount(30);
   await page.locator('[data-ui-action="consume-food"][data-item="crisp-carrot"]').click();
   await expect.poll(async () => page.evaluate(() =>
     window.__gooby.snapshot()?.inventory["crisp-carrot"])).toBe(0);
@@ -577,4 +622,249 @@ test("leaves an unfinished minigame without settlement or payout", async ({ page
     .toBe("home:living-room");
   expect(await page.evaluate(() => window.__gooby.snapshot()?.economy)).toEqual(before);
   expect(await page.evaluate(() => window.__gooby.snapshot()?.minigameSettlement)).toBeNull();
+});
+
+async function onboardedStorageState(browser: Browser): Promise<Awaited<ReturnType<Awaited<ReturnType<Browser["newContext"]>>["storageState"]>>> {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  await freshStart(page);
+  await completeOnboarding(page);
+  await page.evaluate(() => window.__gooby.test?.flushSave());
+  const storageState = await context.storageState();
+  await context.close();
+  return storageState;
+}
+
+test("keeps 44px targets at 85% scale and avoids clipping at 135% across the device matrix", async ({ browser }) => {
+  test.slow();
+  const storageState = await onboardedStorageState(browser);
+  for (const viewport of VIEWPORTS) {
+    const context = await browser.newContext({
+      viewport: { width: viewport.width, height: viewport.height },
+      storageState,
+    });
+    const page = await context.newPage();
+    await page.goto("/");
+    await expect(page.locator("#app")).toHaveAttribute("data-ready", "true");
+
+    // The sheet is modal and covers the tab bar, so it must be closed before
+    // switching panels — same flow a real user follows.
+    await page.locator('[data-panel="settings"]').last().click();
+    await page.locator('[data-ui-action="scale-preset"][data-scale="0.85"]').click();
+    expect(await rootFontSize(page)).toBe("13.6px");
+    await closePanel(page);
+    for (const panel of ["settings", "wardrobe", "play", "items"] as const) {
+      await page.locator(`[data-panel="${panel}"]`).last().click();
+      expect(await undersizedTargets(page), `${viewport.name} ${panel} at 85%`).toEqual([]);
+      await closePanel(page);
+    }
+
+    await page.locator('[data-panel="settings"]').last().click();
+    await page.locator('[data-ui-action="scale-preset"][data-scale="1.35"]').click();
+    expect(await rootFontSize(page)).toBe("21.6px");
+    await closePanel(page);
+    for (const panel of ALL_PANELS) {
+      await assertPanelLayout(page, panel);
+      if (viewport.name === "iphone-se" && panel === "settings") {
+        await page.waitForTimeout(1_200);
+        await page.screenshot({ path: "/opt/cursor/artifacts/gooby_ui_scale_135_se_cp2.png" });
+      }
+      await closePanel(page);
+    }
+    const navFits = await page.evaluate(() => {
+      const bar = document.querySelector<HTMLElement>(".tab-bar");
+      if (!bar) return false;
+      const rect = bar.getBoundingClientRect();
+      return rect.left >= -0.5 && rect.right <= window.innerWidth + 0.5;
+    });
+    expect(navFits, `${viewport.name} nav at 135%`).toBe(true);
+    await context.close();
+  }
+});
+
+test("persists UI scale and per-bus volumes across reload while mute preserves levels", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await freshStart(page);
+  await completeOnboarding(page);
+
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await page.locator('[data-ui-action="scale-preset"][data-scale="1.15"]').click();
+  expect(await rootFontSize(page)).toBe("18.4px");
+  await expect(page.locator("[data-ui-scale-value]")).toHaveText("115%");
+
+  await setRangeValue(page, 'input[data-volume-bus="music"]', "40");
+  await expect(page.locator('[data-volume-value="music"]')).toHaveText("40%");
+  await setRangeValue(page, 'input[data-volume-bus="voice"]', "0");
+  await expect(page.locator('[data-volume-value="voice"]')).toHaveText("0%");
+  await expect.poll(async () => page.evaluate(() => window.__gooby.snapshot()?.settings.volumes))
+    .toMatchObject({ music: 0.4, voice: 0, master: 1 });
+
+  // Muting keeps the stored slider levels so unmuting restores them exactly.
+  await page.getByRole("switch", { name: /Sound/u }).click();
+  await expect.poll(async () => page.evaluate(() => window.__gooby.snapshot()?.settings.muted)).toBe(true);
+  expect(await page.evaluate(() => window.__gooby.snapshot()?.settings.volumes))
+    .toMatchObject({ music: 0.4, voice: 0 });
+  await page.getByRole("switch", { name: /Sound/u }).click();
+  await expect.poll(async () => page.evaluate(() => window.__gooby.snapshot()?.settings.muted)).toBe(false);
+
+  await page.evaluate(() => window.__gooby.test?.flushSave());
+  await page.reload();
+  await expect(page.locator("#app")).toHaveAttribute("data-ready", "true");
+  expect(await rootFontSize(page)).toBe("18.4px");
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await expect(page.locator("[data-ui-scale-value]")).toHaveText("115%");
+  await expect(page.locator('input[data-volume-bus="music"]')).toHaveValue("40");
+  await expect(page.locator('input[data-volume-bus="voice"]')).toHaveValue("0");
+  await page.waitForTimeout(1_200);
+  await page.screenshot({ path: "/opt/cursor/artifacts/gooby_ui_settings_mixer_persisted_390.png" });
+});
+
+test("switches the whole UI to German at runtime and persists the choice", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await freshStart(page);
+  await completeOnboarding(page);
+
+  // The English catalog labels the option "German"; after switching it re-renders as "Deutsch".
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await page.getByRole("radio", { name: "German" }).click();
+  await expect(page.getByRole("radio", { name: "Deutsch" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("#sheet-title")).toHaveText("Einstellungen");
+  await expect(page.getByRole("tab", { name: "Garderobe" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Stickerbuch" })).toBeVisible();
+  await expect(page.getByRole("switch", { name: /Bewegung reduzieren/u })).toBeVisible();
+  await expect(page.getByText("Oberflächengröße")).toBeVisible();
+  await expect(page.getByText("Lautstärkemischer")).toBeVisible();
+  await expect(page.getByTestId("feed")).toContainText("Füttern");
+  await expect.poll(async () => page.evaluate(() => window.__gooby.snapshot()?.settings.language)).toBe("de");
+  await page.waitForTimeout(1_200);
+  await page.screenshot({ path: "/opt/cursor/artifacts/gooby_ui_settings_german_390.png" });
+
+  // The modal sheet covers the tab bar, so close it (localized "Schließen")
+  // before switching panels.
+  await page.getByRole("button", { name: "Schließen" }).click();
+  await expect(page.locator(".sheet")).toBeHidden();
+  await page.getByRole("tab", { name: "Garderobe" }).click();
+  await expect(page.locator("#sheet-title")).toHaveText("Garderobe");
+  await expect(page.locator(".wardrobe-slot").first()).toContainText("Kopf");
+
+  await page.evaluate(() => window.__gooby.test?.flushSave());
+  await page.reload();
+  await expect(page.locator("#app")).toHaveAttribute("data-ready", "true");
+  await expect(page.getByRole("tab", { name: "Einstellungen" })).toBeVisible();
+  await page.getByRole("tab", { name: "Einstellungen" }).click();
+  await page.getByRole("radio", { name: "Englisch" }).click();
+  await expect(page.locator("#sheet-title")).toHaveText("Settings");
+});
+
+test("unlocks the hidden developer workshop only after exactly seven fast taps on Language Auto", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await freshStart(page);
+  await completeOnboarding(page);
+
+  await page.getByRole("tab", { name: "Settings" }).click();
+  const auto = page.locator('[data-ui-action="set-language"][data-language="auto"]');
+  const devCard = page.locator('[data-ui-action="open-dev-workshop"]');
+
+  for (let tap = 0; tap < 6; tap += 1) await auto.click();
+  await expect(devCard).toHaveCount(0);
+
+  // Waiting past the ten-second window drops the earlier taps entirely.
+  await page.evaluate(() => window.__gooby.test?.advanceTime(11_000));
+  await auto.click();
+  await expect(devCard).toHaveCount(0);
+
+  for (let tap = 0; tap < 6; tap += 1) await auto.click();
+  await expect(page.locator(".toast")).toContainText("Developer workshop unlocked");
+  await expect(devCard).toBeVisible();
+
+  await devCard.click();
+  await expect(page.locator("#sheet-title")).toHaveText("Developer workshop");
+  await expect(page.locator('[data-ui-action="dev-scene"]')).toHaveCount(6);
+  await expect(page.locator('[data-ui-action="dev-audio"]')).toHaveCount(5);
+  await page.locator('[data-ui-action="dev-audio"][data-bus="music"]').click();
+  await expect(page.locator(".dev-sticker-grid figure")).toHaveCount(36);
+  await expect(page.locator(".dev-license-list")).toContainText("Kenney");
+
+  await page.locator('[data-ui-action="dev-fps"]').click();
+  await expect(page.locator(".fps-overlay")).toBeVisible();
+  await expect(page.locator(".fps-overlay")).toContainText("FPS");
+  await page.waitForTimeout(1_200);
+  await page.screenshot({ path: "/opt/cursor/artifacts/gooby_dev_workshop_fps_390.png" });
+  await page.locator('[data-ui-action="dev-fps"]').click();
+  await expect(page.locator(".fps-overlay")).toHaveCount(0);
+
+  const xpBefore = await page.evaluate(() => window.__gooby.snapshot()?.economy.xp ?? 0);
+  await page.locator('[data-ui-action="dev-grant-xp"]').click();
+  await expect.poll(async () => page.evaluate(() => window.__gooby.snapshot()?.economy.xp ?? 0))
+    .toBe(xpBefore + 200);
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#sheet-title")).toHaveText("Settings");
+
+  await page.evaluate(() => window.__gooby.test?.flushSave());
+  await page.reload();
+  await expect(page.locator("#app")).toHaveAttribute("data-ready", "true");
+  expect(await page.evaluate(() => window.__gooby.snapshot()?.devWorkshop?.unlocked)).toBe(true);
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await expect(page.locator('[data-ui-action="open-dev-workshop"]')).toBeVisible();
+});
+
+test("shows exactly one wake celebration, restores focus, and ignores stale wake double taps", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await freshStart(page);
+  await completeOnboarding(page);
+
+  await page.getByTestId("sleep").click();
+  await page.getByRole("button", { name: "Start sleep" }).click();
+  await expect(page.locator(".sleep-overlay")).toBeVisible();
+
+  // A double tap must trigger exactly one wake and one celebration modal.
+  await page.getByRole("button", { name: "Wake gently" }).dblclick();
+  await expect(page.getByRole("heading", { name: "Good morning!" })).toBeVisible();
+  await expect(page.locator(".modal-backdrop:visible")).toHaveCount(1);
+  expect(await page.evaluate(() => window.__gooby.snapshot()?.simulation.sleep)).toBeNull();
+  await expect(page.locator(".sleep-overlay")).toBeHidden();
+
+  await page.getByRole("button", { name: "Let’s go" }).click();
+  await expect(page.locator(".modal-backdrop")).toBeHidden();
+  // The wake button is gone with the overlay, so focus falls back to the canvas.
+  await expect.poll(async () => page.evaluate(() => document.activeElement?.id)).toBe("game-canvas");
+
+  // A second sleep round still produces exactly one fresh celebration.
+  await page.getByTestId("sleep").click();
+  await expect(page.locator(".sleep-overlay")).toBeVisible();
+  await page.getByRole("button", { name: "Wake gently" }).click();
+  await expect(page.getByRole("heading", { name: "Good morning!" })).toBeVisible();
+  await page.getByRole("button", { name: "Let’s go" }).click();
+  await expect(page.locator(".modal-backdrop")).toBeHidden();
+});
+
+test("mounts the sticker book tab and celebrates a fresh unlock through the toast queue", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await freshStart(page);
+  await completeOnboarding(page);
+
+  await page.getByRole("tab", { name: "Sticker book" }).click();
+  const book = page.locator(".sticker-book");
+  await expect(book).toBeVisible();
+  await expect(page.locator(".sticker-card")).toHaveCount(36);
+  await expect(book).toContainText("of 36 collected");
+  await book.locator(".sticker-book__nav button").last().click();
+  await expect(book.locator(".sticker-page:not([hidden])")).toContainText("City Days");
+  await closePanel(page);
+
+  const settled = page.evaluate(() => window.__gooby.snapshot()?.stickers?.unlocked ?? {});
+  const unlockedBefore = Object.keys(await settled).length;
+  await page.getByRole("tab", { name: "Play" }).click();
+  await page.locator('.game-card[data-game="carrot-catch"]').click();
+  await page.locator('[data-ui-action="start-game"][data-game="carrot-catch"]').click();
+  const start = page.getByRole("button", { name: /CATCH/u });
+  if (await start.isVisible()) await start.click();
+  await page.evaluate(() => window.__gooby.test?.advanceMinigameTime(76_000));
+  await page.getByRole("button", { name: "COLLECT REWARDS" }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    Object.keys(window.__gooby.snapshot()?.stickers?.unlocked ?? {}).length))
+    .toBeGreaterThan(unlockedBefore);
+  await expect(page.locator(".toast")).toContainText("New sticker");
+  await page.screenshot({ path: "/opt/cursor/artifacts/gooby_sticker_unlock_toast_390.png" });
 });

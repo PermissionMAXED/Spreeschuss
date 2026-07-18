@@ -4,6 +4,17 @@ export const LICENSE_NOTICE_ID = "kenney-asset-licenses";
 export const LICENSE_NOTICE_CANONICAL_PATH = "assets/LICENSES.md";
 export const LICENSE_NOTICE_BUNDLED_PATH = "assets/LICENSES.md";
 
+/**
+ * Committed markdown fragments contributed by the audio and sticker asset
+ * domains. They merge into the generated license notice in this fixed order
+ * so the composed document stays deterministic. Absent fragments are simply
+ * omitted, which keeps generation total when a domain has not landed yet.
+ */
+export const DOMAIN_NOTICE_FRAGMENTS = [
+  { id: "audio", path: "assets/audio/NOTICE.md" },
+  { id: "stickers", path: "assets/stickers/NOTICE.md" },
+];
+
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 
 function includedPacks(packs) {
@@ -19,7 +30,7 @@ function normalizedNotice(source) {
     .trim();
 }
 
-export function licenseNoticeDocument(packs, licenseSources) {
+export function licenseNoticeDocument(packs, licenseSources, domainSections = []) {
   const included = includedPacks(packs);
   const fileCount = included.reduce((total, pack) => total + pack.files.length, 0);
   const rows = included.map((pack) =>
@@ -47,6 +58,10 @@ ${normalizedNotice(source)}
 \`\`\``;
   });
 
+  const domainBlocks = domainSections
+    .filter((section) => typeof section?.markdown === "string" && section.markdown.trim().length > 0)
+    .map((section) => section.markdown.trim());
+
   return `# Third-party asset license notices
 
 This bundled notice is generated from the genuine \`License.txt\` files copied from official Kenney archives. Kenney releases these packs under Creative Commons Zero (CC0); attribution is not required. Original notice wording appears below with layout whitespace and line endings normalized for stable packaging.
@@ -57,8 +72,37 @@ Provenance: **${included.length} packs / ${fileCount} curated files**.
 | --- | --- | --- | --- | ---: |
 ${rows.join("\n")}
 
-${sections.join("\n\n")}
+${[...sections, ...domainBlocks].join("\n\n")}
 `;
+}
+
+/**
+ * When a domain's committed provenance data exists, the merged license notice
+ * must carry that domain's genuine license evidence: source titles and every
+ * recorded SHA-256 for audio, and the first-party license statement plus every
+ * source-sheet SHA-256 for stickers.
+ */
+export function domainNoticeProvenanceViolations({ document, audioLock, stickerManifest }) {
+  const violations = [];
+  const requireInDocument = (domain, label, value) => {
+    if (typeof value !== "string" || value.length === 0) return;
+    if (typeof document !== "string" || !document.includes(value)) {
+      violations.push(`${LICENSE_NOTICE_CANONICAL_PATH}: missing ${domain} ${label} "${value}"`);
+    }
+  };
+  for (const [sourceId, source] of Object.entries(audioLock?.sources ?? {})) {
+    requireInDocument("audio", `source title for ${sourceId}`, source.title);
+    requireInDocument("audio", `archive SHA-256 for ${sourceId}`, source.archive?.sha256);
+    requireInDocument("audio", `license SHA-256 for ${sourceId}`, source.license?.sha256);
+    requireInDocument("audio", `source SHA-256 for ${sourceId}`, source.sha256);
+  }
+  if (stickerManifest) {
+    requireInDocument("stickers", "license statement", stickerManifest.license);
+    for (const sheet of stickerManifest.sourceSheets ?? []) {
+      requireInDocument("stickers", `source sheet SHA-256 for ${sheet.page}`, sheet.sha256);
+    }
+  }
+  return violations;
 }
 
 export function licenseNoticeRecord(document, packs) {

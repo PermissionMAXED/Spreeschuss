@@ -19,6 +19,7 @@ import {
   PACKS,
 } from "./assets/catalog.mjs";
 import {
+  DOMAIN_NOTICE_FRAGMENTS,
   LICENSE_NOTICE_BUNDLED_PATH,
   LICENSE_NOTICE_CANONICAL_PATH,
   licenseNoticeDocument,
@@ -368,7 +369,15 @@ async function main() {
         pack.id,
         await readFile(join(stageRoot, pack.license.path), "utf8"),
       ])));
-    const licenseDocument = licenseNoticeDocument(results, licenseSources);
+    const domainSections = [];
+    for (const fragment of DOMAIN_NOTICE_FRAGMENTS) {
+      try {
+        domainSections.push({ id: fragment.id, markdown: await readFile(join(ROOT, fragment.path), "utf8") });
+      } catch {
+        // Absent domain fragments are omitted; generation stays total.
+      }
+    }
+    const licenseDocument = licenseNoticeDocument(results, licenseSources, domainSections);
 
     const manifest = {
       schemaVersion: 1,

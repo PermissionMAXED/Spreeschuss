@@ -1,20 +1,20 @@
 import {
   CATALOG_BY_ID,
-  COSMETIC_SLOTS,
-  type CosmeticCatalogItem,
-  type CosmeticSlot,
+  COSMETIC_EQUIP_SLOTS,
+  type CosmeticEquipSlot,
+  type WardrobeCosmeticCatalogItem,
 } from "../../data/catalog";
 
-export type EquippedCosmetics = Readonly<Partial<Record<CosmeticSlot, string>>>;
+export type EquippedCosmetics = Readonly<Partial<Record<CosmeticEquipSlot, string>>>;
 
 export type TryOnResult =
-  | { readonly status: "previewing"; readonly item: CosmeticCatalogItem; readonly equipped: EquippedCosmetics }
+  | { readonly status: "previewing"; readonly item: WardrobeCosmeticCatalogItem; readonly equipped: EquippedCosmetics }
   | { readonly status: "unknown-item" | "not-cosmetic"; readonly equipped: EquippedCosmetics };
 
 function copyLoadout(loadout: EquippedCosmetics): EquippedCosmetics {
   return Object.freeze(
     Object.fromEntries(
-      COSMETIC_SLOTS.flatMap((slot) => {
+      COSMETIC_EQUIP_SLOTS.flatMap((slot) => {
         const value = loadout[slot];
         return value ? [[slot, value] as const] : [];
       }),
@@ -64,7 +64,7 @@ export class CosmeticTryOnSession {
     this.assertActive();
     const accepted = Object.fromEntries(
       Object.entries(this.current).filter(([, itemId]) => itemId !== undefined && ownedItemIds.has(itemId)),
-    ) as Partial<Record<CosmeticSlot, string>>;
+    ) as Partial<Record<CosmeticEquipSlot, string>>;
     this.baseline = copyLoadout(accepted);
     this.current = this.baseline;
     this.apply(this.current);

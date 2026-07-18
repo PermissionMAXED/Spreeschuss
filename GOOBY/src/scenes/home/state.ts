@@ -22,6 +22,8 @@ const HARVEST_DAY_KEY = "__home.harvest.day";
 const HARVEST_COUNT_KEY = "__home.harvest.count";
 const DAY_MS = 24 * 60 * 60 * 1_000;
 export const DAILY_CARROT_LIMIT = 3;
+export const NOUGAT_DISPENSER_DECOR_ID = "nougatschleuse";
+export const HAZELNUT_NOUGAT_SPREAD_ID = "hazelnut-nougat-spread" as const;
 
 export interface DecorPlacement {
   readonly instanceId: string;
@@ -75,6 +77,7 @@ export interface ResolvedDecorDefinition {
   readonly footprint: readonly [width: number, depth: number];
   readonly allowedZones: readonly HomeZoneId[];
   readonly catalogItem: FurnitureCatalogItem | null;
+  readonly inventoryId: string | null;
 }
 
 export function resolveDecorDefinition(decorId: string): ResolvedDecorDefinition | null {
@@ -85,6 +88,7 @@ export function resolveDecorDefinition(decorId: string): ResolvedDecorDefinition
       footprint: definition.footprint,
       allowedZones: definition.allowedZones,
       catalogItem: null,
+      inventoryId: null,
     };
   }
   const item = CATALOG_BY_ID.get(decorId);
@@ -94,6 +98,7 @@ export function resolveDecorDefinition(decorId: string): ResolvedDecorDefinition
     footprint: CATALOG_FOOTPRINTS[item.footprint],
     allowedZones: item.zones,
     catalogItem: item,
+    inventoryId: item.id,
   };
 }
 
@@ -142,8 +147,8 @@ export function validateDecorPlacement(
   if (!definition.allowedZones.includes(request.zone)) {
     return { valid: false, reason: "wrong-zone" };
   }
-  if (inventory && definition.catalogItem) {
-    const owned = inventory[request.decorId] ?? 0;
+  if (inventory && definition.inventoryId) {
+    const owned = inventory[definition.inventoryId] ?? 0;
     const used = existing.filter(
       ({ decorId, instanceId }) => decorId === request.decorId && instanceId !== request.instanceId,
     ).length;
@@ -238,7 +243,7 @@ export function removeDecorPlacement(
 }
 
 function decorKey(placement: DecorPlacement): string {
-  const prefix = resolveDecorDefinition(placement.decorId)?.catalogItem
+  const prefix = resolveDecorDefinition(placement.decorId)?.inventoryId
     ? CATALOG_DECOR_PREFIX
     : DECOR_PREFIX;
   return [
@@ -260,6 +265,11 @@ export function findAvailableDecorPlacement(
   instanceId: string,
   inventory?: Readonly<Record<string, number>>,
 ): PlacementValidation {
+  const definition = resolveDecorDefinition(decorId);
+  if (!definition) return { valid: false, reason: "unknown-decor" };
+  if (inventory && definition.inventoryId && (inventory[definition.inventoryId] ?? 0) <= 0) {
+    return { valid: false, reason: "inventory-exhausted" };
+  }
   const blueprint = HOME_ZONE_BLUEPRINTS[zone];
   const candidates: Array<{ readonly x: number; readonly z: number; readonly slotId: string | null }> = [
     ...blueprint.decorSlots.map(({ id, position }) => ({ x: position[0], z: position[1], slotId: id })),
@@ -385,12 +395,13 @@ export function mutateNeed(
   return { ...save, simulation: applyNeedDelta(current, need, amount) };
 }
 
-export type FoodId = "carrot" | "apple" | "pancake";
+export type FoodId = "carrot" | "apple" | "pancake" | typeof HAZELNUT_NOUGAT_SPREAD_ID;
 
 const FOOD_NOURISHMENT: Readonly<Record<FoodId, number>> = {
   carrot: 22,
   apple: 16,
   pancake: 30,
+  [HAZELNUT_NOUGAT_SPREAD_ID]: 24,
 };
 
 export function feedFromInventory(
@@ -410,6 +421,32 @@ export function feedFromInventory(
   };
 }
 
+export interface NougatDispenseResult {
+  readonly save: SaveState;
+  readonly dispensed: boolean;
+  readonly consumed: boolean;
+}
+
+/**
+ * The counter produces one generic serving and immediately routes it through
+ * the same inventory-backed feeding mutation as every other home snack.
+ */
+export function dispenseHazelnutNougatSpread(
+  save: SaveState,
+  clock: Clock,
+): NougatDispenseResult {
+  if (save.simulation.sleep) return { save, dispensed: false, consumed: false };
+  const stocked: SaveState = {
+    ...save,
+    inventory: {
+      ...save.inventory,
+      [HAZELNUT_NOUGAT_SPREAD_ID]: (save.inventory[HAZELNUT_NOUGAT_SPREAD_ID] ?? 0) + 1,
+    },
+  };
+  const fed = feedFromInventory(stocked, HAZELNUT_NOUGAT_SPREAD_ID, clock);
+  return { save: fed.save, dispensed: true, consumed: fed.consumed };
+}
+
 export function applyScrubProgress(
   save: SaveState,
   progress: number,
@@ -425,8 +462,13 @@ export function applyScrubProgress(
   };
 }
 
-export function petGooby(save: SaveState, kind: "pet" | "tickle" | "poke", clock: Clock): SaveState {
-  const amount = kind === "tickle" ? 2 : kind === "pet" ? 0.75 : 0.35;
+export function petGooby(
+  save: SaveState,
+  kind: "pet" | "tickle" | "poke" | "belly-rub",
+  clock: Clock,
+): SaveState {
+  if (save.simulation.sleep) return save;
+  const amount = kind === "belly-rub" ? 3.5 : kind === "tickle" ? 2 : kind === "pet" ? 0.75 : 0.35;
   return mutateNeed(save, "fun", amount, clock);
 }
 

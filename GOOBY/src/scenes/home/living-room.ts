@@ -13,12 +13,14 @@ import { HomeZoneScene, type HomeSceneOptions } from "./base";
 import { box, makeDoor, makeRoomShell, makeWindow } from "./primitives";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
+const TV_CHANNELS = ["meadow-watch", "butterfly-cam", "cozy-cooking", "off"] as const;
+type TelevisionChannel = (typeof TV_CHANNELS)[number];
 
 export class LivingRoom extends HomeZoneScene {
   private readonly televisionScreen: Mesh;
   private readonly windowGlass: Mesh;
   private readonly doors = new Map<HomeZoneId, Group>();
-  private televisionOn = true;
+  private televisionChannel: TelevisionChannel = "meadow-watch";
 
   constructor(
     gameRenderer: GameRenderer,
@@ -86,6 +88,7 @@ export class LivingRoom extends HomeZoneScene {
 
     this.gooby.root.position.set(-0.05, 0.08, 0.35);
     this.gooby.root.scale.setScalar(0.9);
+    this.excludeFromStaticBatch(this.televisionScreen, this.windowGlass);
     this.add(
       rug,
       sofa,
@@ -102,12 +105,31 @@ export class LivingRoom extends HomeZoneScene {
   }
 
   toggleTelevision(): boolean {
-    this.televisionOn = !this.televisionOn;
+    this.televisionChannel = this.televisionChannel === "off" ? "meadow-watch" : "off";
     this.emit({
       type: "toast",
-      message: this.televisionOn ? "Gooby's favorite nature show is on." : "Quiet cozy time.",
+      message: this.televisionChannel === "off" ? "Quiet cozy time." : "Meadow Watch is on.",
     });
-    return this.televisionOn;
+    this.emit({ type: "tv:channel", channel: this.televisionChannel });
+    return this.televisionChannel !== "off";
+  }
+
+  cycleTelevisionChannel(): TelevisionChannel {
+    const next = (TV_CHANNELS.indexOf(this.televisionChannel) + 1) % TV_CHANNELS.length;
+    this.televisionChannel = TV_CHANNELS[next] ?? "meadow-watch";
+    const message: Readonly<Record<TelevisionChannel, string>> = {
+      "meadow-watch": "Meadow Watch: a very calm field.",
+      "butterfly-cam": "Butterfly Cam: tiny wings, live from the garden.",
+      "cozy-cooking": "Cozy Cooking: carrot pancakes are sizzling.",
+      off: "Quiet cozy time.",
+    };
+    this.emit({ type: "tv:channel", channel: this.televisionChannel });
+    this.emit({ type: "toast", message: message[this.televisionChannel] });
+    return this.televisionChannel;
+  }
+
+  get currentTelevisionChannel(): TelevisionChannel {
+    return this.televisionChannel;
   }
 
   openDoor(zone: "kitchen" | "garden"): void {
@@ -117,7 +139,7 @@ export class LivingRoom extends HomeZoneScene {
   protected override handleZoneGesture(gesture: Gesture): boolean {
     if (gesture.type !== "tap" && gesture.type !== "double-tap") return false;
     if (this.hit(this.televisionScreen, gesture.x, gesture.y)) {
-      this.toggleTelevision();
+      this.cycleTelevisionChannel();
       return true;
     }
     for (const [zone] of this.doors) {
@@ -132,11 +154,17 @@ export class LivingRoom extends HomeZoneScene {
   protected override updateZone(): void {
     const material = this.televisionScreen.material;
     if (material instanceof MeshStandardMaterial) {
-      if (this.televisionOn) {
+      if (this.televisionChannel !== "off") {
         const pulse = (Math.sin(this.elapsed * 2.3) + 1) / 2;
-        material.color.setHSL(0.47 + pulse * 0.12, 0.52, 0.55);
-        material.emissive.setHex(0x5ec6ca);
-        material.emissiveIntensity = 0.25 + pulse * 0.34;
+        const channelStyle: Readonly<Record<Exclude<TelevisionChannel, "off">, readonly [number, number]>> = {
+          "meadow-watch": [0.47, 0x5ec6ca],
+          "butterfly-cam": [0.86, 0xd66fa9],
+          "cozy-cooking": [0.08, 0xe69a55],
+        };
+        const [hue, emissive] = channelStyle[this.televisionChannel];
+        material.color.setHSL(hue + pulse * 0.055, 0.52, 0.55);
+        material.emissive.setHex(emissive);
+        material.emissiveIntensity = 0.22 + pulse * 0.3;
       } else {
         material.color.setHex(0x332f35);
         material.emissiveIntensity = 0;

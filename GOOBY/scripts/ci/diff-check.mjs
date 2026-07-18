@@ -8,6 +8,7 @@ const workflows = [
   resolve(repository, ".github/workflows/gooby-ios.yml"),
 ];
 const ignoredDirectories = new Set([
+  ".asset-cache",
   "build",
   "coverage",
   "dist",

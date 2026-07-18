@@ -19,7 +19,9 @@ import {
   sha256,
 } from "./assets/audit-lib.mjs";
 import {
+  DOMAIN_NOTICE_FRAGMENTS,
   LICENSE_NOTICE_BUNDLED_PATH,
+  domainNoticeProvenanceViolations,
   licenseNoticeDocument,
   licenseNoticeRecord,
   licenseNoticeViolations,
@@ -524,9 +526,14 @@ async function main() {
     }
   }
 
+  const domainSections = [];
+  for (const fragment of DOMAIN_NOTICE_FRAGMENTS) {
+    const markdown = await optionalText(join(ROOT, fragment.path));
+    if (markdown !== null) domainSections.push({ id: fragment.id, markdown });
+  }
   let expectedLicenseDocument = "";
   try {
-    expectedLicenseDocument = licenseNoticeDocument(manifest.packs ?? [], licenseSources);
+    expectedLicenseDocument = licenseNoticeDocument(manifest.packs ?? [], licenseSources, domainSections);
   } catch (error) {
     violations.push(`Cannot generate the bundled license notice: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -551,6 +558,22 @@ async function main() {
     requiredFiles: PACKS.flatMap((pack) => pack.files.map(({ output }) => output)),
     builtDocument,
     nativeDocument,
+  }));
+
+  const optionalJson = async (path) => {
+    const raw = await optionalText(path);
+    if (raw === null) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      violations.push(`${relative(ROOT, path).replaceAll("\\", "/")}: unreadable JSON provenance record`);
+      return null;
+    }
+  };
+  violations.push(...domainNoticeProvenanceViolations({
+    document: expectedLicenseDocument,
+    audioLock: await optionalJson(join(ASSET_ROOT, "audio/sources.lock.json")),
+    stickerManifest: await optionalJson(join(ROOT, "src/data/stickers/manifest.json")),
   }));
 
   const sourceRuntimeFiles = await filesBelow(join(ROOT, "src"));

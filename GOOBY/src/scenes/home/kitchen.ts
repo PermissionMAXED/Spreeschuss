@@ -12,7 +12,13 @@ import { createProceduralAsset } from "../../render/proc";
 import type { GameRenderer, ResourceTracker } from "../../render/renderer";
 import { HomeZoneScene, type HomeSceneOptions } from "./base";
 import { box, makeCounter, makeDoor, makeRoomShell } from "./primitives";
-import { feedFromInventory, type FoodId } from "./state";
+import {
+  HAZELNUT_NOUGAT_SPREAD_ID,
+  NOUGAT_DISPENSER_DECOR_ID,
+  dispenseHazelnutNougatSpread,
+  feedFromInventory,
+  type FoodId,
+} from "./state";
 
 interface Crumb {
   readonly mesh: Mesh;
@@ -20,7 +26,9 @@ interface Crumb {
   age: number;
 }
 
-const FOOD_ASSET: Readonly<Record<FoodId, "food.carrot" | "food.apple" | "food.pancake">> = {
+type FridgeFoodId = Exclude<FoodId, typeof HAZELNUT_NOUGAT_SPREAD_ID>;
+
+const FOOD_ASSET: Readonly<Record<FridgeFoodId, "food.carrot" | "food.apple" | "food.pancake">> = {
   carrot: "food.carrot",
   apple: "food.apple",
   pancake: "food.pancake",
@@ -32,6 +40,9 @@ export class Kitchen extends HomeZoneScene {
   private readonly doors = new Map<HomeZoneId, Group>();
   private readonly crumbs: Crumb[] = [];
   private draggedFood: { readonly id: FoodId; readonly object: Object3D } | null = null;
+  private nougatDispenser: Object3D | null = null;
+  private nougatLever: Object3D | null = null;
+  private nougatLeverHeldAt = Number.POSITIVE_INFINITY;
   private fridgeOpen = false;
 
   constructor(
@@ -78,6 +89,7 @@ export class Kitchen extends HomeZoneScene {
 
     this.gooby.root.position.set(0.1, 0.06, 0.55);
     this.gooby.root.scale.setScalar(0.87);
+    this.excludeFromStaticBatch(this.fridge);
     this.add(
       this.fridge,
       counter,
@@ -117,7 +129,7 @@ export class Kitchen extends HomeZoneScene {
       this.disposeDynamic(food);
     }
     this.foodObjects.clear();
-    const visibleFoods = (Object.keys(FOOD_ASSET) as FoodId[]).filter((id) => (inventory[id] ?? 0) > 0);
+    const visibleFoods = (Object.keys(FOOD_ASSET) as FridgeFoodId[]).filter((id) => (inventory[id] ?? 0) > 0);
     visibleFoods.forEach((id, index) => {
       const object = createProceduralAsset(FOOD_ASSET[id]);
       object.name = `food:${id}`;
@@ -178,6 +190,50 @@ export class Kitchen extends HomeZoneScene {
     return true;
   }
 
+  hasPlacedNougatDispenser(): boolean {
+    const save = this.currentSave();
+    return Boolean(
+      this.nougatDispenser &&
+      save &&
+      (save.inventory[NOUGAT_DISPENSER_DECOR_ID] ?? 0) > 0 &&
+      this.getDecorPlacements().some(({ decorId }) => decorId === NOUGAT_DISPENSER_DECOR_ID),
+    );
+  }
+
+  dispenseNougatSpread(): boolean {
+    const save = this.currentSave();
+    if (!save || !this.hasPlacedNougatDispenser() || save.simulation.sleep) {
+      this.emit({ type: "toast", message: "The cozy spread dispenser is resting right now." });
+      return false;
+    }
+    const result = dispenseHazelnutNougatSpread(save, this.clock);
+    if (!result.dispensed || !result.consumed) return false;
+    const amount = Math.max(
+      0,
+      result.save.simulation.needs.hunger - save.simulation.needs.hunger,
+    );
+    this.commitNeed(result.save, "hunger");
+    this.gooby.react("feed");
+    this.spawnCrumbs();
+    this.emit({
+      type: "care:performed",
+      action: "feed",
+      need: "hunger",
+      amount,
+      value: result.save.simulation.needs.hunger,
+      itemId: HAZELNUT_NOUGAT_SPREAD_ID,
+    });
+    this.emit({ type: "care:effect", action: "munch", particles: "crumbs" });
+    this.emit({
+      type: "item:dispensed",
+      itemId: HAZELNUT_NOUGAT_SPREAD_ID,
+      source: "nougatschleuse",
+    });
+    this.emit({ type: "achievement:hook", action: "nougat-dispensed", amount: 1 });
+    this.emit({ type: "toast", message: "A little hazelnut-nougat spread—munch! Hunger is up." });
+    return true;
+  }
+
   private spawnCrumbs(): void {
     for (let index = 0; index < 8; index += 1) {
       const crumb = new Mesh(
@@ -209,6 +265,22 @@ export class Kitchen extends HomeZoneScene {
       else this.openFridge();
       return true;
     }
+    if (
+      gesture.type === "press-start" &&
+      this.nougatLever &&
+      this.hitEssential("nougatschleuse:lever", gesture.x, gesture.y)
+    ) {
+      this.nougatLeverHeldAt = performance.now();
+      return true;
+    }
+    if (gesture.type === "press-move" && Number.isFinite(this.nougatLeverHeldAt)) return true;
+    if (gesture.type === "press-end" && Number.isFinite(this.nougatLeverHeldAt)) {
+      const heldFor = Math.max(gesture.durationMs, performance.now() - this.nougatLeverHeldAt);
+      this.nougatLeverHeldAt = Number.POSITIVE_INFINITY;
+      if (heldFor >= 480) this.dispenseNougatSpread();
+      else this.emit({ type: "toast", message: "Hold the lever gently to dispense a serving." });
+      return true;
+    }
     if (gesture.type === "press-start") {
       for (const [id] of this.foodObjects) {
         if (this.hitEssential(`food:${id}`, gesture.x, gesture.y)) return this.beginFoodDrag(id);
@@ -230,6 +302,31 @@ export class Kitchen extends HomeZoneScene {
       return true;
     }
     return false;
+  }
+
+  protected override blocksGenericGoobyGesture(): boolean {
+    return Number.isFinite(this.nougatLeverHeldAt);
+  }
+
+  protected override onDecorObjectsChanged(): void {
+    this.unregisterEssentialTarget("nougatschleuse:lever");
+    this.nougatDispenser = null;
+    this.nougatLever = null;
+    const placement = this.getDecorPlacements().find(
+      ({ decorId }) => decorId === NOUGAT_DISPENSER_DECOR_ID,
+    );
+    if (!placement) return;
+    const object = this.getDecorObject(placement.instanceId);
+    const lever = object?.getObjectByName("nougatschleuse:lever") ?? null;
+    if (!object || !lever) return;
+    this.nougatDispenser = object;
+    this.nougatLever = lever;
+    this.registerEssentialTarget(
+      "nougatschleuse:lever",
+      lever,
+      [placement.gridX * 0.5, 1.08, placement.gridZ * 0.5],
+      [1.1, 1.5, 1.1],
+    );
   }
 
   protected override updateZone(deltaSeconds: number): void {

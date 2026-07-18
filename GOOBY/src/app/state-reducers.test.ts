@@ -14,13 +14,21 @@ import { harvestCarrot } from "../scenes/home/state";
 import { parseUiState, type UiPersistedState } from "../ui/model";
 import { ReplayableSaveCoordinator } from "./save-coordinator";
 import {
+  markAllStickersSeenReducer,
+  markStickerSeenReducer,
   migrateLegacyUiReducer,
   reconcileExternalState,
   savedTravelSnapshot,
   sanitizeCanonicalUi,
+  setBusVolumeReducer,
+  setDevWorkshopUnlockedReducer,
+  setEquippedCosmeticReducer,
+  setLanguageReducer,
   setQuietHoursReducer,
   settlementReceiptForRun,
   settleMinigameReducer,
+  setUiScaleReducer,
+  unlockStickerReducer,
   withTravelSnapshotReducer,
 } from "./state-reducers";
 
@@ -341,6 +349,85 @@ describe("replayable canonical save integration", () => {
 
     await coordinator.apply(setQuietHoursReducer(null));
     expect((await loadSave(port, 1_000)).state.notificationPolicy.quietHours).toBeNull();
+  });
+
+  it("persists clamped UI scale, per-bus volumes, language, and dev workshop unlock", () => {
+    const initial = canonical();
+
+    expect(setUiScaleReducer(1.15)(initial).settings.uiScale).toBe(1.15);
+    expect(setUiScaleReducer(99)(initial).settings.uiScale).toBe(1.35);
+    expect(setUiScaleReducer(0.1)(initial).settings.uiScale).toBe(0.85);
+    expect(setUiScaleReducer(Number.NaN)(initial).settings.uiScale).toBe(1);
+    expect(setUiScaleReducer(initial.settings.uiScale)(initial)).toBe(initial);
+
+    const music = setBusVolumeReducer("music", 0.4)(initial);
+    expect(music.settings.volumes.music).toBe(0.4);
+    expect(music.settings.volumes.master).toBe(initial.settings.volumes.master);
+    expect(setBusVolumeReducer("sfx", 7)(initial).settings.volumes.sfx).toBe(1);
+    expect(setBusVolumeReducer("voice", -2)(initial).settings.volumes.voice).toBe(0);
+
+    // Muting is a separate flag: stored volumes survive a mute round-trip.
+    const muted = SaveStateSchema.parse({
+      ...music,
+      settings: { ...music.settings, muted: true },
+    });
+    expect(muted.settings.volumes.music).toBe(0.4);
+
+    expect(setLanguageReducer("de")(initial).settings.language).toBe("de");
+    expect(setLanguageReducer("auto")(initial)).toBe(initial);
+
+    const unlocked = setDevWorkshopUnlockedReducer(true)(initial);
+    expect(unlocked.devWorkshop.unlocked).toBe(true);
+    expect(setDevWorkshopUnlockedReducer(true)(unlocked)).toBe(unlocked);
+  });
+
+  it("equips all six wardrobe slots only for owned matching cosmetics", () => {
+    const initial = SaveStateSchema.parse({
+      ...canonical(),
+      inventory: {
+        carrot: 3,
+        "sunny-bucket-hat": 1,
+        "round-meadow-glasses": 1,
+        "striped-paw-warmers": 1,
+      },
+    });
+
+    const hat = setEquippedCosmeticReducer("head", "sunny-bucket-hat")(initial);
+    expect(hat.ui.equipped.head).toBe("sunny-bucket-hat");
+
+    const face = setEquippedCosmeticReducer("face", "round-meadow-glasses")(hat);
+    expect(face.ui.equipped).toMatchObject({
+      head: "sunny-bucket-hat",
+      face: "round-meadow-glasses",
+    });
+    const paws = setEquippedCosmeticReducer("paws", "striped-paw-warmers")(face);
+    expect(paws.ui.equipped.paws).toBe("striped-paw-warmers");
+
+    // Unowned, mismatched-slot, and unknown-slot writes are all rejected.
+    expect(setEquippedCosmeticReducer("neck", "pearl-dewdrop-necklace")(paws)).toBe(paws);
+    expect(setEquippedCosmeticReducer("ears", "sunny-bucket-hat")(paws)).toBe(paws);
+    expect(setEquippedCosmeticReducer("tail", "sunny-bucket-hat")(paws)).toBe(paws);
+
+    const cleared = setEquippedCosmeticReducer("face", null)(paws);
+    expect(cleared.ui.equipped.face).toBeUndefined();
+    expect(cleared.ui.equipped.head).toBe("sunny-bucket-hat");
+  });
+
+  it("marks sticker seen exactly once and only for unlocked stickers", () => {
+    const initial = canonical();
+    const id = "sticker.games.first-round";
+
+    expect(markStickerSeenReducer(id, 500)(initial)).toBe(initial);
+
+    const unlockedAt = unlockStickerReducer(id, 400)(initial);
+    const seen = markStickerSeenReducer(id, 500)(unlockedAt);
+    expect(seen).not.toBe(unlockedAt);
+    expect(markStickerSeenReducer(id, 900)(seen)).toBe(seen);
+
+    const second = unlockStickerReducer("sticker.games.ten-rounds", 450)(unlockedAt);
+    const allSeen = markAllStickersSeenReducer(600)(second);
+    expect(markStickerSeenReducer(id, 700)(allSeen)).toBe(allSeen);
+    expect(markStickerSeenReducer("sticker.games.ten-rounds", 700)(allSeen)).toBe(allSeen);
   });
 
   it("round-trips an active city snapshot through the canonical save port", async () => {

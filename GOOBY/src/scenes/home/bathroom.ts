@@ -103,6 +103,7 @@ export class Bathroom extends HomeZoneScene {
 
     this.gooby.root.position.set(0, 0.06, 0.65);
     this.gooby.root.scale.setScalar(0.84);
+    this.excludeFromStaticBatch(this.tub, this.water, this.soap, this.mirror);
     this.add(
       this.tub,
       this.water,
@@ -138,6 +139,7 @@ export class Bathroom extends HomeZoneScene {
 
   scrub(amount: number): number {
     const save = this.currentSave();
+    if (save?.simulation.sleep) return this.scrubProgress;
     if (!save) {
       this.scrubProgress = Math.max(0, Math.min(1, this.scrubProgress + amount));
       return this.scrubProgress;
@@ -146,8 +148,20 @@ export class Bathroom extends HomeZoneScene {
     this.scrubProgress = result.progress;
     this.spawnBubbles(Math.max(1, Math.round(amount * 12)));
     if (result.cleaned) {
+      const amountCleaned = Math.max(
+        0,
+        result.save.simulation.needs.hygiene - save.simulation.needs.hygiene,
+      );
       this.commitNeed(result.save, "hygiene");
       this.gooby.react("pet");
+      this.emit({
+        type: "care:performed",
+        action: "scrub",
+        need: "hygiene",
+        amount: amountCleaned,
+        value: result.save.simulation.needs.hygiene,
+      });
+      this.emit({ type: "achievement:hook", action: "care", amount: 1 });
       this.emit({ type: "toast", message: "Squeaky clean! Hygiene +28" });
     }
     return this.scrubProgress;
@@ -209,7 +223,9 @@ export class Bathroom extends HomeZoneScene {
       return true;
     }
     if (gesture.type === "press-move" && this.scrubbing) {
-      if (this.hitGooby(gesture.x, gesture.y)) this.scrub(Math.min(0.24, Math.hypot(gesture.dx, gesture.dy) / 300));
+      if (this.hitGoobyRaw(gesture.x, gesture.y)) {
+        this.scrub(Math.min(0.24, Math.hypot(gesture.dx, gesture.dy) / 300));
+      }
       return true;
     }
     if (gesture.type === "press-end" && this.scrubbing) {
@@ -218,6 +234,10 @@ export class Bathroom extends HomeZoneScene {
       return true;
     }
     return false;
+  }
+
+  protected override blocksGenericGoobyGesture(): boolean {
+    return this.scrubbing;
   }
 
   protected override updateZone(deltaSeconds: number): void {

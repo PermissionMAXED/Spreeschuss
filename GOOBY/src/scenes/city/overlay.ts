@@ -1,8 +1,8 @@
 import type { CityDriveState, ShopId } from "../../core/contracts/scenes";
 import type { DriveControls } from "../../core/contracts/input";
-import { CITY_DESTINATIONS } from "../../data/city";
+import { CITY_DESTINATIONS, type CityRouteManeuver } from "../../data/city";
 import { CityPointerControls, type DriveControlRegion } from "./controls";
-import type { RecoveryMode } from "./simulation";
+import type { ParkingArrivalQuality, RecoveryMode } from "./simulation";
 import { CITY_MARKER_VISUALS } from "./world";
 
 export interface EdgePointerLayout {
@@ -18,6 +18,21 @@ export interface CityOverlayMetrics {
   readonly coinsCollected: number;
   readonly boostSeconds: number;
   readonly recoveryMode: RecoveryMode;
+  readonly maneuver: CityRouteManeuver | null;
+  readonly wrongWay: boolean;
+  readonly parking: ParkingArrivalQuality | null;
+}
+
+/** UI copy for the next-maneuver hint; far turns read as "straight ahead". */
+export function maneuverCopy(maneuver: CityRouteManeuver | null): string {
+  if (!maneuver) return "";
+  const meters = Math.max(0, Math.round(maneuver.distance));
+  if (maneuver.kind === "arrive") {
+    return meters <= 24 ? `Parking ahead · ${meters} m` : "Straight on to parking";
+  }
+  if (meters > 30) return "Straight ahead";
+  const arrow = maneuver.kind === "left" ? "◀" : "▶";
+  return `${arrow} Turn ${maneuver.kind} · ${meters} m`;
 }
 
 export interface CityOverlayHandlers {
@@ -79,6 +94,8 @@ export class CityDriveOverlay {
   private readonly destinationBoard: HTMLElement;
   private readonly startButton: HTMLButtonElement;
   private readonly arrivedBoard: HTMLElement;
+  private readonly arrivalHeading: HTMLElement;
+  private readonly arrivalCopy: HTMLElement;
   private readonly returnBoard: HTMLElement;
   private readonly returnCopy: HTMLElement;
   private readonly quickReturnButton: HTMLButtonElement;
@@ -87,9 +104,11 @@ export class CityDriveOverlay {
   private readonly distanceValue: HTMLElement;
   private readonly destinationValue: HTMLElement;
   private readonly districtValue: HTMLElement;
+  private readonly maneuverValue: HTMLElement;
   private readonly coinValue: HTMLElement;
   private readonly boostValue: HTMLElement;
   private readonly recoveryValue: HTMLElement;
+  private readonly wrongWayValue: HTMLElement;
   private readonly edgePointer: HTMLElement;
   private readonly pointerControls: CityPointerControls;
   private readonly destinationPointerStarts = new Map<number, HTMLButtonElement>();
@@ -124,6 +143,11 @@ export class CityDriveOverlay {
         .city-distance-banner b { color: #9b5a16; font-size: 1rem; }
         .city-distance-banner small { color: #755e61; font-size: .7rem; }
         .city-distance-banner .city-district { text-align: right; }
+        .city-distance-banner .city-maneuver {
+          grid-column: 1 / -1; font-style: normal; font-weight: 900;
+          color: #7a4a12; font-size: .8rem;
+        }
+        .city-distance-banner .city-maneuver:empty { display: none; }
         .city-board {
           position: absolute; top: 31%; left: 50%; translate: -50% 0;
           width: min(88%, 410px); max-height: 49%; overflow: auto; pointer-events: auto;
@@ -177,7 +201,9 @@ export class CityDriveOverlay {
           color: white; font-weight: 850; font-size: .68rem; text-shadow: 0 2px 5px #3b292b;
         }
         .city-drive-status span { padding: .3rem .55rem; border-radius: 999px; background: rgba(55,48,55,.72); }
-        .city-drive-status [data-boost]:empty, .city-drive-status [data-recovery]:empty { display: none; }
+        .city-drive-status [data-boost]:empty, .city-drive-status [data-recovery]:empty,
+        .city-drive-status [data-wrongway]:empty { display: none; }
+        .city-drive-status [data-wrongway] { background: rgba(196,44,44,.92); letter-spacing: .06em; }
         .city-edge-pointer {
           position: absolute; width: 3rem; height: 3rem; margin: -1.5rem; display: grid; place-items: center;
           color: #563413; background: var(--gold); border: 4px solid #fff7c7; border-radius: 50% 50% 50% 12%;
@@ -197,6 +223,7 @@ export class CityDriveOverlay {
       <aside class="city-distance-banner" data-testid="city-distance" hidden>
         <strong data-destination>Destination</strong><b data-distance>0 m</b>
         <small>Follow the gold arrows</small><small class="city-district" data-district>Maple Suburb</small>
+        <em class="city-maneuver" data-maneuver></em>
       </aside>
       <section class="city-board" data-board="destinations">
         <small>GOOBY GARAGE</small>
@@ -217,8 +244,8 @@ export class CityDriveOverlay {
       </section>
       <section class="city-board" data-board="arrived" hidden>
         <div class="city-arrival-badge">P</div>
-        <h2>Perfect parking!</h2>
-        <p>You reached the selected shop. The car is parked and ready when you return.</p>
+        <h2 data-arrival-heading>Parked!</h2>
+        <p data-arrival-copy>You reached the selected shop. The car is parked and ready when you return.</p>
         <button class="city-primary" data-action="enter-shop" data-testid="enter-shop">Enter shop</button>
       </section>
       <section class="city-board" data-board="return" hidden>
@@ -234,7 +261,7 @@ export class CityDriveOverlay {
         <button class="city-control" data-control="steer-right" aria-label="Hold to steer right">▶<span>HOLD · D / →</span></button>
       </div>
       <div class="city-drive-status" aria-live="polite">
-        <span>● <b data-coins>0</b></span><span data-boost></span><span data-recovery></span>
+        <span>● <b data-coins>0</b></span><span data-boost></span><span data-recovery></span><span data-wrongway></span>
       </div>
       <div class="city-edge-pointer" aria-hidden="true" hidden>▲</div>
     `;
@@ -243,6 +270,8 @@ export class CityDriveOverlay {
     this.destinationBoard = requiredElement(this.root, '[data-board="destinations"]');
     this.startButton = requiredElement(this.root, '[data-action="depart"]');
     this.arrivedBoard = requiredElement(this.root, '[data-board="arrived"]');
+    this.arrivalHeading = requiredElement(this.root, "[data-arrival-heading]");
+    this.arrivalCopy = requiredElement(this.root, "[data-arrival-copy]");
     this.returnBoard = requiredElement(this.root, '[data-board="return"]');
     this.returnCopy = requiredElement(this.root, "[data-return-copy]");
     this.quickReturnButton = requiredElement(this.root, '[data-action="quick-return"]');
@@ -251,9 +280,11 @@ export class CityDriveOverlay {
     this.distanceValue = requiredElement(this.root, "[data-distance]");
     this.destinationValue = requiredElement(this.root, "[data-destination]");
     this.districtValue = requiredElement(this.root, "[data-district]");
+    this.maneuverValue = requiredElement(this.root, "[data-maneuver]");
     this.coinValue = requiredElement(this.root, "[data-coins]");
     this.boostValue = requiredElement(this.root, "[data-boost]");
     this.recoveryValue = requiredElement(this.root, "[data-recovery]");
+    this.wrongWayValue = requiredElement(this.root, "[data-wrongway]");
     this.edgePointer = requiredElement(this.root, ".city-edge-pointer");
 
     for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-shop]")) {
@@ -331,11 +362,21 @@ export class CityDriveOverlay {
       this.quickReturnButton.hidden = state.returnRequired;
     }
 
+    if (state.phase === "arrived") {
+      const bonus = metrics.parking?.bonus ?? false;
+      this.arrivalHeading.textContent = bonus ? "Perfect parking!" : "Parked!";
+      this.arrivalCopy.textContent = bonus
+        ? "You eased into the bay perfectly — bonus coins earned! The car waits here while you shop."
+        : "You reached the selected shop. The car is parked and ready when you return.";
+    }
+
     this.distanceValue.textContent = `${Math.max(0, Math.ceil(metrics.distance))} m`;
     this.destinationValue.textContent = metrics.destinationLabel;
     this.districtValue.textContent = metrics.districtLabel;
+    this.maneuverValue.textContent = maneuverCopy(metrics.maneuver);
     this.coinValue.textContent = metrics.coinsCollected.toString();
     this.boostValue.textContent = metrics.boostSeconds > 0 ? `BOOST ${metrics.boostSeconds.toFixed(1)}s` : "";
+    this.wrongWayValue.textContent = metrics.wrongWay ? "WRONG WAY" : "";
     this.recoveryValue.textContent = metrics.recoveryMode === "none"
       ? ""
       : metrics.recoveryMode === "reverse"

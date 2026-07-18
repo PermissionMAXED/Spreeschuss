@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+  "origin": "http://127.0.0.1:4521",
+  "failedRequests": [],
+  "externalRequests": [],
+  "audioState": "running",
+  "decodedSfxCount": 43,
+  "decodedMusicCount": 8,
+  "decodedCacheEntries": 30,
+  "fallbackCount": 0,
+  "tracksAfterHome": 1,
+  "tracksDuringCrossfade": 2,
+  "tracksAfterCrossfade": 1,
+  "finalTheme": "cake",
+  "loopEvidence": [
+    {
+      "theme": "home",
+      "decodedDurationSeconds": 88.000023,
+      "loopStartSeconds": 0,
+      "loopEndSeconds": 88,
+      "beforeBoundaryRms": 0.002899,
+      "afterBoundaryRms": 0.039159,
+      "boundarySampleDelta": 0.003232
+    },
+    {
+      "theme": "city",
+      "decodedDurationSeconds": 88.000023,
+      "loopStartSeconds": 0,
+      "loopEndSeconds": 88,
+      "beforeBoundaryRms": 0.00739,
+      "afterBoundaryRms": 0.208657,
+      "boundarySampleDelta": 0.008741
+    },
+    {
+      "theme": "shop",
+      "decodedDurationSeconds": 88.000023,
+      "loopStartSeconds": 0,
+      "loopEndSeconds": 88,
+      "beforeBoundaryRms": 0.116874,
+      "afterBoundaryRms": 0.001755,
+      "boundarySampleDelta": 0.035894
+    },
+    {
+      "theme": "calm",
+      "decodedDurationSeconds": 88.000023,
+      "loopStartSeconds": 0,
+      "loopEndSeconds": 88,
+      "beforeBoundaryRms": 0.074823,
+      "afterBoundaryRms": 0.006758,
+      "boundarySampleDelta": 0.000663
+    },
+    {
+      "theme": "action",
+      "decodedDurationSeconds": 88.000023,
+      "loopStartSeconds": 0,
+      "loopEndSeconds": 88,
+      "beforeBoundaryRms": 0.084432,
+      "afterBoundaryRms": 0.062746,
+      "boundarySampleDelta": 0.107106
+    },
+    {
+      "theme": "lullaby",
+      "decodedDurationSeconds": 88.000023,
+      "loopStartSeconds": 0,
+      "loopEndSeconds": 88,
+      "beforeBoundaryRms": 0.008131,
+      "afterBoundaryRms": 0.115487,
+      "boundarySampleDelta": 0.004902
+    },
+    {
+      "theme": "surf",
+      "decodedDurationSeconds": 88.000023,
+      "loopStartSeconds": 0,
+      "loopEndSeconds": 88,
+      "beforeBoundaryRms": 0.000827,
+      "afterBoundaryRms": 0.02019,
+      "boundarySampleDelta": 0.001068
+    },
+    {
+      "theme": "cake",
+      "decodedDurationSeconds": 88.000023,
+      "loopStartSeconds": 0,
+      "loopEndSeconds": 88,
+      "beforeBoundaryRms": 0.001202,
+      "afterBoundaryRms": 0.000709,
+      "boundarySampleDelta": 0.001912
+    }
+  ]
+}

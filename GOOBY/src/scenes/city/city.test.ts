@@ -22,10 +22,14 @@ import {
   CityDrivePhysics,
   CityRouteMachine,
   DriveControlState,
+  analogSteerMagnitude,
+  cityLaneRoute,
   cityRoute,
   computeCityCameraPose,
   computeBoundedRecoveryPose,
   computeEdgePointer,
+  maneuverCopy,
+  nextRouteManeuver,
   createSafeBoardTravelSnapshot,
   detectCityPickups,
   didReachCityTrigger,
@@ -495,6 +499,9 @@ describe("marker legibility and mobile budgets", () => {
       recoveryAttempts: 0,
       noProgressSeconds: 0,
       collectedCoinIds: [],
+      wrongWay: false,
+      offRoad: false,
+      steeringValue: 0,
     }, desired, lookAt);
     expect(desired.z).toBeLessThan(59.15);
     expect(lookAt.z).toBeLessThan(desired.z);
@@ -509,5 +516,74 @@ describe("marker legibility and mobile budgets", () => {
     expect(audit.every(({ warning }) => warning === "offline")).toBe(true);
     expect(depot.clone("city.car").isObject3D).toBe(true);
     depot.dispose();
+  });
+});
+
+describe("next-maneuver guidance", () => {
+  it("announces the market turn from the garage, localizes it on approach, then arrival", () => {
+    const route = cityRoute("carrot-market");
+    const fromGarage = nextRouteManeuver(CITY_GARAGE_POSITION, route);
+    expect(fromGarage.kind).toBe("left");
+    expect(fromGarage.distance).toBeGreaterThan(80);
+    expect(fromGarage.distance).toBeLessThanOrEqual(96);
+
+    const nearCorner = nextRouteManeuver([0, -38], route);
+    expect(nearCorner.kind).toBe("left");
+    expect(nearCorner.distance).toBeLessThan(7);
+
+    const pastCorner = nextRouteManeuver([-10, -44], route);
+    expect(pastCorner.kind).toBe("arrive");
+    expect(pastCorner.distance).toBeCloseTo(8, 0);
+  });
+
+  it("classifies the mirrored home leg as a right turn and works on smoothed lanes", () => {
+    const home = cityRoute("carrot-market", "home");
+    expect(nextRouteManeuver([-18, -44], home).kind).toBe("right");
+
+    for (const shop of SHOP_IDS) {
+      const lane = cityLaneRoute(shop);
+      const first = nextRouteManeuver(lane[0] ?? CITY_GARAGE_POSITION, lane);
+      expect(first.kind === "left" || first.kind === "right").toBe(true);
+      expect(first.distance).toBeGreaterThan(0);
+      const last = lane.at(-1);
+      expect(nextRouteManeuver(last ?? CITY_GARAGE_POSITION, lane).kind).toBe("arrive");
+    }
+  });
+
+  it("renders readable maneuver copy for turns, straights, and arrival", () => {
+    expect(maneuverCopy(null)).toBe("");
+    expect(maneuverCopy({ kind: "left", distance: 10.2 })).toBe("◀ Turn left · 10 m");
+    expect(maneuverCopy({ kind: "right", distance: 22 })).toBe("▶ Turn right · 22 m");
+    expect(maneuverCopy({ kind: "left", distance: 64 })).toBe("Straight ahead");
+    expect(maneuverCopy({ kind: "arrive", distance: 12 })).toBe("Parking ahead · 12 m");
+    expect(maneuverCopy({ kind: "arrive", distance: 60 })).toBe("Straight on to parking");
+  });
+});
+
+describe("analog touch steering", () => {
+  it("maps touch position across a steer button to a bounded magnitude", () => {
+    expect(analogSteerMagnitude("steer-left", 0, 100, 50)).toBe(1);
+    expect(analogSteerMagnitude("steer-right", 0, 100, 50)).toBe(1);
+    expect(analogSteerMagnitude("steer-left", 0, 100, 100)).toBeCloseTo(0.35, 5);
+    expect(analogSteerMagnitude("steer-left", 0, 100, 0)).toBe(1);
+    expect(analogSteerMagnitude("steer-right", 0, 100, 0)).toBeCloseTo(0.35, 5);
+    expect(analogSteerMagnitude("steer-right", 0, 100, 100)).toBe(1);
+    expect(analogSteerMagnitude("steer-left", 0, 100, -40)).toBe(1);
+    expect(analogSteerMagnitude("brake", 0, 100, 50)).toBe(1);
+    expect(analogSteerMagnitude("steer-left", 0, 0, 0)).toBe(1);
+  });
+
+  it("composes analog pointer magnitudes with digital keyboard steering", () => {
+    const controls = new DriveControlState();
+    expect(controls.press(1, "steer-left", 0.5)).toMatchObject({
+      steering: 0.5,
+      steeringHeld: true,
+    });
+    expect(controls.pressKey("KeyA")).toMatchObject({ steering: 1 });
+    expect(controls.releaseKey("KeyA")).toMatchObject({ steering: 0.5 });
+    expect(controls.press(2, "steer-right", 0.75)).toMatchObject({ steering: -0.25 });
+    expect(controls.release(1)).toMatchObject({ steering: -0.75 });
+    expect(controls.press(2, "steer-right", 2)).toMatchObject({ steering: -1 });
+    expect(controls.releaseAll()).toEqual(RELEASED);
   });
 });

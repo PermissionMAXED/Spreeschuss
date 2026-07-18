@@ -11,6 +11,65 @@ import {
 import { activeCatalog, type LanguageCatalog } from "../i18n";
 
 export {
+  bindCoreAchievementEvents,
+  signalFromCityTransition,
+  signalFromGoobyReaction,
+  signalFromMinigameSettlement,
+  signalFromPurchase,
+  signalFromStateChanged,
+} from "./adapters";
+export type {
+  CompletedCityLegContext,
+} from "./adapters";
+export {
+  ACHIEVEMENT_DEFINITIONS,
+  ACHIEVEMENTS_BY_ID,
+} from "../data/achievements";
+export type {
+  AchievementDefinition,
+  AchievementMetric,
+  AchievementRarity,
+} from "../data/achievements";
+export {
+  createStickerBook,
+  manifestStickerImage,
+  pageForKeyboard,
+  pageForSwipe,
+  proceduralStickerPlaceholder,
+  stickerImageResolverFromManifest,
+} from "./book";
+export type {
+  StickerBook,
+  StickerBookOptions,
+  StickerImageManifest,
+  StickerImageManifestEntry,
+  StickerImageResolver,
+} from "./book";
+export {
+  StickerCelebrationQueue,
+} from "./celebrations";
+export type {
+  StickerCelebration,
+} from "./celebrations";
+export {
+  achievementProgress,
+  achievementSignalReducer,
+  hasClaimedPageReward,
+  isStickerNew,
+  markAllUnlockedStickersSeen,
+  markStickerSeen,
+  processAchievementSignal,
+  STICKER_PAGE_REWARDS,
+} from "./progression";
+export type {
+  AchievementProgress,
+  AchievementSignal,
+  AchievementSignalBase,
+  AchievementUpdate,
+  StickerPageReward,
+} from "./progression";
+
+export {
   STICKER_COUNT,
   STICKER_DEFINITIONS,
   STICKER_PAGE_IDS,

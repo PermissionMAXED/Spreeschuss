@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "passed": true,
+  "violations": [],
+  "lockedSources": 6,
+  "physicalAudioFiles": 30,
+  "soundCueBindings": 43,
+  "musicBindings": 8,
+  "runtimeBytes": 9608541,
+  "runtimeMiB": 9.16,
+  "budgetMiB": 14,
+  "browsers": {
+    "chromium": {
+      "fallbackCount": 0,
+      "decodedFiles": 30,
+      "crossfadeTrackCounts": [
+        1,
+        2,
+        1
+      ]
+    },
+    "webkit": {
+      "fallbackCount": 0,
+      "decodedFiles": 30,
+      "crossfadeTrackCounts": [
+        1,
+        2,
+        1
+      ]
+    }
+  }
+}
