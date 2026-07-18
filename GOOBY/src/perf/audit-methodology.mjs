@@ -1,4 +1,10 @@
 export const MEASUREMENT_TRIALS = 3;
+export const DEFAULT_CALIBRATION_OPTIONS = Object.freeze({
+  minimumSamples: 120,
+  expectedTrials: MEASUREMENT_TRIALS,
+  maxFpsRelativeRange: 0.2,
+  maxP95RelativeRange: 0.35,
+});
 export const DEFAULT_WARMUP_OPTIONS = Object.freeze({
   minimumSamples: 120,
   requiredStableObservations: 3,
@@ -15,6 +21,11 @@ function finitePositive(value) {
 function relativeDrift(left, right) {
   if (left === right) return 0;
   return Math.abs(left - right) / Math.max(Math.abs(left), Math.abs(right), Number.EPSILON);
+}
+
+function relativeRange(values, center) {
+  return (Math.max(...values) - Math.min(...values))
+    / Math.max(Math.abs(center), Number.EPSILON);
 }
 
 function validateWarmupOptions(options) {
@@ -180,6 +191,79 @@ export function summarizePerformanceTrials(
   };
 }
 
+export function summarizeCalibrationTrials(
+  trials,
+  overrides = {},
+) {
+  const options = { ...DEFAULT_CALIBRATION_OPTIONS, ...overrides };
+  if (
+    !Number.isInteger(options.expectedTrials)
+    || options.expectedTrials < 3
+    || options.expectedTrials % 2 === 0
+    || trials.length !== options.expectedTrials
+  ) {
+    throw new RangeError(
+      `Calibration requires exactly ${String(options.expectedTrials)} odd repeat trials`,
+    );
+  }
+  if (!Number.isInteger(options.minimumSamples) || options.minimumSamples <= 0) {
+    throw new RangeError("Calibration minimumSamples must be a positive integer");
+  }
+  for (const [name, limit] of [
+    ["FPS relative range", options.maxFpsRelativeRange],
+    ["p95 relative range", options.maxP95RelativeRange],
+  ]) {
+    if (!finitePositive(limit)) {
+      throw new RangeError(`Calibration maximum ${name} must be positive and finite`);
+    }
+  }
+
+  const sampleCounts = trials.map((trial, index) => {
+    const samples = trial?.samples;
+    if (!Number.isInteger(samples) || samples < options.minimumSamples) {
+      throw new RangeError(
+        `Calibration trial ${index + 1} has ${String(samples)}/${options.minimumSamples} samples`,
+      );
+    }
+    return samples;
+  });
+  const fpsValues = trials.map((trial) =>
+    requireFiniteMetric(trial.fps, "calibration FPS"));
+  const p95Values = trials.map((trial) =>
+    requireFiniteMetric(trial.p95Ms, "calibration p95"));
+  if (!fpsValues.every(finitePositive) || !p95Values.every(finitePositive)) {
+    throw new RangeError("Calibration timing metrics must be positive");
+  }
+
+  const fps = median(fpsValues, "calibration FPS");
+  const p95Ms = median(p95Values, "calibration p95");
+  const fpsRelativeRange = relativeRange(fpsValues, fps);
+  const p95RelativeRange = relativeRange(p95Values, p95Ms);
+  if (fpsRelativeRange > options.maxFpsRelativeRange) {
+    throw new Error(
+      `Calibration FPS variance ${(fpsRelativeRange * 100).toFixed(1)}% exceeds `
+        + `${(options.maxFpsRelativeRange * 100).toFixed(1)}%`,
+    );
+  }
+  if (p95RelativeRange > options.maxP95RelativeRange) {
+    throw new Error(
+      `Calibration p95 variance ${(p95RelativeRange * 100).toFixed(1)}% exceeds `
+        + `${(options.maxP95RelativeRange * 100).toFixed(1)}%`,
+    );
+  }
+
+  return {
+    fps,
+    p95Ms,
+    samples: Math.min(...sampleCounts),
+    trialCount: trials.length,
+    samplesPerTrial: sampleCounts,
+    fpsRelativeRange,
+    p95RelativeRange,
+    timingAggregation: "median",
+  };
+}
+
 export function assertTimingLimits(label, snapshot, timing) {
   if (snapshot.frame.fps < timing.minFps) {
     throw new Error(
@@ -189,6 +273,63 @@ export function assertTimingLimits(label, snapshot, timing) {
   if (snapshot.frame.p95Ms > timing.maxP95Ms) {
     throw new Error(
       `${label}: ${snapshot.frame.p95Ms.toFixed(1)}ms p95 exceeds ${timing.maxP95Ms}ms`,
+    );
+  }
+}
+
+export function assertNormalizedTimingLimits(
+  label,
+  snapshot,
+  timing,
+  calibration,
+) {
+  const minimumCalibrationRatio = requireFiniteMetric(
+    timing.minimumCalibrationRatio,
+    "minimum calibration ratio",
+  );
+  const minimumP95CalibrationRatio = requireFiniteMetric(
+    timing.minimumP95CalibrationRatio,
+    "minimum p95 calibration ratio",
+  );
+  const absoluteMinFps = requireFiniteMetric(
+    timing.absoluteMinFps,
+    "absolute minimum FPS",
+  );
+  const calibrationFps = requireFiniteMetric(calibration.fps, "calibration FPS");
+  const calibrationP95Ms = requireFiniteMetric(calibration.p95Ms, "calibration p95");
+  const sceneFps = requireFiniteMetric(snapshot.frame.fps, "scene FPS");
+  const sceneP95Ms = requireFiniteMetric(snapshot.frame.p95Ms, "scene p95");
+  if (
+    minimumCalibrationRatio <= 0
+    || minimumCalibrationRatio > 1
+    || minimumP95CalibrationRatio <= 0
+    || minimumP95CalibrationRatio > 1
+    || absoluteMinFps <= 0
+    || ![calibrationFps, calibrationP95Ms, sceneFps, sceneP95Ms].every(finitePositive)
+  ) {
+    throw new RangeError("Normalized timing inputs must be positive and valid");
+  }
+
+  const fpsRatio = sceneFps / calibrationFps;
+  const p95ThroughputRatio = calibrationP95Ms / sceneP95Ms;
+  if (sceneFps < absoluteMinFps) {
+    throw new Error(
+      `${label}: ${sceneFps.toFixed(1)} FPS is below the `
+        + `${absoluteMinFps.toFixed(1)} absolute safety floor`,
+    );
+  }
+  if (fpsRatio < minimumCalibrationRatio) {
+    throw new Error(
+      `${label}: FPS throughput ratio ${fpsRatio.toFixed(3)} is below `
+        + `${minimumCalibrationRatio.toFixed(3)} `
+        + `(${sceneFps.toFixed(1)} scene / ${calibrationFps.toFixed(1)} calibration FPS)`,
+    );
+  }
+  if (p95ThroughputRatio < minimumP95CalibrationRatio) {
+    throw new Error(
+      `${label}: p95 throughput ratio ${p95ThroughputRatio.toFixed(3)} is below `
+        + `${minimumP95CalibrationRatio.toFixed(3)} `
+        + `(${sceneP95Ms.toFixed(1)}ms scene / ${calibrationP95Ms.toFixed(1)}ms calibration)`,
     );
   }
 }
@@ -216,4 +357,64 @@ export function sustainedSlowProbeIsRejected(timing, minimumSamples, fps = 30) {
   } catch {
     return true;
   }
+}
+
+export function normalizedSustainedSlowProbeIsRejected(
+  timing,
+  calibration,
+  minimumSamples,
+  fps = 30,
+) {
+  const frameMs = 1_000 / fps;
+  const snapshots = Array.from({ length: MEASUREMENT_TRIALS }, () => ({
+    frame: {
+      fps,
+      averageMs: frameMs,
+      p95Ms: frameMs,
+      samples: minimumSamples,
+    },
+    render: {
+      drawCalls: 1,
+      drawCallsP95: 1,
+      triangles: 1,
+      trianglesP95: 1,
+    },
+  }));
+  const { snapshot } = summarizePerformanceTrials(snapshots, minimumSamples);
+  try {
+    assertNormalizedTimingLimits(
+      "synthetic sustained-slow probe",
+      snapshot,
+      timing,
+      calibration,
+    );
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+export async function runWithDiagnosticReport(operation, writeReport) {
+  let result;
+  let failure = null;
+  try {
+    result = await operation();
+  } catch (error) {
+    failure = error;
+  }
+
+  try {
+    await writeReport(failure);
+  } catch (reportError) {
+    if (failure !== null) {
+      throw new AggregateError(
+        [failure, reportError],
+        "Performance audit failed and its diagnostic report could not be written",
+      );
+    }
+    throw reportError;
+  }
+
+  if (failure !== null) throw failure;
+  return result;
 }

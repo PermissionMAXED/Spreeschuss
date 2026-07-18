@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   advanceWarmupState,
+  assertNormalizedTimingLimits,
   assertTimingLimits,
   createWarmupState,
+  normalizedSustainedSlowProbeIsRejected,
+  runWithDiagnosticReport,
   sustainedSlowProbeIsRejected,
+  summarizeCalibrationTrials,
   summarizePerformanceTrials,
   type AuditSnapshot,
   type WarmupObservation,
@@ -138,5 +142,111 @@ describe("performance audit repeat trials", () => {
     expect(() =>
       assertTimingLimits("home:living-room", slowSummary.snapshot, timing)
     ).toThrow(/30\.0 FPS is below 45/u);
+  });
+});
+
+describe("raw WebGL runner calibration", () => {
+  const calibration = { fps: 60, p95Ms: 16.7 };
+  const normalizedHomeLimit = {
+    minimumCalibrationRatio: 0.75,
+    minimumP95CalibrationRatio: (1_000 / 60) / 28,
+    absoluteMinFps: 30,
+  };
+
+  it("uses stable median FPS and p95 calibration timing", () => {
+    const summary = summarizeCalibrationTrials([
+      { fps: 59, p95Ms: 17.1, samples: 120 },
+      { fps: 61, p95Ms: 16.7, samples: 121 },
+      { fps: 60, p95Ms: 16.9, samples: 120 },
+    ]);
+
+    expect(summary).toMatchObject({
+      fps: 60,
+      p95Ms: 16.9,
+      samples: 120,
+      trialCount: 3,
+      samplesPerTrial: [120, 121, 120],
+      timingAggregation: "median",
+    });
+    expect(summary.fpsRelativeRange).toBeCloseTo(2 / 60);
+    expect(summary.p95RelativeRange).toBeCloseTo(0.4 / 16.9);
+  });
+
+  it("rejects unstable FPS or p95 variance", () => {
+    expect(() => summarizeCalibrationTrials([
+      { fps: 60, p95Ms: 16.7, samples: 120 },
+      { fps: 40, p95Ms: 16.7, samples: 120 },
+      { fps: 60, p95Ms: 16.7, samples: 120 },
+    ])).toThrow(/FPS variance 33\.3% exceeds 20\.0%/u);
+
+    expect(() => summarizeCalibrationTrials([
+      { fps: 60, p95Ms: 16.7, samples: 120 },
+      { fps: 60, p95Ms: 28, samples: 120 },
+      { fps: 60, p95Ms: 16.7, samples: 120 },
+    ])).toThrow(/p95 variance 67\.7% exceeds 35\.0%/u);
+  });
+
+  it("rejects a sample deficit in any calibration trial", () => {
+    expect(() => summarizeCalibrationTrials([
+      { fps: 60, p95Ms: 16.7, samples: 120 },
+      { fps: 60, p95Ms: 16.7, samples: 119 },
+      { fps: 60, p95Ms: 16.7, samples: 120 },
+    ])).toThrow(/Calibration trial 2 has 119\/120 samples/u);
+  });
+
+  it("passes and fails scenes by calibration-relative FPS and p95 throughput", () => {
+    expect(() => assertNormalizedTimingLimits(
+      "home",
+      snapshot(46, 21, 105, 16_226),
+      normalizedHomeLimit,
+      calibration,
+    )).not.toThrow();
+    expect(() => assertNormalizedTimingLimits(
+      "home",
+      snapshot(44, 21, 105, 16_226),
+      normalizedHomeLimit,
+      calibration,
+    )).toThrow(/FPS throughput ratio 0\.733 is below 0\.750/u);
+    expect(() => assertNormalizedTimingLimits(
+      "home",
+      snapshot(46, 29, 105, 16_226),
+      normalizedHomeLimit,
+      calibration,
+    )).toThrow(/p95 throughput ratio 0\.576 is below 0\.595/u);
+    expect(() => assertNormalizedTimingLimits(
+      "home",
+      snapshot(29.9, 20, 105, 16_226),
+      normalizedHomeLimit,
+      { fps: 35, p95Ms: 20 },
+    )).toThrow(/absolute safety floor/u);
+  });
+
+  it("rejects sustained 30 FPS against a 60 FPS calibration", () => {
+    expect(normalizedSustainedSlowProbeIsRejected(
+      normalizedHomeLimit,
+      calibration,
+      120,
+      30,
+    )).toBe(true);
+  });
+});
+
+describe("performance diagnostic persistence", () => {
+  it("writes diagnostics before propagating an audit failure", async () => {
+    const events: string[] = [];
+    const failure = new Error("scene gate failed");
+
+    await expect(runWithDiagnosticReport(
+      () => {
+        events.push("audit");
+        return Promise.reject(failure);
+      },
+      (receivedFailure) => {
+        events.push("report");
+        expect(receivedFailure).toBe(failure);
+        return Promise.resolve();
+      },
+    )).rejects.toBe(failure);
+    expect(events).toEqual(["audit", "report"]);
   });
 });

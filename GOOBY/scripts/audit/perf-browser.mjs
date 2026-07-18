@@ -4,10 +4,14 @@ import { chromium, devices } from "@playwright/test";
 import {
   MEASUREMENT_TRIALS,
   advanceWarmupState,
+  assertNormalizedTimingLimits,
   assertTimingLimits,
   createWarmupState,
+  normalizedSustainedSlowProbeIsRejected,
+  runWithDiagnosticReport,
   summarizePerformanceTrials,
   sustainedSlowProbeIsRejected,
+  summarizeCalibrationTrials,
 } from "../../src/perf/audit-methodology.mjs";
 import { analyzeLeakSeries } from "../../src/perf/leak-math.mjs";
 import { probeServerIdentity } from "../../src/perf/audit-runner.mjs";
@@ -24,6 +28,10 @@ const artifactSuffix = process.env.GOOBY_ARTIFACT_SUFFIX
   : "";
 const artifactFile = (name, extension) => path.join(artifacts, `${name}${artifactSuffix}.${extension}`);
 const reportPath = process.env.GOOBY_PERF_REPORT ?? artifactFile("gooby_perf_report", "json");
+const cpuThrottleRate = Number.parseFloat(process.env.GOOBY_PERF_CPU_THROTTLE_RATE ?? "1");
+if (!Number.isFinite(cpuThrottleRate) || cpuThrottleRate < 1 || cpuThrottleRate > 20) {
+  throw new RangeError("GOOBY_PERF_CPU_THROTTLE_RATE must be between 1 and 20");
+}
 const baseHost = new URL(baseUrl).host;
 await mkdir(artifacts, { recursive: true });
 
@@ -32,13 +40,30 @@ const QUALITY_TIER_SAMPLES = 60;
 const WARMUP_OBSERVATION_MS = 1_100;
 const WARMUP_TIMEOUT_MS = 45_000;
 const NETWORK_IDLE_MS = 750;
+const RAW_CALIBRATION = Object.freeze({
+  width: 390,
+  height: 844,
+  warmupSamples: 120,
+  samplesPerTrial: 120,
+  trials: MEASUREMENT_TRIALS,
+  drawCallsPerFrame: 105,
+  trianglesPerDraw: 154,
+  trianglesPerFrame: 16_170,
+  cpuIterationsPerDraw: 8_000,
+  timeoutMs: 30_000,
+});
 const LEAK_CYCLES = 8;
 const LEAK_MINIMUM_SAMPLES = LEAK_CYCLES + 1;
 const PERF_LIMITS = {
   "home:living-room": {
     samples: MAIN_SCENE_SAMPLES,
     timing: {
-      swiftshader: { minFps: 45, maxP95Ms: 28 },
+      swiftshader: {
+        minimumCalibrationRatio: 0.75,
+        minimumP95CalibrationRatio: (1_000 / 60) / 28,
+        absoluteMinFps: 30,
+        referenceAbsoluteLimits: { minFps: 45, maxP95Ms: 28 },
+      },
       hardware: { minFps: 50, maxP95Ms: 24 },
     },
     maxDrawCallsP95: 125,
@@ -47,7 +72,12 @@ const PERF_LIMITS = {
   "city:destination-board": {
     samples: MAIN_SCENE_SAMPLES,
     timing: {
-      swiftshader: { minFps: 28, maxP95Ms: 42 },
+      swiftshader: {
+        minimumCalibrationRatio: 7 / 15,
+        minimumP95CalibrationRatio: (1_000 / 60) / 42,
+        absoluteMinFps: 20,
+        referenceAbsoluteLimits: { minFps: 28, maxP95Ms: 42 },
+      },
       hardware: { minFps: 45, maxP95Ms: 28 },
     },
     maxDrawCallsP95: 48,
@@ -56,7 +86,12 @@ const PERF_LIMITS = {
   "city:driving": {
     samples: MAIN_SCENE_SAMPLES,
     timing: {
-      swiftshader: { minFps: 24, maxP95Ms: 50 },
+      swiftshader: {
+        minimumCalibrationRatio: 0.4,
+        minimumP95CalibrationRatio: (1_000 / 60) / 50,
+        absoluteMinFps: 18,
+        referenceAbsoluteLimits: { minFps: 24, maxP95Ms: 50 },
+      },
       hardware: { minFps: 42, maxP95Ms: 30 },
     },
     maxDrawCallsP95: 64,
@@ -65,7 +100,12 @@ const PERF_LIMITS = {
   "shop:fluff-salon:try-on": {
     samples: MAIN_SCENE_SAMPLES,
     timing: {
-      swiftshader: { minFps: 24, maxP95Ms: 65 },
+      swiftshader: {
+        minimumCalibrationRatio: 0.4,
+        minimumP95CalibrationRatio: (1_000 / 60) / 65,
+        absoluteMinFps: 18,
+        referenceAbsoluteLimits: { minFps: 24, maxP95Ms: 65 },
+      },
       hardware: { minFps: 42, maxP95Ms: 30 },
     },
     maxDrawCallsP95: 100,
@@ -74,7 +114,12 @@ const PERF_LIMITS = {
   "minigame:delivery-dash:express": {
     samples: MAIN_SCENE_SAMPLES,
     timing: {
-      swiftshader: { minFps: 48, maxP95Ms: 25 },
+      swiftshader: {
+        minimumCalibrationRatio: 0.8,
+        minimumP95CalibrationRatio: (1_000 / 60) / 25,
+        absoluteMinFps: 30,
+        referenceAbsoluteLimits: { minFps: 48, maxP95Ms: 25 },
+      },
       hardware: { minFps: 52, maxP95Ms: 22 },
     },
     maxDrawCallsP95: 1,
@@ -83,7 +128,12 @@ const PERF_LIMITS = {
   "minigame:pond-fishing:legend": {
     samples: MAIN_SCENE_SAMPLES,
     timing: {
-      swiftshader: { minFps: 48, maxP95Ms: 25 },
+      swiftshader: {
+        minimumCalibrationRatio: 0.8,
+        minimumP95CalibrationRatio: (1_000 / 60) / 25,
+        absoluteMinFps: 30,
+        referenceAbsoluteLimits: { minFps: 48, maxP95Ms: 25 },
+      },
       hardware: { minFps: 52, maxP95Ms: 22 },
     },
     maxDrawCallsP95: 1,
@@ -92,7 +142,12 @@ const PERF_LIMITS = {
   "minigame:rhythm-hop:hard": {
     samples: MAIN_SCENE_SAMPLES,
     timing: {
-      swiftshader: { minFps: 48, maxP95Ms: 25 },
+      swiftshader: {
+        minimumCalibrationRatio: 0.8,
+        minimumP95CalibrationRatio: (1_000 / 60) / 25,
+        absoluteMinFps: 30,
+        referenceAbsoluteLimits: { minFps: 48, maxP95Ms: 25 },
+      },
       hardware: { minFps: 52, maxP95Ms: 22 },
     },
     maxDrawCallsP95: 1,
@@ -265,6 +320,193 @@ async function warmScene(page, network, label, minimumSamples, expectedQuality =
   };
 }
 
+async function runRawWebGlCalibration(page) {
+  const raw = await page.evaluate(async (config) => {
+    const canvas = new OffscreenCanvas(config.width, config.height);
+    const gl = canvas.getContext("webgl", {
+      alpha: false,
+      antialias: false,
+      depth: false,
+      desynchronized: false,
+      failIfMajorPerformanceCaveat: false,
+      powerPreference: "high-performance",
+      preserveDrawingBuffer: false,
+      stencil: false,
+    });
+    if (!gl) throw new Error("Raw WebGL calibration could not create a context");
+    if (
+      gl.drawingBufferWidth !== config.width
+      || gl.drawingBufferHeight !== config.height
+    ) {
+      throw new Error(
+        `Raw WebGL calibration buffer is ${gl.drawingBufferWidth}x`
+          + `${gl.drawingBufferHeight}, expected ${config.width}x${config.height}`,
+      );
+    }
+
+    const compileShader = (type, source) => {
+      const shader = gl.createShader(type);
+      if (!shader) throw new Error("Raw WebGL calibration could not allocate a shader");
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        throw new Error(
+          `Raw WebGL calibration shader failed: ${gl.getShaderInfoLog(shader) ?? "unknown"}`,
+        );
+      }
+      return shader;
+    };
+    const vertexShader = compileShader(gl.VERTEX_SHADER, `
+      attribute vec2 a_position;
+      uniform vec2 u_offset;
+      uniform float u_phase;
+      varying float v_shade;
+      void main() {
+        vec2 wobble = vec2(sin(u_phase), cos(u_phase)) * 0.0015;
+        gl_Position = vec4(a_position + u_offset + wobble, 0.0, 1.0);
+        v_shade = fract(a_position.x * 13.0 + a_position.y * 7.0 + u_phase);
+      }
+    `);
+    const fragmentShader = compileShader(gl.FRAGMENT_SHADER, `
+      precision mediump float;
+      varying float v_shade;
+      void main() {
+        float shade = 0.35 + 0.65 * abs(sin(v_shade * 6.2831853));
+        gl_FragColor = vec4(shade, 0.42 * shade, 0.18 + 0.3 * shade, 1.0);
+      }
+    `);
+    const program = gl.createProgram();
+    if (!program) throw new Error("Raw WebGL calibration could not allocate a program");
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error(
+        `Raw WebGL calibration program failed: ${gl.getProgramInfoLog(program) ?? "unknown"}`,
+      );
+    }
+    gl.useProgram(program);
+
+    const vertices = new Float32Array(config.trianglesPerDraw * 6);
+    for (let triangle = 0; triangle < config.trianglesPerDraw; triangle += 1) {
+      const column = triangle % 14;
+      const row = Math.floor(triangle / 14);
+      const centerX = -0.94 + column * (1.88 / 13);
+      const centerY = -0.92 + row * (1.84 / 10);
+      const width = 0.008 + (triangle % 3) * 0.001;
+      const height = 0.008 + (triangle % 5) * 0.0005;
+      vertices.set([
+        centerX - width,
+        centerY - height,
+        centerX + width,
+        centerY - height,
+        centerX,
+        centerY + height,
+      ], triangle * 6);
+    }
+    const buffer = gl.createBuffer();
+    if (!buffer) throw new Error("Raw WebGL calibration could not allocate a buffer");
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+    const position = gl.getAttribLocation(program, "a_position");
+    const offset = gl.getUniformLocation(program, "u_offset");
+    const phase = gl.getUniformLocation(program, "u_phase");
+    if (position < 0 || offset === null || phase === null) {
+      throw new Error("Raw WebGL calibration shader locations are unavailable");
+    }
+    gl.enableVertexAttribArray(position);
+    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
+    gl.viewport(0, 0, config.width, config.height);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.DEPTH_TEST);
+
+    let frame = 0;
+    let cpuAccumulator = 0.123;
+    const renderFrame = () => {
+      gl.clearColor(0.035, 0.047, 0.064, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      for (let draw = 0; draw < config.drawCallsPerFrame; draw += 1) {
+        for (let work = 0; work < config.cpuIterationsPerDraw; work += 1) {
+          cpuAccumulator = Math.sin(
+            cpuAccumulator + ((work + draw) % 17) * 0.000001,
+          ) + 1.001;
+        }
+        const x = ((draw % 7) - 3) * 0.002;
+        const y = ((Math.floor(draw / 7) % 5) - 2) * 0.002;
+        gl.uniform2f(offset, x, y);
+        gl.uniform1f(
+          phase,
+          ((frame * 17 + draw * 23) % 360) * (Math.PI / 180)
+            + cpuAccumulator * 0.0001,
+        );
+        gl.drawArrays(gl.TRIANGLES, 0, config.trianglesPerDraw * 3);
+      }
+      gl.finish();
+      frame += 1;
+    };
+    const summarize = (frameTimes) => {
+      const ordered = frameTimes.toSorted((left, right) => left - right);
+      const averageMs = frameTimes.reduce((sum, value) => sum + value, 0)
+        / frameTimes.length;
+      return {
+        fps: 1_000 / averageMs,
+        averageMs,
+        p95Ms: ordered[Math.ceil(ordered.length * 0.95) - 1],
+        samples: frameTimes.length,
+      };
+    };
+    const collect = (sampleCount) => new Promise((resolve, reject) => {
+      const frameTimes = [];
+      let previousTimestamp = null;
+      const timeout = setTimeout(() => {
+        reject(new Error(
+          `Raw WebGL calibration timed out at ${frameTimes.length}/${sampleCount} samples`,
+        ));
+      }, config.timeoutMs);
+      const tick = (timestamp) => {
+        renderFrame();
+        if (previousTimestamp !== null) frameTimes.push(timestamp - previousTimestamp);
+        previousTimestamp = timestamp;
+        if (frameTimes.length >= sampleCount) {
+          clearTimeout(timeout);
+          resolve(summarize(frameTimes));
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+
+    const warmup = await collect(config.warmupSamples);
+    const trials = [];
+    for (let index = 0; index < config.trials; index += 1) {
+      trials.push(await collect(config.samplesPerTrial));
+    }
+    const rendererInfo = gl.getExtension("WEBGL_debug_renderer_info");
+    const renderer = rendererInfo
+      ? gl.getParameter(rendererInfo.UNMASKED_RENDERER_WEBGL)
+      : gl.getParameter(gl.RENDERER);
+    gl.deleteBuffer(buffer);
+    gl.deleteProgram(program);
+    gl.deleteShader(vertexShader);
+    gl.deleteShader(fragmentShader);
+    return {
+      renderer,
+      drawingBuffer: {
+        width: gl.drawingBufferWidth,
+        height: gl.drawingBufferHeight,
+      },
+      warmup,
+      trials,
+    };
+  }, RAW_CALIBRATION);
+  return {
+    workload: RAW_CALIBRATION,
+    ...raw,
+  };
+}
+
 async function collectSnapshot(page, label, minimumSamples) {
   await page.evaluate(() => window.__gooby.perf.controls.resetRollingMetrics());
   await page.waitForFunction(
@@ -280,11 +522,20 @@ async function collectSnapshot(page, label, minimumSamples) {
   return snapshot;
 }
 
-function assertSceneLimits(label, snapshot, rendererClass) {
+function assertSceneLimits(label, snapshot, rendererClass, calibration) {
   const limits = PERF_LIMITS[label];
   invariant(limits, `${label}: no performance limit is documented`);
   const timing = limits.timing[rendererClass];
-  assertTimingLimits(`${label} (${rendererClass})`, snapshot, timing);
+  if (rendererClass === "swiftshader") {
+    assertNormalizedTimingLimits(
+      `${label} (${rendererClass})`,
+      snapshot,
+      timing,
+      calibration,
+    );
+  } else {
+    assertTimingLimits(`${label} (${rendererClass})`, snapshot, timing);
+  }
   invariant(
     snapshot.render.drawCallsP95 <= limits.maxDrawCallsP95,
     `${label}: ${snapshot.render.drawCallsP95} draw calls p95 exceeds ${limits.maxDrawCallsP95}`,
@@ -322,11 +573,21 @@ async function collectSceneMeasurement(page, network, label, warmups) {
   return { limits, snapshot, trials, summary };
 }
 
-async function measureScene(page, network, label, rendererClass, warmups) {
+async function measureScene(
+  page,
+  network,
+  label,
+  rendererClass,
+  calibration,
+  measurements,
+  warmups,
+) {
   const measurement = await collectSceneMeasurement(page, network, label, warmups);
   const { limits, snapshot, trials, summary } = measurement;
-  assertSceneLimits(label, snapshot, rendererClass);
-  return { label, rendererClass, limits, snapshot, trials, summary };
+  const result = { label, rendererClass, limits, snapshot, trials, summary };
+  measurements.push(result);
+  assertSceneLimits(label, snapshot, rendererClass, calibration);
+  return result;
 }
 
 async function openPanel(page, panel) {
@@ -472,35 +733,60 @@ async function leakCheckpoint(page, cdp, index) {
   };
 }
 
-const sustainedSlowProbeChecks = Object.fromEntries(
-  Object.entries(PERF_LIMITS["home:living-room"].timing).map(([rendererClass, timing]) => [
-    rendererClass,
-    sustainedSlowProbeIsRejected(timing, MAIN_SCENE_SAMPLES, 30),
-  ]),
-);
-invariant(
-  Object.values(sustainedSlowProbeChecks).every(Boolean),
-  "Three-trial aggregation accepted a synthetic sustained 30 FPS home probe",
-);
-console.log("Methodology self-check: sustained 30 FPS home probe rejected");
-
-const identityProbe = await probeServerIdentity(baseUrl, nonce);
-invariant(identityProbe.ready, "Performance server was unreachable before browser launch");
-invariant(
-  identityProbe.identity.pid === expectedServerPid,
-  `Performance server PID changed from ${expectedServerPid} to ${identityProbe.identity.pid}`,
-);
+const nominal60FpsCalibration = { fps: 60, p95Ms: 1_000 / 60 };
+const sustainedSlowProbeChecks = {
+  swiftshader: normalizedSustainedSlowProbeIsRejected(
+    PERF_LIMITS["home:living-room"].timing.swiftshader,
+    nominal60FpsCalibration,
+    MAIN_SCENE_SAMPLES,
+    30,
+  ),
+  hardware: sustainedSlowProbeIsRejected(
+    PERF_LIMITS["home:living-room"].timing.hardware,
+    MAIN_SCENE_SAMPLES,
+    30,
+  ),
+};
 
 const externalRequests = [];
 const pageErrors = [];
+const measurements = [];
+const warmups = [];
+const tierMeasurements = {};
+const qualityApplication = {};
+const leakSamples = [];
+let identityProbe = null;
+let calibration = {
+  status: "not-started",
+  workload: RAW_CALIBRATION,
+};
+let rendererClass = null;
+let finalResourceSnapshot = null;
+let leakAnalysis = null;
+let governorResult = null;
+let governorSnapshot = null;
 let browser = null;
 let context = null;
 let demoContext = null;
 try {
-  browser = await chromium.launch({
-    headless: true,
-    args: ["--enable-precise-memory-info"],
-  });
+  await runWithDiagnosticReport(async () => {
+    invariant(
+      Object.values(sustainedSlowProbeChecks).every(Boolean),
+      "Three-trial aggregation accepted a synthetic sustained 30 FPS home probe",
+    );
+    console.log("Methodology self-check: sustained 30 FPS home probe rejected");
+
+    identityProbe = await probeServerIdentity(baseUrl, nonce);
+    invariant(identityProbe.ready, "Performance server was unreachable before browser launch");
+    invariant(
+      identityProbe.identity.pid === expectedServerPid,
+      `Performance server PID changed from ${expectedServerPid} to ${identityProbe.identity.pid}`,
+    );
+
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--enable-precise-memory-info"],
+    });
   context = await browser.newContext({
     ...devices["iPhone 13"],
     browserName: "chromium",
@@ -511,6 +797,35 @@ try {
   const network = watchPage(page, pageErrors, externalRequests);
   const cdp = await context.newCDPSession(page);
   await cdp.send("Performance.enable");
+  if (cpuThrottleRate > 1) {
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottleRate });
+  }
+
+  calibration = {
+    status: "running",
+    workload: RAW_CALIBRATION,
+  };
+  const rawCalibration = await runRawWebGlCalibration(page);
+  calibration = {
+    status: "collected",
+    ...rawCalibration,
+  };
+  const calibrationSummary = summarizeCalibrationTrials(rawCalibration.trials, {
+    minimumSamples: RAW_CALIBRATION.samplesPerTrial,
+    expectedTrials: RAW_CALIBRATION.trials,
+  });
+  calibration = {
+    ...calibration,
+    status: "passed",
+    summary: calibrationSummary,
+  };
+  console.log(
+    `Raw WebGL calibration: ${calibrationSummary.fps.toFixed(1)} FPS, `
+      + `${calibrationSummary.p95Ms.toFixed(1)}ms p95, `
+      + `${RAW_CALIBRATION.drawCallsPerFrame} draws / `
+      + `${RAW_CALIBRATION.trianglesPerFrame} triangles, `
+      + `${RAW_CALIBRATION.trials}x${RAW_CALIBRATION.samplesPerTrial} samples`,
+  );
 
   await page.goto(`${baseUrl}/?perf=1`, { waitUntil: "networkidle" });
   await page.evaluate(() => localStorage.clear());
@@ -519,8 +834,6 @@ try {
   await completeOnboarding(page);
   await page.evaluate(() => window.__gooby.perf.controls.setQuality("low"));
 
-  const measurements = [];
-  const warmups = [];
   const homeMeasurement = await collectSceneMeasurement(
     page,
     network,
@@ -528,31 +841,36 @@ try {
     warmups,
   );
   const homeSnapshot = homeMeasurement.snapshot;
-  const rendererClass = /swiftshader/iu.test(homeSnapshot.quality.profile.gpu)
+  rendererClass = /swiftshader/iu.test(homeSnapshot.quality.profile.gpu)
     ? "swiftshader"
     : "hardware";
-  assertSceneLimits("home:living-room", homeSnapshot, rendererClass);
   measurements.push({
     label: "home:living-room",
     rendererClass,
     ...homeMeasurement,
   });
+  assertSceneLimits(
+    "home:living-room",
+    homeSnapshot,
+    rendererClass,
+    calibrationSummary,
+  );
 
   await page.evaluate(() => window.__gooby.test?.grantProgressionXp(3_600));
   await page.waitForFunction(() => (window.__gooby.snapshot()?.economy.level ?? 0) >= 7);
   await openPanel(page, "places");
   await page.getByTestId("open-city-board").click();
   await page.waitForFunction(() => window.__gooby.runtime().sceneId === "city:drive");
-  measurements.push(await measureScene(
+  await measureScene(
     page,
     network,
     "city:destination-board",
     rendererClass,
+    calibrationSummary,
+    measurements,
     warmups,
-  ));
+  );
 
-  const tierMeasurements = {};
-  const qualityApplication = {};
   for (const tier of ["low", "mid", "high"]) {
     await page.evaluate((value) => window.__gooby.perf.controls.setQuality(value), tier);
     warmups.push(await warmScene(
@@ -591,7 +909,15 @@ try {
   await page.getByTestId("destination-fluff-salon").click();
   await page.getByTestId("start-drive").click();
   await page.waitForFunction(() => window.__gooby.runtime().cityPhase === "driving-outbound");
-  measurements.push(await measureScene(page, network, "city:driving", rendererClass, warmups));
+  await measureScene(
+    page,
+    network,
+    "city:driving",
+    rendererClass,
+    calibrationSummary,
+    measurements,
+    warmups,
+  );
   await page.evaluate(() => window.__gooby.test?.completeCityLeg());
   await page.getByTestId("enter-shop").click();
   await page.waitForFunction(() => window.__gooby.runtime().sceneId === "shop:fluff-salon");
@@ -600,13 +926,15 @@ try {
   await page.waitForFunction(() =>
     window.__gooby.snapshot()?.inventory["sunny-bucket-hat"] === 1);
   await page.locator('[data-shop-action="try"]').click();
-  measurements.push(await measureScene(
+  await measureScene(
     page,
     network,
     "shop:fluff-salon:try-on",
     rendererClass,
+    calibrationSummary,
+    measurements,
     warmups,
-  ));
+  );
 
   await page.getByRole("button", { name: "Return to Town" }).click();
   await page.waitForFunction(() => window.__gooby.runtime().cityPhase === "return-board");
@@ -624,7 +952,15 @@ try {
   for (const [game, label] of measuredGames) {
     await startMinigame(page, game);
     await prepareMinigame(page, game);
-    measurements.push(await measureScene(page, network, label, rendererClass, warmups));
+    await measureScene(
+      page,
+      network,
+      label,
+      rendererClass,
+      calibrationSummary,
+      measurements,
+      warmups,
+    );
     await exitMinigame(page);
   }
   await startMinigame(page, "bubble-bath-blast");
@@ -640,7 +976,7 @@ try {
   await forceGarbageCollection(cdp);
   await page.waitForTimeout(1_100);
   await page.evaluate(() => window.__gooby.perf.controls.markResourceBaseline());
-  const leakSamples = [await leakCheckpoint(page, cdp, 0)];
+  leakSamples.push(await leakCheckpoint(page, cdp, 0));
   const cycleZones = ["garden", "kitchen", "bathroom", "bedroom"];
   const cycleGames = ["delivery-dash", "pond-fishing", "rhythm-hop", "bubble-bath-blast"];
   for (let index = 0; index < LEAK_CYCLES; index += 1) {
@@ -654,7 +990,7 @@ try {
     leakSamples.push(await leakCheckpoint(page, cdp, index + 1));
   }
 
-  const finalResourceSnapshot = await page.evaluate(() => window.__gooby.perf.snapshot());
+  finalResourceSnapshot = await page.evaluate(() => window.__gooby.perf.snapshot());
   invariant(
     finalResourceSnapshot.resources.completedTransitions >= 30,
     `Expected at least 30 post-baseline transitions; received ${finalResourceSnapshot.resources.completedTransitions}`,
@@ -663,7 +999,7 @@ try {
     !finalResourceSnapshot.resources.likelyLeak,
     "Mixed scene/minigame/cosmetic cycles triggered the in-app resource leak heuristic",
   );
-  const leakAnalysis = analyzeLeakSeries(leakSamples, LEAK_LIMITS, LEAK_MINIMUM_SAMPLES);
+  leakAnalysis = analyzeLeakSeries(leakSamples, LEAK_LIMITS, LEAK_MINIMUM_SAMPLES);
   invariant(leakAnalysis.passed, `Leak trend limits failed: ${leakAnalysis.failures.join("; ")}`);
   invariant(leakSamples.every(({ forcedGc }) => forcedGc), "CDP garbage collection became unavailable");
 
@@ -691,80 +1027,102 @@ try {
     await demoPage.evaluate((value) => window.__gooby.perf.controls.setQuality(value), tier);
     await demoPage.waitForTimeout(650);
   }
-  const governorResult = await demoPage.evaluate(() =>
+  governorResult = await demoPage.evaluate(() =>
     window.__gooby.perf.controls.simulateGovernor("high", 35, 7_000));
   await demoPage.waitForTimeout(900);
   await demoPage.screenshot({
     path: artifactFile("gooby_perf_governor_downgrade", "png"),
     fullPage: true,
   });
-  const governorSnapshot = await demoPage.evaluate(() => window.__gooby.perf.snapshot());
+  governorSnapshot = await demoPage.evaluate(() => window.__gooby.perf.snapshot());
   await demoContext.close();
   demoContext = null;
   if (demoVideo) {
     await copyFile(await demoVideo.path(), artifactFile("gooby_quality_governor_demo", "webm"));
   }
 
-  const report = {
-    generatedAt: new Date().toISOString(),
-    device: "Playwright iPhone 13 / Chromium",
-    baseUrl,
-    nonce,
-    serverPid: expectedServerPid,
-    rendererClass,
-    sampleRequirements: {
-      mainScenes: MAIN_SCENE_SAMPLES,
-      qualityTiers: QUALITY_TIER_SAMPLES,
-      leakCheckpoints: LEAK_MINIMUM_SAMPLES,
-      measurementTrials: MEASUREMENT_TRIALS,
-    },
-    methodology: {
-      networkIdleMs: NETWORK_IDLE_MS,
-      warmupObservationMs: WARMUP_OBSERVATION_MS,
-      warmupTimeoutMs: WARMUP_TIMEOUT_MS,
-      timingAggregation: "median of three complete trials",
-      workBudgetAggregation: "maximum across three complete trials",
-      syntheticSustained30FpsRejected: sustainedSlowProbeChecks,
-      warmups,
-    },
-    heaviestGameRationale: [
-      "Delivery Dash repaints a full-resolution 2D city canvas and traffic every frame.",
-      "Pond Fishing runs the largest animated Shadow DOM water/fish surface.",
-      "Rhythm Hop animates timestamped hard-mode notes across three lanes.",
-    ],
-    performanceLimits: PERF_LIMITS,
-    measurements,
-    tierMeasurements,
-    qualityApplication,
-    leak: {
-      cycles: LEAK_CYCLES,
-      postBaselineTransitions: finalResourceSnapshot.resources.completedTransitions,
-      limits: LEAK_LIMITS,
-      samples: leakSamples,
-      analysis: leakAnalysis,
-      inAppResourceSnapshot: finalResourceSnapshot.resources,
-    },
-    governor: {
-      simulatedFps: 35,
-      simulatedDurationMs: 7_000,
-      start: "high",
-      result: governorResult,
-      snapshot: governorSnapshot,
-    },
-    externalRequests,
-    pageErrors,
-  };
-  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-  console.log(`Performance report: ${reportPath}`);
-  console.log(`Renderer: ${rendererClass}; measured scenes: ${measurements.length}`);
-  console.log(`Warmup gates: ${warmups.length}; measurement trials: ${MEASUREMENT_TRIALS}`);
-  console.log(`Leak cycles: ${LEAK_CYCLES}; post-baseline transitions: ${finalResourceSnapshot.resources.completedTransitions}`);
-  console.log(`Governor: high -> ${governorResult} after sustained 35 FPS`);
-  console.log(`External requests: ${externalRequests.length}; page errors: ${pageErrors.length}`);
-
   invariant(governorResult === "mid", `Governor result was ${governorResult}, expected mid`);
   invariant(externalRequests.length === 0, `Blocked external requests: ${externalRequests.join(", ")}`);
   invariant(pageErrors.length === 0, `Browser page errors: ${pageErrors.join("; ")}`);
+  }, async (failure) => {
+    const serializedFailure = failure === null
+      ? null
+      : {
+          name: failure instanceof Error ? failure.name : "UnknownFailure",
+          message: failure instanceof Error ? failure.message : String(failure),
+          stack: failure instanceof Error ? failure.stack : undefined,
+        };
+    const report = {
+      generatedAt: new Date().toISOString(),
+      status: failure === null ? "passed" : "failed",
+      failure: serializedFailure,
+      device: "Playwright iPhone 13 / Chromium",
+      baseUrl,
+      nonce,
+      serverPid: expectedServerPid,
+      identityProbe,
+      rendererClass,
+      cpuThrottleRate,
+      sampleRequirements: {
+        calibrationWarmup: RAW_CALIBRATION.warmupSamples,
+        calibrationPerTrial: RAW_CALIBRATION.samplesPerTrial,
+        calibrationTrials: RAW_CALIBRATION.trials,
+        mainScenes: MAIN_SCENE_SAMPLES,
+        qualityTiers: QUALITY_TIER_SAMPLES,
+        leakCheckpoints: LEAK_MINIMUM_SAMPLES,
+        measurementTrials: MEASUREMENT_TRIALS,
+      },
+      methodology: {
+        networkIdleMs: NETWORK_IDLE_MS,
+        warmupObservationMs: WARMUP_OBSERVATION_MS,
+        warmupTimeoutMs: WARMUP_TIMEOUT_MS,
+        timingAggregation: "median of three complete trials",
+        workBudgetAggregation: "maximum across three complete trials",
+        swiftShaderTimingGate:
+          "fixed scene/calibration FPS and calibration/scene p95 throughput ratios, plus absolute FPS floor",
+        syntheticSustained30FpsRejected: sustainedSlowProbeChecks,
+        warmups,
+      },
+      calibration,
+      heaviestGameRationale: [
+        "Delivery Dash repaints a full-resolution 2D city canvas and traffic every frame.",
+        "Pond Fishing runs the largest animated Shadow DOM water/fish surface.",
+        "Rhythm Hop animates timestamped hard-mode notes across three lanes.",
+      ],
+      performanceLimits: PERF_LIMITS,
+      measurements,
+      tierMeasurements,
+      qualityApplication,
+      leak: {
+        cycles: LEAK_CYCLES,
+        postBaselineTransitions:
+          finalResourceSnapshot?.resources?.completedTransitions ?? null,
+        limits: LEAK_LIMITS,
+        samples: leakSamples,
+        analysis: leakAnalysis,
+        inAppResourceSnapshot: finalResourceSnapshot?.resources ?? null,
+      },
+      governor: {
+        simulatedFps: 35,
+        simulatedDurationMs: 7_000,
+        start: "high",
+        result: governorResult,
+        snapshot: governorSnapshot,
+      },
+      externalRequests,
+      pageErrors,
+    };
+    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    console.log(`Performance report: ${reportPath} (${report.status})`);
+    console.log(`Renderer: ${rendererClass ?? "unknown"}; measured scenes: ${measurements.length}`);
+    console.log(`Warmup gates: ${warmups.length}; measurement trials: ${MEASUREMENT_TRIALS}`);
+    console.log(
+      `Leak cycles: ${LEAK_CYCLES}; post-baseline transitions: `
+        + `${finalResourceSnapshot?.resources?.completedTransitions ?? "incomplete"}`,
+    );
+    console.log(`Governor: high -> ${governorResult ?? "incomplete"} after sustained 35 FPS`);
+    console.log(`External requests: ${externalRequests.length}; page errors: ${pageErrors.length}`);
+  });
 } finally {
   await demoContext?.close().catch(() => undefined);
   await context?.close().catch(() => undefined);
