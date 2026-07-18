@@ -7,10 +7,136 @@ async function snapshot(page: Page): Promise<CityDriveDebugSnapshot> {
   return page.evaluate(() => window.__cityHarness.snapshot());
 }
 
-async function holdFor(page: Page, control: Locator, durationMs: number): Promise<boolean> {
-  const box = await control.boundingBox({ timeout: 750 }).catch(() => null);
-  if (!box) return false;
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+type DrivingPhase = Extract<
+  CityDriveDebugSnapshot["state"]["phase"],
+  "driving-outbound" | "driving-home"
+>;
+
+const CONTROL_READY_TIMEOUT_MS = 5_000;
+const CONTROL_STABLE_TOLERANCE_PX = 0.5;
+
+type ControlBox = NonNullable<Awaited<ReturnType<Locator["boundingBox"]>>>;
+
+function boxesAreStable(previous: ControlBox, current: ControlBox): boolean {
+  return Math.abs(previous.x - current.x) <= CONTROL_STABLE_TOLERANCE_PX
+    && Math.abs(previous.y - current.y) <= CONTROL_STABLE_TOLERANCE_PX
+    && Math.abs(previous.width - current.width) <= CONTROL_STABLE_TOLERANCE_PX
+    && Math.abs(previous.height - current.height) <= CONTROL_STABLE_TOLERANCE_PX;
+}
+
+async function visibleControlBox(control: Locator): Promise<ControlBox | null> {
+  return control.evaluateAll((elements) => {
+    if (elements.length !== 1) return null;
+    const button = elements[0] as HTMLButtonElement;
+    const style = getComputedStyle(button);
+    const rect = button.getBoundingClientRect();
+    const centerX = rect.x + rect.width / 2;
+    const centerY = rect.y + rect.height / 2;
+    const hitTarget = document.elementFromPoint(centerX, centerY);
+    if (
+      !button.isConnected
+      || button.hidden
+      || button.disabled
+      || style.display === "none"
+      || style.visibility !== "visible"
+      || Number.parseFloat(style.opacity) <= 0
+      || style.pointerEvents === "none"
+      || rect.width <= 0
+      || rect.height <= 0
+      || centerX < 0
+      || centerX > window.innerWidth
+      || centerY < 0
+      || centerY > window.innerHeight
+      || !hitTarget
+      || !button.contains(hitTarget)
+    ) {
+      return null;
+    }
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  });
+}
+
+async function controlDiagnostics(control: Locator): Promise<unknown> {
+  return control.evaluateAll((elements) => elements.map((element) => {
+    const button = element as HTMLButtonElement;
+    const controlsRoot = button.closest<HTMLElement>(".city-controls");
+    const rect = button.getBoundingClientRect();
+    const style = getComputedStyle(button);
+    const rootStyle = controlsRoot ? getComputedStyle(controlsRoot) : null;
+    return {
+      connected: button.isConnected,
+      hidden: button.hidden,
+      disabled: button.disabled,
+      ariaLabel: button.getAttribute("aria-label"),
+      rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      style: {
+        display: style.display,
+        visibility: style.visibility,
+        opacity: style.opacity,
+        pointerEvents: style.pointerEvents,
+      },
+      controlsRoot: controlsRoot && rootStyle
+        ? {
+            hidden: controlsRoot.hidden,
+            rectCount: controlsRoot.getClientRects().length,
+            display: rootStyle.display,
+            visibility: rootStyle.visibility,
+            pointerEvents: rootStyle.pointerEvents,
+          }
+        : null,
+    };
+  }));
+}
+
+async function holdFor(
+  page: Page,
+  control: Locator,
+  durationMs: number,
+  expectedPhase: DrivingPhase,
+): Promise<boolean> {
+  const deadline = performance.now() + CONTROL_READY_TIMEOUT_MS;
+  let attempts = 0;
+  let lastLayoutError = "not attempted";
+  let candidateBox: ControlBox | null = null;
+  let stableBox: ControlBox | null = null;
+
+  while (performance.now() < deadline) {
+    attempts += 1;
+    const before = await snapshot(page);
+    if (before.state.phase !== expectedPhase) return false;
+
+    let box: ControlBox | null = null;
+    try {
+      box = await visibleControlBox(control);
+      lastLayoutError = box ? "none" : "role button had no pointer-ready hit box";
+    } catch (error) {
+      lastLayoutError = error instanceof Error ? error.message : String(error);
+    }
+
+    const after = await snapshot(page);
+    if (after.state.phase !== expectedPhase) return false;
+    if (box && candidateBox && boxesAreStable(candidateBox, box)) {
+      stableBox = box;
+      break;
+    }
+    candidateBox = box;
+    await page.waitForTimeout(50);
+  }
+
+  if (!stableBox) {
+    const current = await snapshot(page);
+    if (current.state.phase !== expectedPhase) return false;
+    const diagnostics = await controlDiagnostics(control).catch((error: unknown) => ({
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    throw new Error(
+      `Pointer control stayed unavailable or unstable for ${CONTROL_READY_TIMEOUT_MS}ms during ${expectedPhase}`
+      + ` after ${attempts} attempts; layout=${JSON.stringify(lastLayoutError)}`
+      + `; control=${JSON.stringify(diagnostics)}; snapshot=${JSON.stringify(current)}`,
+    );
+  }
+
+  await page.mouse.move(stableBox.x + stableBox.width / 2, stableBox.y + stableBox.height / 2);
   await page.mouse.down();
   try {
     await page.waitForTimeout(durationMs);
@@ -71,6 +197,9 @@ async function steerToward(
   const left = page.getByRole("button", { name: "Hold to steer left" });
   const right = page.getByRole("button", { name: "Hold to steer right" });
   const drivingPhase = (await snapshot(page)).state.phase;
+  if (drivingPhase !== "driving-outbound" && drivingPhase !== "driving-home") {
+    throw new Error(`Pointer steering started outside a driving phase: ${drivingPhase}`);
+  }
   for (let attempt = 0; attempt < 260; attempt += 1) {
     const current = await snapshot(page);
     if (stopPhase && current.state.phase === stopPhase) return;
@@ -91,6 +220,7 @@ async function steerToward(
         page,
         error > 0 ? left : right,
         Math.min(650, Math.max(100, Math.abs(error) * 420)),
+        drivingPhase,
       );
       if (!held) {
         const after = await snapshot(page);
@@ -119,7 +249,12 @@ test("real pointer-held steering drives outbound and completes the required retu
   await page.getByTestId("start-drive").click();
   await expect.poll(async () => (await snapshot(page)).car.position[1], { timeout: 25_000 })
     .toBeLessThan(-31);
-  expect(await holdFor(page, page.getByRole("button", { name: "Hold brake" }), 750)).toBe(true);
+  expect(await holdFor(
+    page,
+    page.getByRole("button", { name: "Hold brake" }),
+    750,
+    "driving-outbound",
+  )).toBe(true);
   await steerToward(page, [-18, -44], 3, "arrived");
   await expect.poll(async () => (await snapshot(page)).state.phase).toBe("arrived");
   await expect(page.getByTestId("enter-shop")).toBeVisible();
@@ -131,7 +266,12 @@ test("real pointer-held steering drives outbound and completes the required retu
   await page.getByTestId("drive-home").click();
 
   await steerToward(page, [0, -44], 3);
-  expect(await holdFor(page, page.getByRole("button", { name: "Hold brake" }), 600)).toBe(true);
+  expect(await holdFor(
+    page,
+    page.getByRole("button", { name: "Hold brake" }),
+    600,
+    "driving-home",
+  )).toBe(true);
   await steerToward(page, CITY_GARAGE_POSITION, 3, "destination-board");
   await expect.poll(async () => (await snapshot(page)).state.phase, { timeout: 25_000 })
     .toBe("destination-board");
