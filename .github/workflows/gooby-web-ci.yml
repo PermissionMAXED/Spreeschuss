@@ -73,10 +73,6 @@ jobs:
         run: npm run audit:bundle
       - name: Scan production bundle
         run: npm run audit:production
-      - name: Audit adaptive quality and scene disposal
-        run: npm run audit:perf
-        env:
-          GOOBY_ARTIFACTS: playwright-report/perf-artifacts
       - name: Check native project inputs
         run: npm run ci:native-check
       - name: Install pinned actionlint
@@ -108,5 +104,38 @@ jobs:
             GOOBY/dist
             GOOBY/playwright-report
             GOOBY/test-results
+          if-no-files-found: warn
+          retention-days: 14
+
+  performance:
+    name: Performance audit on fresh runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: GOOBY
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Use repository Node version
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version-file: GOOBY/.nvmrc
+          cache: npm
+          cache-dependency-path: GOOBY/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Audit adaptive quality and scene disposal
+        run: npm run audit:perf
+        env:
+          GOOBY_ARTIFACTS: playwright-report/perf-artifacts
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@615b319bd27bb32c3d64dca6b6ed6974d5fbe653 # v6.0.0
+        with:
+          name: gooby-performance-report
+          path: GOOBY/playwright-report/perf-artifacts
           if-no-files-found: warn
           retention-days: 14

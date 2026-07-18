@@ -308,22 +308,95 @@ for (const command of [
   "npm run build",
   "npm run audit:bundle",
   "npm run audit:production",
-  "npm run audit:perf",
   "npm run ci:native-check",
   "npm run ci:workflow-check",
 ]) {
   hasRun(webJob, "web", command);
 }
-const perfAudit = namedStep(webJob, "web", "Audit adaptive quality and scene disposal");
 invariant(
-  mapping(perfAudit.env, "performance audit environment").GOOBY_ARTIFACTS === "playwright-report/perf-artifacts",
-  "Performance audit artifacts must be included in the uploaded Playwright report",
+  !runScripts(webJob, "web").some((run) => run.includes("npm run audit:perf")),
+  "Web browser job must not run the performance audit after the browser suites",
 );
 assertActionlintInstall(webJob, "web");
 const webUpload = steps(webJob, "web").find((step) => step.uses?.startsWith("actions/upload-artifact@"));
 invariant(webUpload, "Web CI must upload an artifact");
 const webUploadPath = mapping(webUpload.with, "web artifact options").path;
 invariant(typeof webUploadPath === "string" && webUploadPath.includes("GOOBY/dist") && webUploadPath.includes("GOOBY/playwright-report"), "Web artifact must include dist and Playwright report");
+
+const performance = job(web, "performance");
+invariant(performance["runs-on"] === "ubuntu-latest", "Performance CI must run on a fresh Linux runner");
+invariant(!("needs" in performance), "Performance CI must be an independent required job");
+invariant(!("if" in performance), "Performance CI must run on every workflow invocation");
+invariant(performance["timeout-minutes"] === "15", "Performance CI timeout must remain 15 minutes");
+invariant(
+  mapping(mapping(performance.defaults, "performance defaults").run, "performance run defaults")["working-directory"] === "GOOBY",
+  "Performance CI commands must run from GOOBY",
+);
+const performanceSteps = steps(performance, "performance");
+const expectedPerformanceSteps = [
+  "Check out repository",
+  "Use repository Node version",
+  "Install locked dependencies",
+  "Install Playwright Chromium",
+  "Audit adaptive quality and scene disposal",
+  "Upload performance report",
+];
+invariant(
+  performanceSteps.map((step) => step.name).join("\n") === expectedPerformanceSteps.join("\n"),
+  "Performance CI must contain only the reviewed checkout, setup, install, audit, and upload steps in order",
+);
+const performanceCheckout = namedStep(performance, "performance", "Check out repository");
+invariant(
+  performanceCheckout.uses?.startsWith("actions/checkout@"),
+  "Performance CI must check out the repository with actions/checkout",
+);
+const performanceSetupNode = namedStep(performance, "performance", "Use repository Node version");
+invariant(
+  performanceSetupNode.uses?.startsWith("actions/setup-node@"),
+  "Performance CI must configure Node with actions/setup-node",
+);
+const performanceNodeOptions = mapping(performanceSetupNode.with, "performance setup-node options");
+invariant(
+  performanceNodeOptions["node-version-file"] === "GOOBY/.nvmrc",
+  "Performance CI must read GOOBY/.nvmrc",
+);
+invariant(
+  performanceNodeOptions.cache === "npm"
+    && performanceNodeOptions["cache-dependency-path"] === "GOOBY/package-lock.json",
+  "Performance CI must use the reviewed npm dependency cache",
+);
+invariant(
+  namedStep(performance, "performance", "Install locked dependencies").run === "npm ci",
+  "Performance CI must install a fresh locked dependency tree",
+);
+invariant(
+  namedStep(performance, "performance", "Install Playwright Chromium").run
+    === "npx playwright install --with-deps chromium",
+  "Performance CI must install Chromium and its system dependencies",
+);
+const perfAudit = namedStep(performance, "performance", "Audit adaptive quality and scene disposal");
+invariant(perfAudit.run === "npm run audit:perf", "Performance CI must run only the unchanged performance audit");
+invariant(
+  mapping(perfAudit.env, "performance audit environment").GOOBY_ARTIFACTS === "playwright-report/perf-artifacts",
+  "Performance audit must write its report to the uploaded artifact directory",
+);
+const performanceUpload = namedStep(performance, "performance", "Upload performance report");
+invariant(
+  performanceUpload.if === "always()",
+  "Performance report upload must run after audit success or failure",
+);
+invariant(
+  performanceUpload.uses?.startsWith("actions/upload-artifact@"),
+  "Performance report must use actions/upload-artifact",
+);
+const performanceArtifactOptions = mapping(performanceUpload.with, "performance artifact options");
+invariant(
+  performanceArtifactOptions.name === "gooby-performance-report"
+    && performanceArtifactOptions.path === "GOOBY/playwright-report/perf-artifacts"
+    && performanceArtifactOptions["if-no-files-found"] === "warn"
+    && performanceArtifactOptions["retention-days"] === "14",
+  "Performance report artifact must keep the reviewed path, failure policy, and 14-day retention",
+);
 
 const preflight = job(ios, "preflight");
 invariant(preflight["runs-on"] === "ubuntu-latest", "iOS validation must run on Linux without release secrets");
@@ -394,4 +467,4 @@ const actionlint = spawnSync("actionlint", [webFile.path, iosFile.path], { encod
 invariant(actionlint.error?.code !== "ENOENT", "actionlint is required but was not found on PATH");
 invariant(actionlint.status === 0, `actionlint failed:\n${actionlint.stdout}${actionlint.stderr}`);
 console.log("actionlint passed.");
-console.log("Workflow check passed: pinned actions, complete web gates, bounded real-input routing, audits, and always-on zero-secret unsigned builds.");
+console.log("Workflow check passed: pinned actions, isolated performance CI, complete web gates, bounded real-input routing, audits, and always-on zero-secret unsigned builds.");
