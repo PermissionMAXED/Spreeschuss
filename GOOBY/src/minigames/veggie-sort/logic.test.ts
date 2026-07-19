@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   INITIAL_SORT_STATE,
+  acceptedSortDirections,
   activateReverseFrenzy,
   applySort,
+  conveyorSpeedAt,
   expectedSortDirection,
+  sortWindowAt,
   type SortItem,
 } from "./logic";
 
@@ -59,5 +62,39 @@ describe("Veggie Sort rules", () => {
     let state = { ...INITIAL_SORT_STATE };
     for (let index = 0; index < 4; index += 1) state = applySort(state, carrot, "left");
     expect(state).toMatchObject({ streak: 4, multiplier: 2, score: 500 });
+  });
+
+  it("accepts either destination for a two-category mixed crate", () => {
+    const mixed: SortItem = {
+      id: "mixed",
+      label: "Veg + Fruit",
+      emoji: "🥕🍎",
+      category: "vegetable",
+      categories: ["vegetable", "fruit"],
+    };
+
+    expect(acceptedSortDirections(mixed, false)).toEqual(["left", "right"]);
+    expect(applySort(INITIAL_SORT_STATE, mixed, "left").correct).toBe(true);
+    expect(applySort(INITIAL_SORT_STATE, mixed, "right").correct).toBe(true);
+    expect(applySort(INITIAL_SORT_STATE, mixed, "up")).toMatchObject({
+      correct: false,
+      gentleMisdrop: true,
+      mistakes: 1,
+    });
+  });
+
+  it("awards a market star every five uninterrupted correct sorts", () => {
+    let state = { ...INITIAL_SORT_STATE };
+    for (let index = 0; index < 5; index += 1) state = applySort(state, carrot, "left");
+
+    expect(state).toMatchObject({ streak: 5, marketStars: 1, score: 950 });
+  });
+
+  it("uses a monotonic bounded conveyor curve based only on active time", () => {
+    expect(conveyorSpeedAt(0)).toBe(1);
+    expect(conveyorSpeedAt(35)).toBeGreaterThan(conveyorSpeedAt(10));
+    expect(conveyorSpeedAt(10_000)).toBe(2.2);
+    expect(sortWindowAt(35)).toBeLessThan(sortWindowAt(0));
+    expect(sortWindowAt(10_000)).toBeCloseTo(4.6 / 2.2);
   });
 });

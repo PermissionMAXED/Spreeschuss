@@ -1,10 +1,36 @@
 export const BUBBLE_COLORS = ["coral", "sun", "mint", "sky", "grape"] as const;
 export type BubbleColor = (typeof BUBBLE_COLORS)[number];
+export const BUBBLE_SYMBOLS = ["heart", "sun", "diamond", "triangle", "star"] as const;
+export type BubbleSymbol = (typeof BUBBLE_SYMBOLS)[number];
+export type BubbleMode = "splash" | "zen";
+
+export const BUBBLE_CUES: Readonly<Record<BubbleSymbol, {
+  readonly label: string;
+  readonly glyph: string;
+  readonly shape: string;
+  readonly pattern: string;
+}>> = {
+  heart: { label: "Heart", glyph: "♥", shape: "heart", pattern: "stripes" },
+  sun: { label: "Sun", glyph: "☀", shape: "sun", pattern: "dots" },
+  diamond: { label: "Diamond", glyph: "◆", shape: "diamond", pattern: "waves" },
+  triangle: { label: "Triangle", glyph: "▼", shape: "triangle", pattern: "grid" },
+  star: { label: "Star", glyph: "★", shape: "star", pattern: "rings" },
+};
+
+const COLOR_SYMBOL: Readonly<Record<BubbleColor, BubbleSymbol>> = {
+  coral: "heart",
+  sun: "sun",
+  mint: "diamond",
+  sky: "triangle",
+  grape: "star",
+};
 
 export interface BubbleNode {
   readonly id: number;
-  readonly kind: "bubble" | "soap";
+  readonly kind: "bubble" | "soap" | "duck";
   readonly color: BubbleColor;
+  /** Falls back to the legacy color mapping for saved/test fixtures. */
+  readonly symbol?: BubbleSymbol;
   readonly x: number;
   readonly y: number;
   readonly radius: number;
@@ -26,6 +52,13 @@ export interface BubbleTapResult extends BubbleScoreState {
   readonly removedIds: readonly number[];
   readonly starBurst: boolean;
   readonly soapHit: boolean;
+  readonly duckBonus: boolean;
+}
+
+export interface BubblePayout {
+  readonly score: number;
+  readonly coins: number;
+  readonly xp: number;
 }
 
 const normalizedPlayfield = (playfield: BubblePlayfield): BubblePlayfield => ({
@@ -46,6 +79,10 @@ const isTouching = (
   return Math.hypot(deltaX, deltaY) <= reach;
 };
 
+export function bubbleSymbol(node: Pick<BubbleNode, "color" | "symbol">): BubbleSymbol {
+  return node.symbol ?? COLOR_SYMBOL[node.color];
+}
+
 export function findTouchingChain(
   nodes: readonly BubbleNode[],
   startId: number,
@@ -55,7 +92,7 @@ export function findTouchingChain(
   if (!start || start.kind !== "bubble") return [];
 
   const matching = nodes.filter(
-    (node) => node.kind === "bubble" && node.color === start.color,
+    (node) => node.kind === "bubble" && bubbleSymbol(node) === bubbleSymbol(start),
   );
   const visited = new Set<number>([start.id]);
   const queue: BubbleNode[] = [start];
@@ -81,7 +118,7 @@ export function resolveBubbleTap(
 ): BubbleTapResult {
   const target = nodes.find(({ id }) => id === targetId);
   if (!target) {
-    return { ...state, removedIds: [], starBurst: false, soapHit: false };
+    return { ...state, removedIds: [], starBurst: false, soapHit: false, duckBonus: false };
   }
 
   if (target.kind === "soap") {
@@ -93,6 +130,20 @@ export function resolveBubbleTap(
       removedIds: [],
       starBurst: false,
       soapHit: true,
+      duckBonus: false,
+    };
+  }
+
+  if (target.kind === "duck") {
+    return {
+      score: state.score + 500,
+      stars: state.stars,
+      combo: state.combo,
+      timePenalty: state.timePenalty,
+      removedIds: [target.id],
+      starBurst: false,
+      soapHit: false,
+      duckBonus: true,
     };
   }
 
@@ -109,5 +160,19 @@ export function resolveBubbleTap(
     removedIds,
     starBurst,
     soapHit: false,
+    duckBonus: false,
   };
+}
+
+/** Zen keeps the full score/best comparison but grants half the timed rewards. */
+export function bubblePayout(state: BubbleScoreState, mode: BubbleMode): BubblePayout {
+  const score = Math.max(0, Math.floor(state.score));
+  const normal = {
+    score,
+    coins: Math.max(1, Math.floor(score / 220) + state.stars * 2),
+    xp: Math.max(2, Math.floor(score / 100) + state.stars * 3),
+  };
+  return mode === "zen"
+    ? { score, coins: Math.floor(normal.coins / 2), xp: Math.floor(normal.xp / 2) }
+    : normal;
 }

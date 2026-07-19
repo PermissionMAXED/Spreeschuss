@@ -6,6 +6,21 @@ export const PERFECT_TOLERANCE_PX = 4;
 export const MAX_PANCAKE_WIDTH = 272;
 export const PANCAKE_MAX_STEP_SECONDS = 0.25;
 
+/** A syrup window opens at the end of every period; drops inside it pay extra. */
+export const SYRUP_PERIOD_SECONDS = 6;
+export const SYRUP_WINDOW_SECONDS = 0.9;
+export const SYRUP_BONUS = 40;
+
+/** Endless tall-tower tier: unlocked by a persisted best of 300 or more. */
+export const TALL_TOWER_BEST_GATE = 300;
+export const TALL_TOWER_STACK = 25;
+export const TALL_TOWER_LAYER_BONUS = 15;
+export const TALL_TOWER_SPEED_CAP = 430;
+
+/** Center-of-mass wobble rendering and tipping fail-safe. */
+export const WOBBLE_FREQUENCY = 2.4;
+export const WOBBLE_MAX_PX = 12;
+
 export interface PancakeLayer {
   readonly id: number;
   readonly x: number;
@@ -24,12 +39,15 @@ export interface PlacementResult {
   readonly failed: boolean;
 }
 
+export type PancakeCollapseReason = "support" | "tipped";
+
 export type PancakePeakEvent =
   | { readonly type: "place"; readonly layer: PancakeLayer; readonly points: number }
   | { readonly type: "perfect"; readonly combo: number; readonly x: number; readonly y: number }
   | { readonly type: "trim"; readonly width: number; readonly x: number; readonly y: number }
   | { readonly type: "butter"; readonly x: number; readonly y: number }
-  | { readonly type: "collapsed" };
+  | { readonly type: "syrup"; readonly x: number; readonly y: number; readonly bonus: number }
+  | { readonly type: "collapsed"; readonly reason?: PancakeCollapseReason };
 
 export interface PancakePeakSnapshot {
   readonly elapsed: number;
@@ -41,18 +59,73 @@ export interface PancakePeakSnapshot {
   readonly layers: readonly PancakeLayer[];
   readonly moving: { readonly x: number; readonly y: number; readonly width: number; readonly direction: number };
   readonly difficulty: ReturnType<typeof pancakeDifficulty>;
+  readonly syrupWindow: boolean;
+  readonly syrupIn: number;
+  readonly comOffset: number;
+  readonly wobblePx: number;
+  readonly endlessTier: boolean;
+  readonly tallTower: boolean;
   readonly ended: boolean;
   readonly disposed: boolean;
 }
 
-export function pancakeDifficulty(stackCount: number): {
+export function pancakeDifficulty(stackCount: number, tallTower = false): {
   readonly speed: number;
   readonly swingInset: number;
 } {
   return {
-    speed: Math.min(340, 112 + Math.max(0, stackCount) * 10),
+    speed: Math.min(tallTower ? TALL_TOWER_SPEED_CAP : 340, 112 + Math.max(0, stackCount) * 10),
     swingInset: Math.min(34, Math.max(0, stackCount) * 0.75),
   };
+}
+
+/** Fixed-clock syrup schedule: pure so every frame partition agrees. */
+export function isSyrupWindow(elapsedSeconds: number): boolean {
+  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) return false;
+  return elapsedSeconds % SYRUP_PERIOD_SECONDS >= SYRUP_PERIOD_SECONDS - SYRUP_WINDOW_SECONDS;
+}
+
+/** Seconds until the next syrup window opens (zero while it is open). */
+export function secondsUntilSyrup(elapsedSeconds: number): number {
+  if (isSyrupWindow(elapsedSeconds)) return 0;
+  const phase = elapsedSeconds % SYRUP_PERIOD_SECONDS;
+  return SYRUP_PERIOD_SECONDS - SYRUP_WINDOW_SECONDS - phase;
+}
+
+/** Width-weighted center of mass of the whole stack. */
+export function stackCenterOfMassX(layers: readonly PancakeLayer[]): number {
+  let weighted = 0;
+  let total = 0;
+  for (const layer of layers) {
+    weighted += layer.x * layer.width;
+    total += layer.width;
+  }
+  return total > 0 ? weighted / total : PANCAKE_WORLD_WIDTH / 2;
+}
+
+/** Signed center-of-mass offset from the supporting bottom layer. */
+export function centerOfMassOffset(layers: readonly PancakeLayer[]): number {
+  const base = layers[0];
+  if (!base) return 0;
+  return stackCenterOfMassX(layers) - base.x;
+}
+
+/** The tower tips over once its center of mass leaves the base footprint. */
+export function isTipped(layers: readonly PancakeLayer[]): boolean {
+  const base = layers[0];
+  if (!base || base.width <= 0) return false;
+  return Math.abs(centerOfMassOffset(layers)) > base.width / 2;
+}
+
+/**
+ * Deterministic cosmetic sway: amplitude grows with the center-of-mass
+ * offset and the phase is a pure function of the simulation clock.
+ */
+export function wobbleOffsetPx(elapsedSeconds: number, comOffset: number): number {
+  if (comOffset === 0) return 0;
+  const amplitude = Math.min(WOBBLE_MAX_PX, Math.abs(comOffset) * 0.35);
+  const lean = Math.sign(comOffset) * amplitude * 0.4;
+  return lean + amplitude * Math.sin(elapsedSeconds * WOBBLE_FREQUENCY);
 }
 
 export function calculatePlacement(
@@ -129,10 +202,16 @@ export class PancakePeakSimulation {
     direction: 1,
   };
   private events: PancakePeakEvent[] = [];
+  private readonly endlessTier: boolean;
   private ended = false;
   private disposed = false;
 
-  public constructor(private readonly rng: RandomSource) {}
+  private readonly rng: RandomSource;
+
+  public constructor(rng: RandomSource, options?: { readonly endlessTier?: boolean }) {
+    this.rng = rng;
+    this.endlessTier = options?.endlessTier === true;
+  }
 
   public update(deltaSeconds: number): void {
     if (this.ended || this.disposed || !Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return;
@@ -145,8 +224,12 @@ export class PancakePeakSimulation {
     }
   }
 
+  private tallTowerActive(): boolean {
+    return this.endlessTier && this.stackCount >= TALL_TOWER_STACK;
+  }
+
   private advanceSwing(deltaSeconds: number): void {
-    const difficulty = pancakeDifficulty(this.stackCount);
+    const difficulty = pancakeDifficulty(this.stackCount, this.tallTowerActive());
     const halfWidth = this.moving.width / 2;
     const leftLimit = halfWidth + difficulty.swingInset;
     const rightLimit = PANCAKE_WORLD_WIDTH - halfWidth - difficulty.swingInset;
@@ -180,6 +263,7 @@ export class PancakePeakSimulation {
     this.combo = placement.perfect ? this.combo + 1 : 0;
     this.bestCombo = Math.max(this.bestCombo, this.combo);
     const butter = isButterLayer(this.stackCount);
+    const syrup = isSyrupWindow(this.elapsed);
     const layer: PancakeLayer = {
       id: this.stackCount,
       x: placement.x,
@@ -188,7 +272,9 @@ export class PancakePeakSimulation {
       perfect: placement.perfect,
       butter,
     };
-    const points = pancakeLayerScore(layer.width, layer.perfect, this.combo, butter);
+    const points = pancakeLayerScore(layer.width, layer.perfect, this.combo, butter)
+      + (syrup ? SYRUP_BONUS : 0)
+      + (this.tallTowerActive() ? TALL_TOWER_LAYER_BONUS : 0);
     this.score += points;
     this.layers.push(layer);
     this.events.push({ type: "place", layer, points });
@@ -197,6 +283,11 @@ export class PancakePeakSimulation {
     }
     if (placement.perfect) this.events.push({ type: "perfect", combo: this.combo, x: layer.x, y: layer.y });
     if (butter) this.events.push({ type: "butter", x: layer.x, y: layer.y + 20 });
+    if (syrup) this.events.push({ type: "syrup", x: layer.x, y: layer.y + 14, bonus: SYRUP_BONUS });
+    if (isTipped(this.layers)) {
+      this.endCollapsed("tipped");
+      return;
+    }
 
     this.cameraBottom = Math.max(0, layer.y - 390);
     const startLeft = this.rng.next() < 0.5;
@@ -210,10 +301,10 @@ export class PancakePeakSimulation {
     };
   }
 
-  private endCollapsed(): void {
+  private endCollapsed(reason: PancakeCollapseReason = "support"): void {
     this.ended = true;
     this.combo = 0;
-    this.events.push({ type: "collapsed" });
+    this.events.push({ type: "collapsed", reason });
   }
 
   public drainEvents(): readonly PancakePeakEvent[] {
@@ -223,6 +314,7 @@ export class PancakePeakSimulation {
   }
 
   public snapshot(): PancakePeakSnapshot {
+    const comOffset = centerOfMassOffset(this.layers);
     return {
       elapsed: this.elapsed,
       score: this.score,
@@ -232,7 +324,13 @@ export class PancakePeakSimulation {
       cameraBottom: this.cameraBottom,
       layers: this.layers,
       moving: this.moving,
-      difficulty: pancakeDifficulty(this.stackCount),
+      difficulty: pancakeDifficulty(this.stackCount, this.tallTowerActive()),
+      syrupWindow: isSyrupWindow(this.elapsed),
+      syrupIn: secondsUntilSyrup(this.elapsed),
+      comOffset,
+      wobblePx: wobbleOffsetPx(this.elapsed, comOffset),
+      endlessTier: this.endlessTier,
+      tallTower: this.tallTowerActive(),
       ended: this.ended,
       disposed: this.disposed,
     };

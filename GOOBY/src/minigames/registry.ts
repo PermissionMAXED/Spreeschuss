@@ -13,15 +13,18 @@ import {
   definition as burrowDig,
   manifest as burrowDigManifest,
 } from "./burrow-dig";
-import { definition as bubbleBathBlast } from "./bubble-bath-blast";
-import { definition as bunnyHop } from "./bunny-hop";
+import {
+  definition as bubbleBathBlast,
+  manifest as bubbleBathBlastManifest,
+} from "./bubble-bath-blast";
+import { definition as bunnyHop, manifest as bunnyHopManifest } from "./bunny-hop";
 import {
   createMinigame as createCakeAtelier,
   definition as cakeAtelier,
   manifest as cakeAtelierManifest,
 } from "./cake-atelier";
 import { definition as carrotCannon, createMinigame as createCarrotCannon } from "./carrot-cannon";
-import { definition as carrotCatch } from "./carrot-catch";
+import { definition as carrotCatch, manifest as carrotCatchManifest } from "./carrot-catch";
 import {
   createMinigame as createCloudBounce,
   definition as cloudBounce,
@@ -34,7 +37,7 @@ import {
   manifest as fireflyLanternManifest,
 } from "./firefly-lantern";
 import { definition as gardenMoles, createMinigame as createGardenMoles } from "./garden-moles";
-import { definition as goobySays } from "./gooby-says";
+import { definition as goobySays, manifest as goobySaysManifest } from "./gooby-says";
 import {
   createMinigame as createHoneyDrizzle,
   definition as honeyDrizzle,
@@ -51,7 +54,7 @@ import {
   manifest as marketScalesManifest,
 } from "./market-scales";
 import { createMemoryMeadow, definition as memoryMeadow } from "./memory-meadow";
-import { definition as pancakePeak } from "./pancake-peak";
+import { definition as pancakePeak, manifest as pancakePeakManifest } from "./pancake-peak";
 import {
   createMinigame as createPicnicPacker,
   definition as picnicPacker,
@@ -80,7 +83,7 @@ import {
   definition as topiaryTrim,
   manifest as topiaryTrimManifest,
 } from "./topiary-trim";
-import { definition as veggieSort } from "./veggie-sort";
+import { definition as veggieSort, manifest as veggieSortManifest } from "./veggie-sort";
 
 export const MINIGAME_DEFINITIONS = [
   carrotCatch,
@@ -164,151 +167,28 @@ function launchManifest(spec: LaunchManifestSpec): MinigameManifest {
   });
 }
 
+/**
+ * The six deepened launch specialists export their own final manifests; the
+ * frozen hub unlock gates must stay byte-identical to the launch layout.
+ */
+const DEEPENED_LAUNCH_MANIFESTS: readonly MinigameManifest[] = [
+  carrotCatchManifest,
+  bunnyHopManifest,
+  pancakePeakManifest,
+  bubbleBathBlastManifest,
+  veggieSortManifest,
+  goobySaysManifest,
+];
+if (
+  DEEPENED_LAUNCH_MANIFESTS.some(
+    (manifest, index) => manifest.unlockLevel !== LAUNCH_UNLOCK_LEVELS[index],
+  )
+) {
+  throw new Error("Deepened launch manifests must keep the frozen hub unlock levels");
+}
+
 const LAUNCH_MANIFESTS: readonly MinigameManifest[] = [
-  launchManifest({
-    id: "carrot-catch",
-    category: "action",
-    audioCues: ["go", "hit", "miss", "combo", "win"],
-    unlockLevel: LAUNCH_UNLOCK_LEVELS[0],
-    tutorial: [
-      {
-        icon: "🥕",
-        title: { en: "Catch the carrots", de: "Fange die Karotten" },
-        body: {
-          en: "Slide the basket under every falling carrot before it hits the grass.",
-          de: "Schiebe den Korb unter jede fallende Karotte, bevor sie im Gras landet.",
-        },
-      },
-      {
-        icon: "✦",
-        title: { en: "Chain the catches", de: "Verkette die Fänge" },
-        body: {
-          en: "Catch carrot after carrot without a drop to grow a bonus combo.",
-          de: "Fange Karotte um Karotte ohne Fehler und lass deinen Bonus-Combo wachsen.",
-        },
-      },
-    ],
-  }),
-  launchManifest({
-    id: "bunny-hop",
-    category: "action",
-    audioCues: ["go", "hit", "combo", "lose", "win"],
-    unlockLevel: LAUNCH_UNLOCK_LEVELS[1],
-    tutorial: [
-      {
-        icon: "🐾",
-        title: { en: "Time your hops", de: "Springe im richtigen Moment" },
-        body: {
-          en: "Tap to hop from stone to stone. Wait for the soft glow before you jump.",
-          de: "Tippe, um von Stein zu Stein zu hüpfen. Warte auf das sanfte Leuchten, bevor du springst.",
-        },
-      },
-      {
-        icon: "✦",
-        title: { en: "Perfect landings", de: "Perfekte Landungen" },
-        body: {
-          en: "Landing dead-center earns extra points and keeps your streak alive.",
-          de: "Genau in der Mitte zu landen bringt Extrapunkte und hält deine Serie am Leben.",
-        },
-      },
-    ],
-  }),
-  launchManifest({
-    id: "pancake-peak",
-    category: "skill",
-    audioCues: ["go", "hit", "miss", "combo", "lose", "win"],
-    unlockLevel: LAUNCH_UNLOCK_LEVELS[2],
-    tutorial: [
-      {
-        icon: "🥞",
-        title: { en: "Stack the pancakes", de: "Staple die Pfannkuchen" },
-        body: {
-          en: "Tap to drop each pancake onto the tower as it swings by.",
-          de: "Tippe, um jeden Pfannkuchen auf den Turm fallen zu lassen, wenn er vorbeischwingt.",
-        },
-      },
-      {
-        icon: "⚖",
-        title: { en: "Keep the balance", de: "Halte die Balance" },
-        body: {
-          en: "Crooked pancakes make the tower wobble. Neat drops stack the highest peak.",
-          de: "Schiefe Pfannkuchen bringen den Turm ins Wanken. Saubere Würfe stapeln den höchsten Gipfel.",
-        },
-      },
-    ],
-  }),
-  launchManifest({
-    id: "bubble-bath-blast",
-    category: "care",
-    audioCues: ["go", "hit", "miss", "combo", "countdown", "score", "lose", "win"],
-    unlockLevel: LAUNCH_UNLOCK_LEVELS[3],
-    tutorial: [
-      {
-        icon: "◌",
-        title: { en: "Pop matching bubbles", de: "Zerplatze passende Blasen" },
-        body: {
-          en: "Tap groups of same-colored bubbles to pop them and clean up Gooby.",
-          de: "Tippe Gruppen gleichfarbiger Blasen an, um sie zerplatzen zu lassen und Gooby zu waschen.",
-        },
-      },
-      {
-        icon: "✦",
-        title: { en: "Bigger is better", de: "Größer ist besser" },
-        body: {
-          en: "Popping bigger clusters at once splashes bonus points everywhere.",
-          de: "Größere Gruppen auf einmal zerplatzen zu lassen spritzt überall Bonuspunkte hin.",
-        },
-      },
-    ],
-  }),
-  launchManifest({
-    id: "veggie-sort",
-    category: "puzzle",
-    audioCues: ["go", "hit", "miss", "combo", "countdown", "score", "lose", "win"],
-    unlockLevel: LAUNCH_UNLOCK_LEVELS[4],
-    tutorial: [
-      {
-        icon: "🥬",
-        title: { en: "Sort the harvest", de: "Sortiere die Ernte" },
-        body: {
-          en: "Send every vegetable into the basket with the matching color.",
-          de: "Lege jedes Gemüse in den Korb mit der passenden Farbe.",
-        },
-      },
-      {
-        icon: "✦",
-        title: { en: "Stay speedy", de: "Bleib flott" },
-        body: {
-          en: "Quick, correct sorts build a streak before the conveyor speeds up.",
-          de: "Schnelles, richtiges Sortieren baut eine Serie auf, bevor das Band schneller wird.",
-        },
-      },
-    ],
-  }),
-  launchManifest({
-    id: "gooby-says",
-    category: "puzzle",
-    audioCues: ["go", "hit", "miss", "combo", "countdown", "lose", "win"],
-    unlockLevel: LAUNCH_UNLOCK_LEVELS[5],
-    tutorial: [
-      {
-        icon: "♪",
-        title: { en: "Watch Gooby", de: "Schau Gooby zu" },
-        body: {
-          en: "Gooby performs a little gesture sequence. Watch it closely.",
-          de: "Gooby zeigt eine kleine Gestenfolge. Schau genau hin.",
-        },
-      },
-      {
-        icon: "✦",
-        title: { en: "Repeat it back", de: "Mach sie nach" },
-        body: {
-          en: "Tap the gestures in the same order. Each round adds one more step.",
-          de: "Tippe die Gesten in derselben Reihenfolge an. Jede Runde kommt ein Schritt dazu.",
-        },
-      },
-    ],
-  }),
+  ...DEEPENED_LAUNCH_MANIFESTS,
   launchManifest({
     id: "garden-moles",
     category: "action",

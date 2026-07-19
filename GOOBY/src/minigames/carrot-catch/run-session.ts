@@ -10,11 +10,14 @@ import type {
  * available so repeated terminal UI events cannot settle the payout twice.
  */
 export class MinigameRunSession {
+  private readonly lifecycle: MinigameLifecycle;
   private runId: MinigameRunId | null = null;
   private receipt: MinigameSettlementReceipt | null = null;
   private acted = false;
 
-  public constructor(private readonly lifecycle: MinigameLifecycle) {}
+  public constructor(lifecycle: MinigameLifecycle) {
+    this.lifecycle = lifecycle;
+  }
 
   public get persistedBest(): number {
     return this.lifecycle.persistedBest;

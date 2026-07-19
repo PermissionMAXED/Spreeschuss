@@ -7,6 +7,7 @@ export default defineConfig({
       "src/minigames/bubble-bath-blast/logic.test.ts",
       "src/minigames/veggie-sort/logic.test.ts",
       "src/minigames/gooby-says/logic.test.ts",
+      "src/minigames/bubble-bath-blast/manifests.test.ts",
     ],
   },
 });

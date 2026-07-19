@@ -2,18 +2,76 @@ import type { MinigameSoundAction } from "../../audio/contracts";
 import type {
   MinigameContext,
   MinigameLifecycle,
+  MinigameManifest,
   MinigameModule,
   MinigamePayout,
 } from "../../core/contracts/minigame";
+import { validateMinigameManifest } from "../../core/contracts/minigame";
 import { SeededRng } from "../../core/contracts/rng";
 import type { MinigameStubDefinition } from "../stub";
 import { MinigameRunSession } from "../carrot-catch/run-session";
 import {
   PANCAKE_WORLD_WIDTH,
   PancakePeakSimulation,
+  TALL_TOWER_BEST_GATE,
   pancakePeakPayout,
+  type PancakeCollapseReason,
   type PancakePeakEvent,
 } from "./logic";
+
+/** Final launch manifest in the frozen CP1 shape, localized in both languages. */
+export const manifest: MinigameManifest = validateMinigameManifest({
+  id: "pancake-peak",
+  title: { en: "Pancake Peak", de: "Pfannkuchengipfel" },
+  instructions: {
+    en: "Drop swinging pancakes and balance a wonderfully wobbly tower.",
+    de: "Lass schwingende Pfannkuchen fallen und balanciere einen herrlich wackeligen Turm.",
+  },
+  icon: "🥞",
+  category: "skill",
+  stage3d: false,
+  unlockLevel: 2,
+  audioCues: ["go", "hit", "miss", "combo", "score", "lose", "win"],
+  tutorial: [
+    {
+      icon: "🥞",
+      title: { en: "Stack the pancakes", de: "Staple die Pfannkuchen" },
+      body: {
+        en: "Tap anywhere or press Space to drop each pancake as it swings by. Overhang gets trimmed.",
+        de: "Tippe irgendwohin oder drücke die Leertaste, um jeden Pfannkuchen im Vorbeischwingen fallen zu lassen. Überstand wird abgeschnitten.",
+      },
+    },
+    {
+      icon: "🍯",
+      title: { en: "Syrup timing", de: "Sirup-Timing" },
+      body: {
+        en: "A syrup window opens every six seconds. Drops inside it drizzle 40 bonus points.",
+        de: "Alle sechs Sekunden öffnet sich ein Sirupfenster. Würfe darin träufeln 40 Bonuspunkte.",
+      },
+    },
+    {
+      icon: "⚖",
+      title: { en: "Watch the wobble", de: "Achte aufs Wackeln" },
+      body: {
+        en: "Off-center pancakes shift the tower's balance. If its weight leaves the base, it tips over.",
+        de: "Schiefe Pfannkuchen verlagern die Balance des Turms. Wandert sein Gewicht über den Sockel hinaus, kippt er um.",
+      },
+    },
+    {
+      icon: "⛰",
+      title: { en: "Tall-tower tier", de: "Hochturm-Stufe" },
+      body: {
+        en: "With a best of 300 or more, stacks past 25 enter an endless tall-tower tier with faster swings and bonus points.",
+        de: "Mit einem Rekord ab 300 erreichen Stapel über 25 eine endlose Hochturm-Stufe mit schnelleren Schwüngen und Bonuspunkten.",
+      },
+    },
+  ],
+});
+
+function isDropKey(key: string): boolean {
+  const lowered = key.toLowerCase();
+  return lowered === " " || lowered === "enter";
+}
 
 const PANCAKE_VIEW_HEIGHT = 520;
 
@@ -59,6 +117,7 @@ export class PancakePeakMinigame implements MinigameModule {
   private ended = false;
   private notified = false;
   private highScore = 0;
+  private collapseReason: PancakeCollapseReason | null = null;
 
   public mount(context: MinigameContext): void {
     this.dispose();
@@ -73,6 +132,7 @@ export class PancakePeakMinigame implements MinigameModule {
     root.className = "pp-game";
     root.classList.toggle("reduced-motion", this.injected.reducedMotion === true);
     root.dataset.minigame = this.id;
+    root.tabIndex = 0;
     root.innerHTML = `
       <style>
         .pp-game{position:relative;width:100%;height:100%;min-height:560px;overflow:hidden;touch-action:none;user-select:none;color:#55382e;background:linear-gradient(#f7d8b1 0 66%,#bd7a54 66%);font-family:ui-rounded,"SF Pro Rounded",system-ui,sans-serif;isolation:isolate}
@@ -80,6 +140,9 @@ export class PancakePeakMinigame implements MinigameModule {
         .pp-counter{position:absolute;z-index:2;right:0;bottom:0;left:0;height:15%;background:linear-gradient(#d99b72,#b77252);border-top:10px solid #f0b589;box-shadow:0 -9px 20px #8c593533}.pp-field{position:absolute;z-index:3;inset:0;overflow:hidden}.pp-stack,.pp-effects{position:absolute;inset:0;pointer-events:none}.pp-stack{z-index:4}.pp-effects{z-index:9}
         .pp-plate{position:absolute;z-index:3;bottom:8.5%;left:50%;width:78%;height:29px;transform:translateX(-50%);border-radius:50%;background:linear-gradient(#f5fbf5,#cbdde1);box-shadow:inset 0 -7px #aabec5,0 10px 16px #67433455}.pp-pancake{--x:50;--bottom:10;--w:200;position:absolute;left:calc(var(--x)*1%);bottom:calc(var(--bottom)*1%);width:calc(var(--w)/360*100%);height:25px;transform:translateX(-50%);border:2px solid #bd6d35;border-radius:50%;background:linear-gradient(#f6bd67 0 28%,#d98641 33% 76%,#b95f30 80%);box-shadow:inset 0 4px #ffe2a2,0 4px 5px #6f422c33}.pp-pancake:before{content:"";position:absolute;top:6px;left:13%;width:12%;height:4px;border-radius:50%;background:#a9542e55;box-shadow:45px 2px #a9542e44,89px -1px #a9542e55}.pp-pancake.perfect{filter:drop-shadow(0 0 7px #fff0a7)}.pp-butter{position:absolute;z-index:2;top:-8px;left:50%;width:28px;height:14px;transform:translateX(-50%) rotate(-4deg);border-radius:3px;background:#fff08b;box-shadow:inset -4px -3px #e9c850,0 3px 4px #7e4b2f55}.pp-moving{z-index:7;filter:drop-shadow(0 7px 6px #6e483e55)}.pp-moving:after{content:"";position:absolute;top:-120px;left:50%;width:2px;height:116px;background:linear-gradient(transparent,#ffffff88)}
         .pp-hud{position:absolute;z-index:12;top:max(12px,env(safe-area-inset-top));left:12px;right:12px;display:grid;grid-template-columns:1fr auto 1fr;gap:7px;align-items:start}.pp-card{padding:8px 11px;border:1px solid #fff8;border-radius:15px;background:#fff7e8d9;box-shadow:0 8px 20px #75503b22;backdrop-filter:blur(9px)}.pp-card:last-child{text-align:right}.pp-label{display:block;color:#a16c50;font-size:8px;font-weight:900;letter-spacing:1.2px;text-transform:uppercase}.pp-value{font-size:19px;font-weight:950}.pp-level{text-align:center;min-width:84px}.pp-combo{position:absolute;z-index:11;top:12.5%;left:50%;padding:5px 13px;transform:translateX(-50%) scale(.9);border-radius:99px;color:#7d4e15;background:#fff1a7e8;font-size:12px;font-weight:950;opacity:0;transition:150ms}.pp-combo.show{opacity:1;transform:translateX(-50%) scale(1)}.pp-butter-banner{position:absolute;z-index:11;top:18%;left:50%;padding:7px 15px;transform:translateX(-50%);border-radius:99px;color:#7a5818;background:#fff4a4;box-shadow:0 6px 18px #9e6f2744;font-size:12px;font-weight:950;animation:pp-banner .55s ease-in-out infinite alternate}.pp-butter-banner[hidden]{display:none}
+        .pp-syrup{position:absolute;z-index:11;top:23.5%;left:50%;padding:6px 14px;transform:translateX(-50%);border-radius:99px;color:#5e3c0e;background:#ffd98ae8;box-shadow:0 5px 16px #8a5a2044;font-size:12px;font-weight:950;letter-spacing:.6px}.pp-syrup[hidden]{display:none}
+        .pp-tier{position:absolute;z-index:11;top:29%;left:50%;padding:5px 13px;transform:translateX(-50%);border-radius:99px;color:#fff;background:#7c5ccce0;box-shadow:0 5px 16px #4c377f55;font-size:11px;font-weight:950;letter-spacing:.6px}.pp-tier[hidden]{display:none}
+        .pp-endless-note{margin:-8px 0 14px;padding:7px 11px;border-radius:11px;background:#d9c2f099;color:#5b3f8f;font-size:11px;font-weight:900}.pp-endless-note[hidden]{display:none}
         .pp-controls{position:absolute;z-index:14;right:max(10px,env(safe-area-inset-right));bottom:max(10px,env(safe-area-inset-bottom));display:flex;gap:6px}.pp-icon-button{display:grid;width:44px;min-height:44px;aspect-ratio:1;place-items:center;border:1px solid #fff8;border-radius:50%;color:#69493d;background:#fff7e8dc;box-shadow:0 5px 14px #70493b33;font-size:17px;font-weight:900}.pp-drop-hint{position:absolute;z-index:8;right:0;bottom:3%;left:0;color:#fff3d7;font-size:10px;font-weight:950;text-align:center;text-shadow:0 2px 4px #684433;pointer-events:none}
         .pp-particle{--px:50%;--py:50%;--dx:0px;position:absolute;left:var(--px);bottom:var(--py);color:#fff3a0;font-size:18px;font-weight:950;text-shadow:0 2px 5px #714633;animation:pp-pop .75s ease-out forwards}.pp-particle.crumb{width:18px;height:10px;border-radius:50%;color:transparent;background:#d77e3e}.pp-particle.butter{color:#fff4a4;font-size:23px}
         .pp-overlay{position:absolute;z-index:30;inset:0;display:grid;place-items:center;padding:max(24px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));background:#69493d88;backdrop-filter:blur(8px)}.pp-overlay[hidden]{display:none}.pp-panel{width:min(100%,340px);padding:27px 24px 22px;border:1px solid #fff9;border-radius:27px;color:#543b32;background:linear-gradient(145deg,#fffdf0,#ffe0b6);box-shadow:0 22px 65px #59392f66;text-align:center}.pp-hero{font-size:55px}.pp-panel h2{margin:7px 0 8px;font-size:27px;letter-spacing:-.7px}.pp-panel p{margin:0 0 18px;color:#775c50;font-size:13px;line-height:1.5}.pp-tips{display:grid;gap:7px;margin:0 0 18px;text-align:left}.pp-tip{padding:8px 10px;border-radius:11px;background:#edc99588;font-size:11px;font-weight:750}.pp-main-button,.pp-quit-button{width:100%;min-height:49px;border:0;border-radius:16px;color:white;background:linear-gradient(#e89b51,#c96f3e);font:900 14px inherit;box-shadow:0 9px 20px #a45d3944}.pp-quit-button{margin-top:8px;color:#72584c;background:#ecd6b9;box-shadow:none}.pp-result{font-size:35px;font-weight:950}.pp-new-best{color:#c47822;font-size:12px;font-weight:950}
@@ -88,8 +151,8 @@ export class PancakePeakMinigame implements MinigameModule {
       <div class="pp-wall"></div><div class="pp-window"></div><div class="pp-shelf"></div><div class="pp-jar"></div><div class="pp-counter"></div>
       <div class="pp-field" aria-label="Pancake Peak play field"><div class="pp-plate"></div><div class="pp-stack"></div><div class="pp-effects"></div><div class="pp-drop-hint">TAP ANYWHERE TO DROP</div></div>
       <header class="pp-hud"><div class="pp-card"><span class="pp-label">Score</span><strong class="pp-value" data-score>0</strong></div><div class="pp-card pp-level"><span class="pp-label">Stack</span><strong class="pp-value" data-stack>0</strong></div><div class="pp-card"><span class="pp-label">Best</span><strong class="pp-value" data-best>${this.highScore}</strong></div></header>
-      <div class="pp-combo" data-combo>PERFECT ×1</div><div class="pp-butter-banner" data-butter-banner hidden>🧈 BUTTER BONUS +300</div><nav class="pp-controls"><button class="pp-icon-button" data-pause aria-label="Pause">Ⅱ</button><button class="pp-icon-button" data-quit aria-label="Quit">×</button></nav>
-      <div class="pp-overlay" data-tutorial hidden><article class="pp-panel"><div class="pp-hero">🥞</div><span class="pp-label">Endless stacking challenge</span><h2>Pancake Peak</h2><p>Tap to drop each swinging pancake. The overhang is trimmed, so every miss makes your tower narrower.</p><div class="pp-tips"><div class="pp-tip">🎯 Land within 4px for a PERFECT</div><div class="pp-tip">↔ Perfect drops regrow your pancake</div><div class="pp-tip">🔥 Swing speed rises with the stack</div><div class="pp-tip">🧈 Every 10th pancake earns butter</div></div><button class="pp-main-button" data-play>START STACKING!</button><button class="pp-quit-button" data-tutorial-quit>QUIT TUTORIAL</button></article></div>
+      <div class="pp-combo" data-combo>PERFECT ×1</div><div class="pp-butter-banner" data-butter-banner hidden>🧈 BUTTER BONUS +300</div><div class="pp-syrup" data-syrup hidden aria-live="polite">🍯 SYRUP WINDOW +40</div><div class="pp-tier" data-tier hidden>⛰ TALL TOWER +15</div><nav class="pp-controls"><button class="pp-icon-button" data-pause aria-label="Pause">Ⅱ</button><button class="pp-icon-button" data-quit aria-label="Quit">×</button></nav>
+      <div class="pp-overlay" data-tutorial hidden><article class="pp-panel"><div class="pp-hero">🥞</div><span class="pp-label">Endless stacking challenge</span><h2>Pancake Peak</h2><p>Tap anywhere — or press Space — to drop each swinging pancake. The overhang is trimmed, so every miss makes your tower narrower.</p><div class="pp-endless-note" data-endless hidden>⛰ TALL-TOWER TIER UNLOCKED · stacks past 25 swing faster and pay +15</div><div class="pp-tips"><div class="pp-tip">🎯 Land within 4px for a PERFECT · perfect drops regrow your pancake</div><div class="pp-tip">🍯 A syrup window opens every 6 seconds for +40</div><div class="pp-tip">⚖ Off-center weight makes the tower wobble — and tip over</div><div class="pp-tip">🧈 Every 10th pancake earns butter</div></div><button class="pp-main-button" data-play>START STACKING!</button><button class="pp-quit-button" data-tutorial-quit>QUIT TUTORIAL</button></article></div>
       <div class="pp-overlay" data-paused hidden><article class="pp-panel"><div class="pp-hero">☕</div><h2>Brunch break</h2><p>Your wonderfully wobbly stack is staying put.</p><button class="pp-main-button" data-resume>RESUME</button><button class="pp-quit-button" data-pause-quit>QUIT & COLLECT</button></article></div>
       <div class="pp-overlay" data-ended hidden><article class="pp-panel"><div class="pp-hero">🍽️</div><span class="pp-label">Peak score</span><div class="pp-result" data-result>0</div><div class="pp-new-best" data-new-best hidden>NEW HIGH SCORE!</div><p data-summary></p><button class="pp-main-button" data-done>COLLECT REWARDS</button></article></div>
     `;
@@ -112,12 +175,29 @@ export class PancakePeakMinigame implements MinigameModule {
         this.simulation?.drop();
       }
     }, { signal });
+    root.addEventListener("keydown", (event) => {
+      if (!isDropKey(event.key)) return;
+      event.preventDefault();
+      if (!this.running || event.repeat) return;
+      this.session?.markAction();
+      this.simulation?.drop();
+    }, { signal });
     requiredElement<HTMLButtonElement>(root, "[data-play]").addEventListener("click", () => {
       requiredElement<HTMLElement>(root, "[data-tutorial]").hidden = true;
       const runId = this.session?.begin();
       if (!runId) return;
+      const context = this.context;
+      if (context) {
+        this.simulation?.dispose();
+        this.simulation = new PancakePeakSimulation(context.rng, {
+          endlessTier: (this.session?.persistedBest ?? 0) >= TALL_TOWER_BEST_GATE,
+        });
+      }
       this.cosmeticRng = new SeededRng(seedFromRunId(runId));
+      this.collapseReason = null;
       this.running = true;
+      root.focus();
+      this.render();
       this.emitFeedback("go");
     }, { signal });
     requiredElement<HTMLButtonElement>(root, "[data-pause]").addEventListener("click", () => this.pause(), { signal });
@@ -132,12 +212,15 @@ export class PancakePeakMinigame implements MinigameModule {
     const context = this.context;
     const root = this.root;
     if (!context || !root) throw new Error("Mount Pancake Peak before starting");
+    const endlessTier = (this.session?.persistedBest ?? 0) >= TALL_TOWER_BEST_GATE;
     this.simulation?.dispose();
-    this.simulation = new PancakePeakSimulation(context.rng);
+    this.simulation = new PancakePeakSimulation(context.rng, { endlessTier });
     this.ended = false;
     this.notified = false;
     this.running = false;
+    this.collapseReason = null;
     requiredElement<HTMLElement>(root, "[data-tutorial]").hidden = false;
+    requiredElement<HTMLElement>(root, "[data-endless]").hidden = !endlessTier;
     requiredElement<HTMLElement>(root, "[data-paused]").hidden = true;
     requiredElement<HTMLElement>(root, "[data-ended]").hidden = true;
     this.render();
@@ -153,6 +236,7 @@ export class PancakePeakMinigame implements MinigameModule {
     if (this.ended || !this.simulation || !this.root) return;
     requiredElement<HTMLElement>(this.root, "[data-paused]").hidden = true;
     this.running = true;
+    this.root.focus();
     this.emitFeedback("go");
   }
 
@@ -185,7 +269,11 @@ export class PancakePeakMinigame implements MinigameModule {
         banner.dataset.expires = String(this.context.clock.now() + 1_500);
       }
       this.emitFeedback("combo", this.simulation?.snapshot().combo);
-    } else {
+    } else if (event.type === "syrup") {
+      this.addParticle(event.x, event.y, `🍯 +${event.bonus}`, "butter");
+      this.emitFeedback("score");
+    } else if (event.type === "collapsed") {
+      this.collapseReason = event.reason ?? "support";
       this.finishRun("lose");
     }
   }
@@ -227,10 +315,18 @@ export class PancakePeakMinigame implements MinigameModule {
     const combo = requiredElement<HTMLElement>(root, "[data-combo]");
     combo.textContent = `PERFECT ×${snapshot.combo}`;
     combo.classList.toggle("show", snapshot.combo > 0);
+    requiredElement<HTMLElement>(root, "[data-syrup]").hidden = !snapshot.syrupWindow || !this.running;
+    requiredElement<HTMLElement>(root, "[data-tier]").hidden = !snapshot.tallTower;
+    const wobblePx = this.injected?.reducedMotion === true ? 0 : snapshot.wobblePx;
+    const baseY = snapshot.layers[0]?.y ?? 0;
+    const topY = snapshot.layers.at(-1)?.y ?? baseY;
+    const towerHeight = Math.max(1, topY - baseY);
     const visibleLayers = snapshot.layers.filter((layer) => layer.y >= snapshot.cameraBottom - 35);
     stackLayer.innerHTML = visibleLayers.map((layer) => {
       const bottom = (layer.y - snapshot.cameraBottom) / PANCAKE_VIEW_HEIGHT * 100;
-      return `<i class="pp-pancake${layer.perfect ? " perfect" : ""}" style="--x:${layer.x / PANCAKE_WORLD_WIDTH * 100};--bottom:${bottom};--w:${layer.width}">${layer.butter ? '<b class="pp-butter"></b>' : ""}</i>`;
+      const sway = wobblePx * ((layer.y - baseY) / towerHeight);
+      const transform = sway === 0 ? "" : `;transform:translateX(calc(-50% + ${sway.toFixed(2)}px))`;
+      return `<i class="pp-pancake${layer.perfect ? " perfect" : ""}" style="--x:${layer.x / PANCAKE_WORLD_WIDTH * 100};--bottom:${bottom};--w:${layer.width}${transform}">${layer.butter ? '<b class="pp-butter"></b>' : ""}</i>`;
     }).join("") + `<i class="pp-pancake pp-moving" style="--x:${snapshot.moving.x / PANCAKE_WORLD_WIDTH * 100};--bottom:${(snapshot.moving.y - snapshot.cameraBottom) / PANCAKE_VIEW_HEIGHT * 100};--w:${snapshot.moving.width}"></i>`;
   }
 
@@ -251,9 +347,10 @@ export class PancakePeakMinigame implements MinigameModule {
     requiredElement<HTMLElement>(this.root, "[data-ended]").hidden = false;
     requiredElement<HTMLElement>(this.root, "[data-result]").textContent = payout.score.toLocaleString();
     requiredElement<HTMLElement>(this.root, "[data-new-best]").hidden = !isBest;
+    const collapseNote = this.collapseReason === "tipped" ? " · the tower tipped over" : "";
     requiredElement<HTMLElement>(this.root, "[data-summary]").textContent =
       receipt || rewardPending
-        ? `${snapshot?.stackCount ?? 0} pancakes · ${payout.coins} coins · ${payout.xp} XP`
+        ? `${snapshot?.stackCount ?? 0} pancakes · ${payout.coins} coins · ${payout.xp} XP${collapseNote}`
         : "Run left before a drop · no reward";
     if (receipt || rewardPending) this.emitFeedback(outcome === "lose" ? "lose" : "win");
   }
@@ -295,8 +392,8 @@ export class PancakePeakMinigame implements MinigameModule {
 }
 
 export const definition = {
-  id: "pancake-peak",
-  title: "Pancake Peak",
+  id: manifest.id,
+  title: manifest.title.en,
   instructions: "Drop swinging pancakes, trim overhangs, and chain pixel-perfect stacks.",
   create: (): MinigameModule => new PancakePeakMinigame(),
 } as const satisfies MinigameStubDefinition & { readonly create: () => MinigameModule };

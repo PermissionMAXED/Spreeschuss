@@ -256,6 +256,34 @@ function assertRealInputTimeoutPolicy(cityActionsSource, playwrightConfigSource)
   );
 }
 
+const PLAYWRIGHT_SUITE_CONFIGS = [
+  "GOOBY/playwright.config.ts",
+  "GOOBY/src/ui/playwright.config.ts",
+  "GOOBY/src/scenes/city/playwright.config.ts",
+  "GOOBY/src/minigames/bubble-bath-blast/playwright.config.mjs",
+  "GOOBY/src/minigames/cake-atelier/playwright.config.mjs",
+  "GOOBY/src/minigames/carrot-catch/playwright.config.mjs",
+  "GOOBY/src/minigames/shopping-surf/playwright.config.mjs",
+];
+
+/** Every browser suite must own a fresh, unique, fail-fast dev server port. */
+async function assertFreshUniqueBrowserServers() {
+  const portOwners = new Map();
+  for (const relative of PLAYWRIGHT_SUITE_CONFIGS) {
+    const source = await readFile(resolve(repository, relative), "utf8");
+    invariant(
+      !/reuseExistingServer:\s*true/u.test(source),
+      `${relative}: browser suites must never reuse an existing dev server`,
+    );
+    const port = /--port (\d{4,5})\b/u.exec(source)?.[1];
+    invariant(port, `${relative}: suite dev server must pin an explicit --port`);
+    invariant(source.includes("--strictPort"), `${relative}: suite dev server must fail fast on an occupied port`);
+    const owner = portOwners.get(port);
+    invariant(!owner, `${relative}: port ${port} is already claimed by ${owner}`);
+    portOwners.set(port, relative);
+  }
+}
+
 const webFile = await loadWorkflow("gooby-web-ci.yml");
 const iosFile = await loadWorkflow("gooby-ios.yml");
 const web = mapping(parseWorkflowYaml(webFile.source, "gooby-web-ci.yml"), "web workflow");
@@ -269,8 +297,9 @@ assertPathFilters(ios, "iOS workflow");
 assertPinnedActions(webFile.source, "gooby-web-ci.yml");
 assertPinnedActions(iosFile.source, "gooby-ios.yml");
 assertRealInputTimeoutPolicy(cityActionsSource, playwrightConfigSource);
+await assertFreshUniqueBrowserServers();
 
-for (const script of ["root", "ui", "city", "bubble"]) {
+for (const script of ["root", "ui", "city", "bubble", "cake", "surf"]) {
   invariant(
     packageJson.scripts["test:e2e"].includes(`npm run test:e2e:${script}`),
     `test:e2e must aggregate the ${script} browser suite`,
@@ -302,6 +331,8 @@ for (const command of [
   "npm run test:e2e:ui",
   "npm run test:e2e:city",
   "npm run test:e2e:bubble",
+  "npm run test:e2e:cake",
+  "npm run test:e2e:surf",
   "npm run assets:audit",
   "npm run audit:asset-size",
   "npm run audit:no-network",

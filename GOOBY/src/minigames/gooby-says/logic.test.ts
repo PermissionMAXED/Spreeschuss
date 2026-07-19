@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { SeededRng } from "../../core/contracts/rng";
 import {
+  OPPOSITE_POSE,
+  POSE_IDS,
   extendPoseSequence,
+  goobySaysPayout,
+  posesForDifficulty,
+  roundRuleFor,
   shuffledPoseColors,
   verifyPoseInput,
   type PoseId,
@@ -44,7 +49,54 @@ describe("Gooby Says sequence rules", () => {
     const first = shuffledPoseColors(new SeededRng(3));
     const replay = shuffledPoseColors(new SeededRng(3));
     expect(first).toEqual(replay);
-    expect(Object.values(first).sort()).toEqual([0, 1, 2, 3]);
-    expect(first).not.toEqual({ wave: 0, hop: 1, wiggle: 2, clap: 3 });
+    expect(Object.values(first).sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(first).not.toEqual({
+      wave: 0,
+      hop: 1,
+      wiggle: 2,
+      clap: 3,
+      freeze: 4,
+      stretch: 5,
+      curl: 6,
+      stomp: 7,
+    });
+  });
+
+  it("exposes eight distinct poses and scales the active set by difficulty", () => {
+    expect(POSE_IDS).toHaveLength(8);
+    expect(new Set(POSE_IDS).size).toBe(8);
+    expect(posesForDifficulty(1)).toHaveLength(4);
+    expect(posesForDifficulty(2)).toHaveLength(6);
+    expect(posesForDifficulty(3)).toEqual(POSE_IDS);
+  });
+
+  it("uses explicit symmetric opposites only on expert every-third rounds", () => {
+    for (const pose of POSE_IDS) expect(OPPOSITE_POSE[OPPOSITE_POSE[pose]]).toBe(pose);
+    expect(roundRuleFor(2, 3)).toBe("normal");
+    expect(roundRuleFor(3, 2)).toBe("normal");
+    expect(roundRuleFor(3, 3)).toBe("opposite");
+
+    expect(verifyPoseInput(["hop"], 0, "stomp", "opposite")).toEqual({
+      status: "round-complete",
+      nextIndex: 1,
+    });
+    expect(verifyPoseInput(["hop"], 0, "hop", "opposite")).toEqual({
+      status: "mistake",
+      nextIndex: 0,
+      expected: "stomp",
+    });
+  });
+
+  it("keeps practice scores visible while making settlement rewards zero", () => {
+    expect(goobySaysPayout(2_400, 5, true)).toEqual({
+      score: 2_400,
+      coins: 0,
+      xp: 0,
+    });
+    expect(goobySaysPayout(2_400, 5, false)).toEqual({
+      score: 2_400,
+      coins: 10,
+      xp: 23,
+    });
   });
 });

@@ -38,12 +38,22 @@ function hazardRng(): ScriptedRng {
   return new ScriptedRng([4 / CP_STUB_PAD_COUNT, 0]);
 }
 
+/** Expansion flagships shipped as complete specialist builds (no stub marker). */
+const SPECIALIST_EXPANSION_IDS = ["cake-atelier", "shopping-surf"] as const;
+
 describe("CP1 expansion modules", () => {
-  it("exposes a playable module and dev-stub manifest for all twelve new ids", () => {
+  it("exposes a playable module and final manifest for all twelve new ids", () => {
     expect(EXPANSION_MINIGAME_IDS).toHaveLength(12);
     for (const id of EXPANSION_MINIGAME_IDS) {
       const manifest = MINIGAME_MANIFESTS.get(id);
-      expect(manifest?.dev).toEqual({ cpStub: true, checkpoint: "CP1" });
+      if ((SPECIALIST_EXPANSION_IDS as readonly string[]).includes(id)) {
+        expect(manifest?.dev, `${id} shipped final and must not carry stub metadata`).toBeUndefined();
+      } else {
+        expect(manifest?.dev, `${id} must carry stub metadata`).toEqual({
+          cpStub: true,
+          checkpoint: "CP1",
+        });
+      }
       expect(manifest?.stage3d).toBe(false);
       expect(manifest?.unlockLevel).toBe(1);
       const module = MINIGAME_REGISTRY.get(id)?.();

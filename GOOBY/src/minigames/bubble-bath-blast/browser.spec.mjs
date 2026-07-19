@@ -155,19 +155,33 @@ async function verifyDisposal(page, expectedFinishes = 1) {
   });
 }
 
-test("Bubble keeps a 120ms mobile touch target stable across render ticks", async ({ page, context }) => {
+test("Bubble keeps a real 120ms touch stable and pops the same-symbol chain", async ({ page, context }) => {
   await installGame(page, BUBBLE_MODULE, "createBubbleBathBlast", 41);
   await page.getByRole("button", { name: "START SPLASHING" }).click();
-  await configureBubbleField(page, [{
-    id: 101,
-    kind: "bubble",
-    color: "coral",
-    x: 50,
-    y: 45,
-    radius: 7,
-    speed: 0,
-    bornAt: 1_000_000,
-  }]);
+  await configureBubbleField(page, [
+    {
+      id: 101,
+      kind: "bubble",
+      color: "coral",
+      symbol: "star",
+      x: 50,
+      y: 45,
+      radius: 7,
+      speed: 0,
+      bornAt: 1_000_000,
+    },
+    {
+      id: 102,
+      kind: "bubble",
+      color: "mint",
+      symbol: "star",
+      x: 60,
+      y: 45,
+      radius: 7,
+      speed: 0,
+      bornAt: 1_000_000,
+    },
+  ]);
 
   const bubble = page.locator('[data-bubble="101"]');
   const bounds = await bubble.boundingBox();
@@ -182,9 +196,40 @@ test("Bubble keeps a 120ms mobile touch target stable across render ticks", asyn
   ))).toBe(true);
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 
-  await expect(page.locator("[data-score]")).toHaveText("35");
+  await expect(page.locator("[data-score]")).toHaveText("70");
   await expect(bubble).toHaveCount(0);
+  await expect(page.locator('[data-bubble="102"]')).toHaveCount(0);
   expect(await page.evaluate(() => window.__minigamePackTest.audioEvents.map(([action]) => action))).toContain("hit");
+});
+
+test("Bubble rubber duck scores in untimed Zen and settles half rewards", async ({ page }) => {
+  await installGame(page, BUBBLE_MODULE, "createBubbleBathBlast", 45);
+  await page.getByRole("button", { name: /ZEN · NO TIMER/u }).click();
+  await stopLoop(page);
+  await configureBubbleField(page, [{
+    id: 103,
+    kind: "duck",
+    color: "sun",
+    symbol: "sun",
+    x: 50,
+    y: 45,
+    radius: 7,
+    speed: 0,
+    bornAt: 1_000_000,
+  }]);
+
+  await page.getByRole("button", { name: "Rubber duck bonus, 500 points" }).click();
+  await expect(page.locator("[data-time]")).toHaveText("∞ ZEN");
+  await expect(page.locator("[data-score]")).toHaveText("500");
+  expect(await page.evaluate(() => window.__minigamePackTest.game.payout())).toEqual({
+    score: 500,
+    coins: 1,
+    xp: 2,
+  });
+  await page.getByRole("button", { name: "Pause" }).click();
+  await page.getByRole("button", { name: "QUIT & KEEP SCORE" }).click();
+  await expect(page.locator("[data-result-reward]")).toContainText("Zen half payout");
+  expect(await page.evaluate(() => window.__minigamePackTest.settlements.size)).toBe(1);
 });
 
 test("Bubble renders redundant shape, pattern, visible label, and accessible label cues", async ({ page }) => {

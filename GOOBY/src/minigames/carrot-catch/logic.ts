@@ -4,7 +4,21 @@ import type { RandomSource } from "../../core/contracts/rng";
 export const CARROT_CATCH_DURATION_SECONDS = 75;
 export const CARROT_CATCH_FIXED_STEP_SECONDS = 1 / 120;
 
-export type CatchItemKind = "carrot" | "golden" | "rotten";
+/** Every 20 clean catches opens a golden frenzy that doubles positive points. */
+export const GOLDEN_FRENZY_SECONDS = 4;
+export const GOLDEN_FRENZY_MULTIPLIER = 2;
+
+/** Catching an umbrella widens the basket for a few forgiving seconds. */
+export const UMBRELLA_SECONDS = 6;
+export const BASKET_HALF_WIDTH = 0.18;
+export const UMBRELLA_BASKET_HALF_WIDTH = 0.27;
+const UMBRELLA_CHANCE = 0.022;
+
+/** Wind gusts only start blowing once the run reaches its higher level. */
+export const WIND_START_SECONDS = 30;
+export const WIND_GUST_PERIOD_SECONDS = 8;
+
+export type CatchItemKind = "carrot" | "golden" | "rotten" | "umbrella";
 
 export interface CatchItem {
   readonly id: number;
@@ -19,6 +33,7 @@ export type CatchEvent =
   | { readonly type: "caught"; readonly kind: CatchItemKind; readonly x: number; readonly y: number; readonly points: number }
   | { readonly type: "missed"; readonly kind: CatchItemKind; readonly x: number }
   | { readonly type: "bonus-wave" }
+  | { readonly type: "gust"; readonly direction: 1 | -1 }
   | { readonly type: "finished" };
 
 export interface CarrotCatchSnapshot {
@@ -29,11 +44,39 @@ export interface CarrotCatchSnapshot {
   readonly bestCombo: number;
   readonly catches: number;
   readonly basketX: number;
+  readonly basketHalfWidth: number;
   readonly bonusWaveSeconds: number;
+  readonly umbrellaSeconds: number;
+  readonly windX: number;
   readonly difficulty: ReturnType<typeof carrotCatchDifficulty>;
   readonly items: readonly CatchItem[];
   readonly finished: boolean;
   readonly disposed: boolean;
+}
+
+/**
+ * Deterministic wind schedule: calm until `WIND_START_SECONDS`, then gust
+ * cycles that alternate direction each period and swell toward the finale.
+ * A pure function of the fixed-step clock so every frame partition agrees.
+ */
+export function carrotCatchWind(elapsedSeconds: number): number {
+  if (elapsedSeconds < WIND_START_SECONDS) return 0;
+  const blowing = elapsedSeconds - WIND_START_SECONDS;
+  const progress = Math.min(
+    1,
+    blowing / (CARROT_CATCH_DURATION_SECONDS - WIND_START_SECONDS),
+  );
+  const strength = 0.05 + progress * 0.09;
+  const cycle = Math.floor(blowing / WIND_GUST_PERIOD_SECONDS);
+  const phase = (blowing % WIND_GUST_PERIOD_SECONDS) / WIND_GUST_PERIOD_SECONDS;
+  const direction = cycle % 2 === 0 ? 1 : -1;
+  return direction * strength * Math.sin(phase * Math.PI);
+}
+
+/** Zero-based gust cycle index, or null while the air is still calm. */
+export function windGustCycle(elapsedSeconds: number): number | null {
+  if (elapsedSeconds < WIND_START_SECONDS) return null;
+  return Math.floor((elapsedSeconds - WIND_START_SECONDS) / WIND_GUST_PERIOD_SECONDS);
 }
 
 export function carrotCatchDifficulty(elapsedSeconds: number): {
@@ -54,6 +97,7 @@ export function scoreCaughtItem(kind: CatchItemKind, comboBefore: number): {
   readonly nextCombo: number;
 } {
   if (kind === "rotten") return { points: -30, nextCombo: 0 };
+  if (kind === "umbrella") return { points: 25, nextCombo: comboBefore };
   const nextCombo = comboBefore + 1;
   const multiplier = Math.min(5, 1 + Math.floor(nextCombo / 5));
   return {
@@ -81,6 +125,8 @@ export class CarrotCatchSimulation {
   private catches = 0;
   private basketX = 0.5;
   private bonusWaveSeconds = 0;
+  private umbrellaSeconds = 0;
+  private lastGustCycle: number | null = null;
   private spawnIn = 0.15;
   private nextId = 1;
   private items: CatchItem[] = [];
@@ -88,11 +134,21 @@ export class CarrotCatchSimulation {
   private finished = false;
   private disposed = false;
 
-  public constructor(private readonly rng: RandomSource) {}
+  private readonly rng: RandomSource;
+
+  public constructor(rng: RandomSource) {
+    this.rng = rng;
+  }
 
   public moveBasket(normalizedX: number): void {
     if (this.disposed) return;
     this.basketX = Math.min(0.88, Math.max(0.12, normalizedX));
+  }
+
+  /** Relative nudge used by held keyboard input; clamps like `moveBasket`. */
+  public moveBasketBy(deltaNormalized: number): void {
+    if (this.disposed || !Number.isFinite(deltaNormalized)) return;
+    this.moveBasket(this.basketX + deltaNormalized);
   }
 
   public update(deltaSeconds: number): void {
@@ -116,7 +172,14 @@ export class CarrotCatchSimulation {
       this.ticks * CARROT_CATCH_FIXED_STEP_SECONDS,
     );
     this.bonusWaveSeconds = Math.max(0, this.bonusWaveSeconds - deltaSeconds);
+    this.umbrellaSeconds = Math.max(0, this.umbrellaSeconds - deltaSeconds);
     this.spawnIn -= deltaSeconds;
+
+    const gustCycle = windGustCycle(this.elapsed);
+    if (gustCycle !== null && gustCycle !== this.lastGustCycle) {
+      this.lastGustCycle = gustCycle;
+      this.events.push({ type: "gust", direction: gustCycle % 2 === 0 ? 1 : -1 });
+    }
 
     if (this.spawnIn <= 0) {
       this.spawnItem();
@@ -124,15 +187,23 @@ export class CarrotCatchSimulation {
       this.spawnIn += this.bonusWaveSeconds > 0 ? Math.min(0.18, difficulty.spawnInterval * 0.48) : difficulty.spawnInterval;
     }
 
+    const wind = carrotCatchWind(this.elapsed);
+    const basketHalfWidth = this.basketHalfWidth();
     const nextItems: CatchItem[] = [];
     for (const item of this.items) {
       const nextY = item.y + item.velocity * deltaSeconds;
-      const moved = { ...item, y: nextY, spin: item.spin + deltaSeconds * (item.kind === "golden" ? 250 : 150) };
-      const inBasket = item.y < 0.88 && nextY >= 0.88 && Math.abs(item.x - this.basketX) <= 0.18;
+      const nextX = Math.min(0.96, Math.max(0.04, item.x + wind * deltaSeconds));
+      const moved = {
+        ...item,
+        x: nextX,
+        y: nextY,
+        spin: item.spin + deltaSeconds * (item.kind === "golden" ? 250 : 150),
+      };
+      const inBasket = item.y < 0.88 && nextY >= 0.88 && Math.abs(item.x - this.basketX) <= basketHalfWidth;
       if (inBasket) {
         this.catchItem(moved);
       } else if (nextY > 1.08) {
-        if (item.kind !== "rotten") this.combo = 0;
+        if (item.kind === "carrot" || item.kind === "golden") this.combo = 0;
         this.events.push({ type: "missed", kind: item.kind, x: item.x });
       } else {
         nextItems.push(moved);
@@ -146,6 +217,10 @@ export class CarrotCatchSimulation {
     }
   }
 
+  private basketHalfWidth(): number {
+    return this.umbrellaSeconds > 0 ? UMBRELLA_BASKET_HALF_WIDTH : BASKET_HALF_WIDTH;
+  }
+
   private spawnItem(): void {
     const difficulty = carrotCatchDifficulty(this.elapsed);
     const roll = this.rng.next();
@@ -153,9 +228,11 @@ export class CarrotCatchSimulation {
       ? "golden"
       : roll < 0.07
         ? "golden"
-        : roll < 0.07 + difficulty.rottenChance
-          ? "rotten"
-          : "carrot";
+        : roll < 0.07 + UMBRELLA_CHANCE
+          ? "umbrella"
+          : roll < 0.07 + UMBRELLA_CHANCE + difficulty.rottenChance
+            ? "rotten"
+            : "carrot";
     const velocityJitter = 0.88 + this.rng.next() * 0.24;
     this.items.push({
       id: this.nextId,
@@ -170,17 +247,20 @@ export class CarrotCatchSimulation {
 
   private catchItem(item: CatchItem): void {
     const result = scoreCaughtItem(item.kind, this.combo);
-    this.score = Math.max(0, this.score + result.points);
+    const frenzied = this.bonusWaveSeconds > 0 && result.points > 0;
+    const points = result.points * (frenzied ? GOLDEN_FRENZY_MULTIPLIER : 1);
+    this.score = Math.max(0, this.score + points);
     this.combo = result.nextCombo;
     this.bestCombo = Math.max(this.bestCombo, this.combo);
-    if (item.kind !== "rotten") {
+    if (item.kind === "umbrella") this.umbrellaSeconds = UMBRELLA_SECONDS;
+    if (item.kind === "carrot" || item.kind === "golden") {
       this.catches += 1;
       if (this.catches % 20 === 0) {
-        this.bonusWaveSeconds = 4;
+        this.bonusWaveSeconds = GOLDEN_FRENZY_SECONDS;
         this.events.push({ type: "bonus-wave" });
       }
     }
-    this.events.push({ type: "caught", kind: item.kind, x: item.x, y: item.y, points: result.points });
+    this.events.push({ type: "caught", kind: item.kind, x: item.x, y: item.y, points });
   }
 
   public drainEvents(): readonly CatchEvent[] {
@@ -202,7 +282,10 @@ export class CarrotCatchSimulation {
       bestCombo: this.bestCombo,
       catches: this.catches,
       basketX: this.basketX,
+      basketHalfWidth: this.basketHalfWidth(),
       bonusWaveSeconds: this.bonusWaveSeconds,
+      umbrellaSeconds: this.umbrellaSeconds,
+      windX: carrotCatchWind(this.elapsed),
       difficulty: carrotCatchDifficulty(this.elapsed),
       items: this.items,
       finished: this.finished,

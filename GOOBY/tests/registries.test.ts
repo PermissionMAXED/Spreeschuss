@@ -125,11 +125,16 @@ describe("frozen registries", () => {
     }
   });
 
-  it("marks exactly the twelve expansion manifests as CP1 dev stubs", () => {
+  it("marks exactly the ten unshipped expansion manifests as CP1 dev stubs", () => {
+    const specialistExpansionIds = ["cake-atelier", "shopping-surf"] as const;
     for (const id of LAUNCH_MINIGAME_IDS) {
       expect(MINIGAME_MANIFESTS.get(id)?.dev, `${id} must not carry stub metadata`).toBeUndefined();
     }
+    for (const id of specialistExpansionIds) {
+      expect(MINIGAME_MANIFESTS.get(id)?.dev, `${id} must not carry stub metadata`).toBeUndefined();
+    }
     for (const id of EXPANSION_MINIGAME_IDS) {
+      if ((specialistExpansionIds as readonly string[]).includes(id)) continue;
       expect(MINIGAME_MANIFESTS.get(id)?.dev, `${id} must carry stub metadata`).toEqual({
         cpStub: true,
         checkpoint: "CP1",

@@ -172,7 +172,33 @@ const PERF_LIMITS = {
     maxDrawCallsP95: 1,
     maxTrianglesP95: 1,
   },
+  "minigame:cake-atelier:orders": {
+    samples: MAIN_SCENE_SAMPLES,
+    timing: {
+      swiftshader: {
+        minimumCalibrationRatio: 0.8,
+        minimumP95CalibrationRatio: (1_000 / 60) / 25,
+        absoluteMinFps: 30,
+        referenceAbsoluteLimits: { minFps: 48, maxP95Ms: 25 },
+      },
+      hardware: { minFps: 52, maxP95Ms: 22 },
+    },
+    maxDrawCallsP95: 1,
+    maxTrianglesP95: 1,
+  },
 };
+// Shopping Surf renders through its own Stage3D lease renderer, which the
+// in-app probe (main renderer only) cannot see. The audit measures the live
+// module in its harness with the real rAF loop and asserts the specialist
+// budget: ≥30 FPS, p95 ≤42ms, ≤70 draw calls, and a leak-neutral lease.
+const SURF_MODULE_BUDGET = Object.freeze({
+  harnessPage: "/src/minigames/shopping-surf/harness.html",
+  minSampledFrames: 60,
+  minFps: 30,
+  maxP95FrameMs: 42,
+  maxDrawCalls: 70,
+  sampleWindowMs: 6_000,
+});
 const LEAK_LIMITS = {
   geometries: { maxSlope: 0.25, maxFinalGrowth: 2, maxPeakGrowth: 4 },
   textures: { maxSlope: 0.15, maxFinalGrowth: 1, maxPeakGrowth: 2 },
@@ -401,6 +427,184 @@ async function runThreeCalibration(page, attempt) {
   };
 }
 
+async function measureSurfModuleBudget(page) {
+  const budget = SURF_MODULE_BUDGET;
+  await page.goto(`${baseUrl}${budget.harnessPage}`, { waitUntil: "networkidle" });
+  // Warm the module graph so a cold Vite dep-optimization reload cannot
+  // destroy the evaluation context mid-install.
+  await page
+    .evaluate(async () => {
+      await import("/src/minigames/shopping-surf/index.ts");
+    })
+    .catch(() => undefined);
+  await page.goto(`${baseUrl}${budget.harnessPage}`, { waitUntil: "networkidle" });
+  await page.evaluate(async () => {
+    document.body.replaceChildren();
+    Object.assign(document.body.style, {
+      margin: "0",
+      width: "100vw",
+      height: "100vh",
+      overflow: "hidden",
+    });
+    const mount = document.createElement("main");
+    Object.assign(mount.style, { width: "100%", height: "100%", position: "relative" });
+    document.body.append(mount);
+
+    const gameModule = await import("/src/minigames/shopping-surf/index.ts");
+    const { SeededRng } = await import("/src/core/contracts/rng.ts");
+    const { createMinigameLifecycle } = await import("/src/core/contracts/minigame.ts");
+
+    // Warm the shared Stage3D renderer once: three.js allocates a single
+    // renderer-lifetime internal texture on the first lit-material render.
+    // Folding it into the pre-lease baseline keeps the lease deltas exact.
+    {
+      const stage = await import("/src/render/stage3d/index.ts");
+      const three = await import("/@id/three");
+      const warm = stage.acquireStage3d(mount, { clock: { now: () => 0 } });
+      warm.scene.add(new three.AmbientLight(0xffffff, 1));
+      warm.scene.add(
+        new three.Mesh(
+          new three.BoxGeometry(1, 1, 1),
+          new three.MeshStandardMaterial({ color: 0xffffff }),
+        ),
+      );
+      warm.renderOnce();
+      warm.release();
+    }
+
+    const game = gameModule.createMinigame();
+    const settlements = new Map();
+    let now = 1_000_000;
+    let previousFrame = performance.now();
+    let frame = 0;
+    let loopRunning = true;
+    const clock = { now: () => now };
+    const lifecycle = createMinigameLifecycle(
+      game.id,
+      clock,
+      {
+        getBestScore: () => 0,
+        getSettlement: (runId) => settlements.get(runId) ?? null,
+        settle: (receipt) => {
+          const previous = settlements.get(receipt.runId);
+          if (previous) return previous;
+          settlements.set(receipt.runId, receipt);
+          return receipt;
+        },
+      },
+      { emit: () => undefined },
+    );
+
+    game.mount({
+      clock,
+      rng: new SeededRng(4_519),
+      mount,
+      lifecycle,
+      audio: { emit: () => undefined },
+      haptics: { impact: () => undefined },
+      bestScore: 0,
+      reducedMotion: false,
+      finish: () => undefined,
+    });
+    game.start();
+
+    const loop = (frameAt) => {
+      if (!loopRunning) return;
+      const delta = Math.min(0.1, Math.max(0, (frameAt - previousFrame) / 1_000));
+      previousFrame = frameAt;
+      now += delta * 1_000;
+      game.update(delta);
+      frame = requestAnimationFrame(loop);
+    };
+    frame = requestAnimationFrame(loop);
+    window.__surfPerfAudit = {
+      game,
+      dispose() {
+        loopRunning = false;
+        cancelAnimationFrame(frame);
+        game.dispose();
+      },
+    };
+  });
+
+  const next = page.getByRole("button", { name: "Next" });
+  while (await next.isVisible()) await next.click();
+  await page.getByRole("button", { name: "Start round" }).click();
+  await page.getByRole("button", { name: "Skip warm-up" }).click();
+  await page.waitForFunction(
+    () => Reflect.get(window.__surfPerfAudit.game, "phase") === "running",
+    undefined,
+    { timeout: 15_000 },
+  );
+
+  // Keep the ride alive regardless of obstacles while sampling.
+  const keepAlive = setInterval(() => {
+    void page.evaluate(() => {
+      const state = Reflect.get(window.__surfPerfAudit.game, "state");
+      if (!state) return;
+      state.bumps = 0;
+      state.shields = 3;
+      if (state.phase === "ending") {
+        state.phase = "running";
+        state.endReason = null;
+        state.endTimer = 0;
+      }
+      state.finishZ = 1_000_000;
+    }).catch(() => undefined);
+  }, 500);
+  await page.waitForTimeout(budget.sampleWindowMs);
+  clearInterval(keepAlive);
+
+  const outcome = await page.evaluate(() => {
+    const scene = Reflect.get(window.__surfPerfAudit.game, "scene");
+    const perf = window.__surfPerfAudit.game.perfSnapshot();
+    const liveDelta = scene?.resourceDelta() ?? null;
+    window.__surfPerfAudit.dispose();
+    return {
+      perf,
+      hadScene: scene !== null,
+      liveDelta,
+      releasedDelta: scene?.resourceDelta() ?? null,
+    };
+  });
+  invariant(outcome.hadScene, "Surf module budget: the Stage3D scene never mounted");
+  invariant(
+    outcome.perf.frames > budget.minSampledFrames,
+    `Surf module budget: only ${outcome.perf.frames} frames were sampled`
+      + ` (minimum ${budget.minSampledFrames})`,
+  );
+  invariant(
+    outcome.perf.fps >= budget.minFps,
+    `Surf module budget: ${outcome.perf.fps.toFixed(1)} FPS is below ${budget.minFps}`,
+  );
+  invariant(
+    outcome.perf.p95FrameMs <= budget.maxP95FrameMs,
+    `Surf module budget: ${outcome.perf.p95FrameMs.toFixed(1)}ms p95 exceeds ${budget.maxP95FrameMs}ms`,
+  );
+  invariant(
+    outcome.perf.drawCalls > 0 && outcome.perf.drawCalls <= budget.maxDrawCalls,
+    `Surf module budget: ${outcome.perf.drawCalls} draw calls outside (0, ${budget.maxDrawCalls}]`,
+  );
+  invariant(
+    outcome.liveDelta !== null && outcome.liveDelta.geometries > 0,
+    "Surf module budget: the live scene never allocated tracked resources",
+  );
+  invariant(
+    outcome.releasedDelta !== null
+      && outcome.releasedDelta.geometries === 0
+      && outcome.releasedDelta.textures === 0
+      && outcome.releasedDelta.programs === 0,
+    `Surf module budget: lease release left ${JSON.stringify(outcome.releasedDelta)}`,
+  );
+  console.log(
+    `Surf module budget: ${outcome.perf.fps.toFixed(1)} FPS, `
+      + `${outcome.perf.p95FrameMs.toFixed(1)}ms p95, `
+      + `${outcome.perf.drawCalls} draws, ${outcome.perf.triangles} triangles, `
+      + `${outcome.perf.frames} frames; lease released leak-neutral`,
+  );
+  return { budget, ...outcome };
+}
+
 async function collectSnapshot(page, label, minimumSamples) {
   await page.evaluate(() => window.__gooby.perf.controls.resetRollingMetrics());
   await page.waitForFunction(
@@ -526,6 +730,13 @@ async function startMinigame(page, game) {
   await page.locator(`[data-minigame="${game}"]`).waitFor({ state: "visible" });
 }
 
+/** Clicks through a shared Arcade Kit tutorial overlay with real input. */
+async function completeArcadeTutorial(root) {
+  const next = root.getByRole("button", { name: "Next" });
+  while (await next.isVisible()) await next.click();
+  await root.getByRole("button", { name: "Start round" }).click();
+}
+
 async function prepareMinigame(page, game) {
   const root = page.locator(`[data-minigame="${game}"]`);
   if (game === "delivery-dash") {
@@ -544,6 +755,17 @@ async function prepareMinigame(page, game) {
     await root.locator('[data-action="play"]').click();
   } else if (game === "bubble-bath-blast") {
     await root.locator('[data-action="begin"]').click();
+  } else if (game === "cake-atelier") {
+    await completeArcadeTutorial(root);
+    await root.locator('[data-ca-action="mode-orders"]').click();
+    // The Arcade Kit countdown runs about three real seconds before the
+    // flavor controls (the steady scored-orders workload) appear.
+    await root.locator('[data-ca-action^="flavor:"]').first()
+      .waitFor({ state: "visible", timeout: 20_000 });
+  } else if (game === "shopping-surf") {
+    await completeArcadeTutorial(root);
+    await root.getByRole("button", { name: "Skip warm-up" }).click();
+    await root.locator(".ss-countdown").waitFor({ state: "visible", timeout: 15_000 });
   }
   await page.waitForTimeout(250);
 }
@@ -650,6 +872,7 @@ const tierMeasurements = {};
 const qualityApplication = {};
 const leakSamples = [];
 let identityProbe = null;
+let surfModuleBudget = null;
 let calibration = {
   status: "not-started",
   workload: THREE_CALIBRATION,
@@ -735,6 +958,8 @@ try {
       + `${THREE_CALIBRATION.materialFamilies} program families, `
       + `${THREE_CALIBRATION.trials}x${THREE_CALIBRATION.samplesPerTrial} samples`,
   );
+
+  surfModuleBudget = await measureSurfModuleBudget(page);
 
   await page.goto(`${baseUrl}/?perf=1`, { waitUntil: "networkidle" });
   await page.evaluate(() => localStorage.clear());
@@ -857,6 +1082,7 @@ try {
     ["delivery-dash", "minigame:delivery-dash:express"],
     ["pond-fishing", "minigame:pond-fishing:legend"],
     ["rhythm-hop", "minigame:rhythm-hop:hard"],
+    ["cake-atelier", "minigame:cake-atelier:orders"],
   ];
   for (const [game, label] of measuredGames) {
     await startMinigame(page, game);
@@ -872,9 +1098,14 @@ try {
     );
     await exitMinigame(page);
   }
-  await startMinigame(page, "bubble-bath-blast");
-  await prepareMinigame(page, "bubble-bath-blast");
-  await exitMinigame(page);
+  // Warm bubble and surf once before the leak baseline: surf's first mount
+  // creates the manager-cached Stage3D renderer, a deliberate one-time
+  // allocation that must fold into the baseline, not the leak trend.
+  for (const game of ["bubble-bath-blast", "shopping-surf"]) {
+    await startMinigame(page, game);
+    await prepareMinigame(page, game);
+    await exitMinigame(page);
+  }
 
   for (const zone of ["kitchen", "bathroom", "bedroom", "garden"]) {
     await visitHomeZone(page, zone);
@@ -887,7 +1118,16 @@ try {
   await page.evaluate(() => window.__gooby.perf.controls.markResourceBaseline());
   leakSamples.push(await leakCheckpoint(page, cdp, 0));
   const cycleZones = ["garden", "kitchen", "bathroom", "bedroom"];
-  const cycleGames = ["delivery-dash", "pond-fishing", "rhythm-hop", "bubble-bath-blast"];
+  // Mixed DOM-canvas and Stage3D-lease games interleave through the same
+  // home transitions, so the leak trend covers 2D/3D lease hand-offs.
+  const cycleGames = [
+    "delivery-dash",
+    "shopping-surf",
+    "pond-fishing",
+    "cake-atelier",
+    "rhythm-hop",
+    "bubble-bath-blast",
+  ];
   for (let index = 0; index < LEAK_CYCLES; index += 1) {
     await visitHomeZone(page, cycleZones[index % cycleZones.length]);
     await goHome(page);
@@ -1004,8 +1244,14 @@ try {
         "Delivery Dash repaints a full-resolution 2D city canvas and traffic every frame.",
         "Pond Fishing runs the largest animated Shadow DOM water/fish surface.",
         "Rhythm Hop animates timestamped hard-mode notes across three lanes.",
+        "Cake Atelier repaints the full 2.5D bakery counter canvas every frame in scored orders mode.",
+        "Shopping Surf renders the pooled three-lane market course through its Stage3D lease; its draw-call budget is asserted against the live module harness.",
       ],
-      performanceLimits: PERF_LIMITS,
+      performanceLimits: {
+        ...PERF_LIMITS,
+        "minigame:shopping-surf:module": SURF_MODULE_BUDGET,
+      },
+      surfModuleBudget,
       measurements,
       tierMeasurements,
       qualityApplication,

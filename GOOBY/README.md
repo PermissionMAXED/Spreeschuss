@@ -27,7 +27,7 @@ Requires Node 22 (see `.nvmrc`).
 | Asset audit | `npm run assets:audit` |
 | Native input check | `npm run build && npx cap sync ios && npm run ci:native-check` |
 
-Playwright owns port `4519`; normal Vite development uses `5173`.
+Every Playwright suite owns a fresh, unique, strict dev-server port (root `4519`, UI `4520`, Surf `4522`, Carrot `4523`, Bubble `4524`, Cake `4525`, City `4547`); suites never reuse an existing server. Normal Vite development uses `5173`.
 
 ## Architecture
 

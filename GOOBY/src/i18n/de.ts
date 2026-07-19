@@ -246,12 +246,12 @@ export const DE_MINIGAME_COPY: Readonly<Record<MinigameId, MinigameCopy>> = {
   "bunny-hop": {
     title: "Hasenhüpfer",
     icon: "🐾",
-    instructions: "Springe im richtigen Moment und lande auf den weichen Trittsteinen.",
+    instructions: "Steuere jeden automatischen Sprung und klettere von der Wiese bis ins Weltall.",
   },
   "pancake-peak": {
     title: "Pfannkuchengipfel",
     icon: "🥞",
-    instructions: "Balanciere einen herrlich wackeligen Pfannkuchenturm.",
+    instructions: "Lass schwingende Pfannkuchen fallen und balanciere einen herrlich wackeligen Turm.",
   },
   "bubble-bath-blast": {
     title: "Schaumbad-Spaß",

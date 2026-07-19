@@ -1,23 +1,70 @@
 import type {
   MinigameContext,
+  MinigameManifest,
   MinigameModule,
   MinigamePayout,
 } from "../../core/contracts/minigame";
+import { validateMinigameManifest } from "../../core/contracts/minigame";
 import type { HapticPattern } from "../../core/contracts/platform";
+import { PauseGate } from "../shared";
 import type { MinigameStubDefinition } from "../stub";
 import {
   INITIAL_SORT_STATE,
   activateReverseFrenzy,
   applySort,
+  conveyorSpeedAt,
+  sortItemCategories,
+  sortWindowAt,
+  veggiePayout,
   type SortDirection,
   type SortItem,
   type SortState,
 } from "./logic";
 
-export const definition = {
+export const manifest: MinigameManifest = validateMinigameManifest({
   id: "veggie-sort",
-  title: "Veggie Sort",
-  instructions: "Swipe vegetables left, fruit right, and non-food up before three mistakes.",
+  title: { en: "Veggie Sort", de: "Gemüsesortieren" },
+  instructions: {
+    en: "Sort colorful vegetables into the matching baskets.",
+    de: "Sortiere buntes Gemüse in die passenden Körbe.",
+  },
+  icon: "🥬",
+  category: "puzzle",
+  stage3d: false,
+  unlockLevel: 3,
+  audioCues: ["go", "hit", "miss", "combo", "countdown", "score", "win"],
+  tutorial: [
+    {
+      icon: "↔",
+      title: { en: "Sort the market", de: "Sortiere den Markt" },
+      body: {
+        en: "Send vegetables left, fruit right, and non-food up. Arrow keys and swipes both work.",
+        de: "Schicke Gemüse nach links, Obst nach rechts und Nicht-Essbares nach oben. Pfeiltasten und Wischen funktionieren.",
+      },
+    },
+    {
+      icon: "📦",
+      title: { en: "Mixed crates fit twice", de: "Gemischte Kisten passen doppelt" },
+      body: {
+        en: "A mixed crate shows two categories and may enter either matching bin.",
+        de: "Eine gemischte Kiste zeigt zwei Kategorien und passt in beide passenden Behälter.",
+      },
+    },
+    {
+      icon: "★",
+      title: { en: "Earn market stars", de: "Sammle Marktsterne" },
+      body: {
+        en: "Every five correct sorts in a row awards a market star. Misdrops are gentle but reset the streak.",
+        de: "Je fünf richtige Sortierungen in Folge bringen einen Marktstern. Fehlwürfe sind sanft, setzen aber die Serie zurück.",
+      },
+    },
+  ],
+});
+
+export const definition = {
+  id: manifest.id,
+  title: manifest.title.en,
+  instructions: manifest.instructions.en,
   create: (): MinigameModule => new VeggieSortGame(),
 } as const satisfies MinigameStubDefinition & { readonly create: () => MinigameModule };
 
@@ -55,6 +102,20 @@ const ITEMS: readonly SortItem[] = [
   { id: "soap", label: "Soap", emoji: "🧼", category: "nonfood" },
   { id: "book", label: "Book", emoji: "📕", category: "nonfood" },
   { id: "boot", label: "Boot", emoji: "🥾", category: "nonfood" },
+  {
+    id: "veg-fruit-mix",
+    label: "Veg + Fruit",
+    emoji: "🥕🍎",
+    category: "vegetable",
+    categories: ["vegetable", "fruit"],
+  },
+  {
+    id: "fruit-display-mix",
+    label: "Fruit + Display",
+    emoji: "🍐📕",
+    category: "fruit",
+    categories: ["fruit", "nonfood"],
+  },
 ] as const;
 
 export class VeggieSortGame implements MinigameModule {
@@ -80,6 +141,8 @@ export class VeggieSortGame implements MinigameModule {
   private actionsTaken = 0;
   private finished = false;
   private pointerStart: { x: number; y: number; at: number } | null = null;
+  private activeSeconds = 0;
+  private readonly pauseGate = new PauseGate();
 
   mount(context: MinigameContext): void {
     if (this.phase !== "unmounted" && this.phase !== "disposed") this.dispose();
@@ -90,12 +153,14 @@ export class VeggieSortGame implements MinigameModule {
     const root = document.createElement("section");
     root.className = "veggie-sort";
     root.dataset.minigame = this.id;
+    root.tabIndex = 0;
     if (sharedContext.reducedMotion) root.dataset.reducedMotion = "true";
     root.innerHTML = this.markup();
     root.addEventListener("click", this.onClick, { signal: this.abortController.signal });
     root.addEventListener("pointerdown", this.onPointerDown, { signal: this.abortController.signal });
     root.addEventListener("pointerup", this.onPointerUp, { signal: this.abortController.signal });
     root.addEventListener("pointercancel", this.onPointerCancel, { signal: this.abortController.signal });
+    root.addEventListener("keydown", this.onKeyDown, { signal: this.abortController.signal });
     context.mount.replaceChildren(root);
     this.root = root;
     this.phase = "tutorial";
@@ -110,12 +175,15 @@ export class VeggieSortGame implements MinigameModule {
 
   pause(): void {
     if (this.phase !== "running") return;
+    this.pauseGate.pause();
+    this.pointerStart = null;
     this.phase = "paused";
     this.showPanel("pause");
   }
 
   resume(): void {
     if (this.phase !== "paused") return;
+    this.pauseGate.resume();
     this.phase = "running";
     this.showPanel(null);
     this.emitFeedback("countdown", undefined, "light");
@@ -123,7 +191,9 @@ export class VeggieSortGame implements MinigameModule {
 
   update(deltaSeconds: number): void {
     if (this.phase !== "running" || !this.root || !this.context) return;
-    const delta = Math.min(0.1, Math.max(0, Number.isFinite(deltaSeconds) ? deltaSeconds : 0));
+    const requested = Math.min(0.1, Math.max(0, Number.isFinite(deltaSeconds) ? deltaSeconds : 0));
+    const delta = this.pauseGate.filter(requested);
+    this.activeSeconds += delta;
     this.root.dataset.clock = String(this.context.clock.now());
     this.updateTransientEffects(delta);
     if (this.inputLocked > 0) {
@@ -152,12 +222,7 @@ export class VeggieSortGame implements MinigameModule {
   }
 
   payout(): MinigamePayout {
-    const score = Math.floor(this.state.score);
-    return {
-      score,
-      coins: Math.max(1, Math.floor(score / 350)),
-      xp: Math.max(2, Math.floor(score / 140) + this.state.totalCorrect),
-    };
+    return veggiePayout(this.state);
   }
 
   dispose(): void {
@@ -174,12 +239,14 @@ export class VeggieSortGame implements MinigameModule {
     this.cardEnteringRemaining = 0;
     this.flashRemaining = 0;
     this.inputLocked = 0;
+    this.pauseGate.dispose();
     this.phase = "disposed";
   }
 
   private beginRound(): void {
     if (!this.context || !this.root) return;
     this.state = { ...INITIAL_SORT_STATE };
+    this.pauseGate.resume();
     this.currentItem = null;
     this.previousItemId = "";
     this.itemRemaining = 4.6;
@@ -188,6 +255,7 @@ export class VeggieSortGame implements MinigameModule {
     this.cardEnteringRemaining = 0;
     this.flashRemaining = 0;
     this.actionsTaken = 0;
+    this.activeSeconds = 0;
     for (const particle of this.particleElements.keys()) particle.remove();
     this.particleElements.clear();
     this.finished = false;
@@ -206,16 +274,28 @@ export class VeggieSortGame implements MinigameModule {
     }
     this.currentItem = selected;
     this.previousItemId = selected.id;
-    this.itemDuration = Math.max(2.05, 4.6 - this.state.totalCorrect * 0.065);
+    this.itemDuration = sortWindowAt(this.activeSeconds);
     this.itemRemaining = this.itemDuration;
+    this.root.style.setProperty("--conveyor-speed", `${(1 / conveyorSpeedAt(this.activeSeconds)).toFixed(3)}s`);
     const card = this.root.querySelector<HTMLElement>("[data-card]");
     if (card) {
       card.className = "sort-card entering";
       card.dataset.item = selected.id;
       const emoji = card.querySelector<HTMLElement>("[data-item-emoji]");
       const label = card.querySelector<HTMLElement>("[data-item-label]");
+      const hint = card.querySelector<HTMLElement>("[data-item-hint]");
       if (emoji) emoji.textContent = selected.emoji;
       if (label) label.textContent = selected.label;
+      if (hint) {
+        hint.textContent = sortItemCategories(selected).length === 2
+          ? "MIXED · EITHER MATCH"
+          : "SWIPE ME!";
+      }
+      card.classList.toggle("mixed", sortItemCategories(selected).length === 2);
+      card.setAttribute(
+        "aria-label",
+        `${selected.label}, ${sortItemCategories(selected).join(" or ")}`,
+      );
       this.cardEnteringRemaining = 0.23;
     }
     this.render();
@@ -243,9 +323,14 @@ export class VeggieSortGame implements MinigameModule {
       this.flash(`+${100 * result.multiplier}  ×${result.multiplier}`, "good");
       this.particles(item.emoji, 10);
       this.emitFeedback(result.multiplier >= 3 ? "combo" : "hit", result.multiplier, "light");
+      if (result.starAwarded) {
+        this.flash("★ MARKET STAR +250", "good");
+        this.emitFeedback("score", this.state.marketStars, "success");
+      }
     } else {
       card?.classList.add("wrong");
-      this.flash(expired ? "TOO SLOW!" : `OOPS — ${result.expected.toUpperCase()}!`, "bad");
+      const accepted = result.accepted.map((entry) => entry.toUpperCase()).join(" OR ");
+      this.flash(expired ? "TOO SLOW — TRY THE NEXT!" : `GENTLE MISDROP · ${accepted}!`, "bad");
       this.emitFeedback("miss", undefined, "warning");
     }
 
@@ -340,6 +425,33 @@ export class VeggieSortGame implements MinigameModule {
     this.pointerStart = null;
   };
 
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (event.repeat) return;
+    const key = event.key.toLowerCase();
+    if (key === "escape" || key === "p") {
+      if (this.phase !== "running" && this.phase !== "paused") return;
+      event.preventDefault();
+      if (this.phase === "paused") this.resume();
+      else this.pause();
+      return;
+    }
+    if (this.phase !== "running") return;
+    const direction: SortDirection | undefined = {
+      arrowleft: "left",
+      a: "left",
+      "1": "left",
+      arrowright: "right",
+      d: "right",
+      "3": "right",
+      arrowup: "up",
+      w: "up",
+      "2": "up",
+    }[key] as SortDirection | undefined;
+    if (!direction) return;
+    event.preventDefault();
+    this.sortCurrent(direction);
+  };
+
   private finishGame(quit = false): void {
     if (this.finished || !this.context || !this.root) return;
     this.finished = true;
@@ -347,6 +459,7 @@ export class VeggieSortGame implements MinigameModule {
     this.transition = null;
     const payout = this.payout();
     this.context.finish(payout);
+    this.emitFeedback(quit ? "score" : "win", payout.score, quit ? "light" : "success");
     this.best = this.context.lifecycle?.persistedBest ?? Math.max(this.best, payout.score);
     const panel = this.root.querySelector<HTMLElement>('[data-panel="result"]');
     const title = panel?.querySelector("h2");
@@ -385,6 +498,7 @@ export class VeggieSortGame implements MinigameModule {
     const mistakes = this.root.querySelector<HTMLElement>("[data-mistakes]");
     const rules = this.root.querySelector<HTMLElement>("[data-rules]");
     const frenzyCount = this.root.querySelector<HTMLElement>("[data-frenzy-count]");
+    const marketStars = this.root.querySelector<HTMLElement>("[data-market-stars]");
     if (score) score.textContent = Math.floor(this.state.score).toLocaleString();
     if (streak) {
       streak.textContent = this.state.streak > 1 ? `${this.state.streak} STREAK · ×${this.state.multiplier}` : "BUILD A STREAK";
@@ -400,6 +514,7 @@ export class VeggieSortGame implements MinigameModule {
       rules.classList.toggle("reverse", this.state.reverseFrenzy);
     }
     if (frenzyCount) frenzyCount.textContent = this.state.reverseFrenzy ? `${this.state.frenzyRemaining} left` : "";
+    if (marketStars) marketStars.textContent = `★ ${this.state.marketStars} MARKET`;
     this.renderBins();
     this.renderTimer();
   }
@@ -516,6 +631,7 @@ export class VeggieSortGame implements MinigameModule {
       </header>
       <div class="rules-ribbon" data-rules aria-live="polite"><b>NORMAL</b> Veg ← · Fruit → · Junk ↑</div>
       <span class="frenzy-count" data-frenzy-count></span>
+      <span class="market-stars" data-market-stars aria-live="polite">★ 0 MARKET</span>
       <main class="sort-stage">
         <div class="gooby-clerk" aria-hidden="true"><i></i><i></i><div><b>•</b><b>•</b><em>ᴗ</em></div><small>GOOBY<br>MARKET</small></div>
         <button class="bin nonfood-bin" data-direction="up" aria-label="Sort non-food up"><span>📦</span><b>NOT FOOD</b><small>SWIPE UP ↑</small></button>
@@ -524,7 +640,7 @@ export class VeggieSortGame implements MinigameModule {
         <div class="conveyor"><i></i><i></i><i></i><i></i><i></i></div>
         <article class="sort-card" data-card aria-live="polite">
           <div class="timer-track"><i data-item-timer></i></div>
-          <span data-item-emoji>🥕</span><strong data-item-label>Carrot</strong><small>SWIPE ME!</small>
+          <span data-item-emoji>🥕</span><strong data-item-label>Carrot</strong><small data-item-hint>SWIPE ME!</small>
         </article>
       </main>
       <div class="sort-flash" data-flash role="status"></div>
@@ -533,7 +649,7 @@ export class VeggieSortGame implements MinigameModule {
       <section class="sort-panel" data-panel="tutorial">
         <div class="panel-card">
           <span class="eyebrow">GOOBY MARKET SHIFT</span><h1>Veggie<br><em>Sort!</em></h1>
-          <p>Swipe each item into the right crate. Three mistakes end your shift!</p>
+          <p>Swipe each item into the right crate. Mixed crates fit either shown category; misdrops are gentle.</p>
           <div class="tutorial-rules">
             <div><span>🥦</span><b>VEGGIES</b><small>← LEFT</small></div>
             <div><span>🍓</span><b>FRUIT</b><small>RIGHT →</small></div>
@@ -562,18 +678,20 @@ export class VeggieSortGame implements MinigameModule {
 export const createVeggieSort = (): MinigameModule => new VeggieSortGame();
 
 const veggieStyles = `
-  .veggie-sort{position:relative;isolation:isolate;width:100%;height:100%;min-height:620px;overflow:hidden;color:#3c392f;background:#f6df9b;font-family:Nunito,ui-rounded,"Arial Rounded MT Bold",system-ui,sans-serif;touch-action:none;user-select:none}.veggie-sort *{box-sizing:border-box}.veggie-sort button{font:inherit}
+  .veggie-sort{position:relative;isolation:isolate;width:100%;height:100%;min-height:620px;overflow:hidden;color:#3c392f;background:#f6df9b;font-family:Nunito,ui-rounded,"Arial Rounded MT Bold",system-ui,sans-serif;touch-action:none;user-select:none}.veggie-sort *{box-sizing:border-box}.veggie-sort button{min-width:44px;min-height:44px;font:inherit}.veggie-sort button:focus-visible{outline:3px solid #3c392f;outline-offset:3px}
   .market-bg{position:absolute;inset:0;background:linear-gradient(#fff2c9 0 52%,#ddaa64 52%);overflow:hidden}.market-bg:before{content:"";position:absolute;inset:0 0 48%;background:linear-gradient(#d78c5d33 3px,transparent 3px),linear-gradient(90deg,#d78c5d33 3px,transparent 3px);background-size:68px 55px}.market-bg>i{position:absolute;bottom:44%;width:80px;height:90px;border-radius:12px 12px 0 0;background:#88b46b;box-shadow:inset 0 10px #b8da85}.market-bg>i:nth-child(1){left:3%}.market-bg>i:nth-child(2){right:2%;background:#e08569}.market-bg>i:nth-child(3){left:28%;bottom:49%;width:44%;height:18px;border-radius:20px;background:#fff2b1}
   .sort-hud{position:absolute;z-index:15;top:max(12px,env(safe-area-inset-top));left:12px;right:12px;display:grid;grid-template-columns:78px 1fr 75px 42px;gap:7px;align-items:center}.sort-hud>div{height:44px;display:grid;place-content:center;text-align:center;border:2px solid #fff9;border-radius:14px;background:#fff8e9e8;box-shadow:0 4px 0 #9a653c33}.sort-hud small{display:block;font-size:8px;letter-spacing:.13em;font-weight:1000;color:#9d7457}.sort-hud strong{font-size:18px}.streak-pill{padding:0 4px;color:#897159;font-size:10px;font-weight:1000;letter-spacing:.05em}.streak-pill.hot{color:#c03f47;background:#ffdd76!important;animation:streakPulse .55s infinite alternate}.mistakes{display:flex!important;gap:2px;align-items:center;color:#e34f5e;font-size:19px}.mistakes i{font-style:normal;transition:.25s}.mistakes i.lost{color:#c9bca9;transform:scale(.8)}.pause-button{width:42px;height:42px;border:2px solid #fff;border-radius:50%;color:#69472f;background:#fff8e9;box-shadow:0 4px 0 #a66d45;font-weight:1000;cursor:pointer}
   .rules-ribbon{position:absolute;z-index:13;top:69px;left:50%;transform:translateX(-50%);padding:7px 12px;border-radius:99px;background:#fff9;color:#75634e;font-size:10px;font-weight:900;white-space:nowrap;transition:.25s}.rules-ribbon b{color:#4c913f}.rules-ribbon.reverse{color:#fff;background:#e14b67;box-shadow:0 0 22px #ff546c}.rules-ribbon.reverse b{color:#ffe468}.frenzy-count{position:absolute;z-index:14;top:78px;right:18px;color:#a82e4e;font-size:9px;font-weight:1000}
+  .market-stars{position:absolute;z-index:14;top:98px;left:50%;transform:translateX(-50%);padding:4px 9px;border-radius:99px;color:#805900;background:#ffe274;font-size:9px;font-weight:1000}
   .sort-stage{position:absolute;inset:96px 0 0}.gooby-clerk{position:absolute;z-index:2;right:5%;top:5%;width:96px;height:115px}.gooby-clerk>i{position:absolute;top:0;width:29px;height:62px;border:4px solid #d59e6e;border-radius:50%;background:#ffe6bd}.gooby-clerk>i:first-child{left:15px;transform:rotate(-10deg)}.gooby-clerk>i:nth-child(2){right:15px;transform:rotate(12deg)}.gooby-clerk>div{position:absolute;inset:34px 5px 0;border:4px solid #d59e6e;border-radius:50% 50% 43%;background:#ffe9c5;box-shadow:inset -8px -7px #efc990}.gooby-clerk>div b{position:absolute;top:33%;font-size:22px}.gooby-clerk>div b:first-child{left:26%}.gooby-clerk>div b:nth-child(2){right:26%}.gooby-clerk>div em{position:absolute;left:50%;top:54%;transform:translateX(-50%);font-style:normal}.gooby-clerk>small{position:absolute;right:72%;top:58%;padding:5px 7px;border-radius:7px;color:#fff;background:#d85f61;font-size:7px;font-weight:1000;white-space:nowrap;transform:rotate(-8deg)}
   .bin{position:absolute;z-index:7;border:4px solid #fff;border-radius:20px;color:#fff;box-shadow:0 8px 0 #734f37;cursor:pointer;transition:.16s}.bin:active{transform:scale(.94)}.bin span,.bin b,.bin small{display:block}.bin span{font-size:31px}.bin b{font-size:12px}.bin small{font-size:8px;letter-spacing:.06em}.side-bin{bottom:7%;width:31%;height:105px}.side-bin[data-bin="left"]{left:2%}.side-bin[data-bin="right"]{right:2%}.side-bin[data-category="vegetable"]{background:linear-gradient(#7dc765,#4d9e52)}.side-bin[data-category="fruit"]{background:linear-gradient(#f28575,#d7505c)}.nonfood-bin{left:5%;top:4%;width:115px;height:88px;background:linear-gradient(#84a3b5,#5c778b)}
-  .conveyor{position:absolute;z-index:3;left:-3%;right:-3%;bottom:17%;height:86px;border:7px solid #724e38;border-radius:24px;background:#96705a;box-shadow:0 16px #81583e}.conveyor i{display:inline-block;width:16%;height:100%;border-right:4px solid #6f5141}
+  .conveyor{position:absolute;z-index:3;left:-3%;right:-3%;bottom:17%;height:86px;border:7px solid #724e38;border-radius:24px;background:repeating-linear-gradient(90deg,#96705a 0 56px,#87624f 56px 61px);background-size:122px 100%;box-shadow:0 16px #81583e;animation:conveyorRoll var(--conveyor-speed,1s) linear infinite}.conveyor i{display:inline-block;width:16%;height:100%;border-right:4px solid #6f5141}
   .sort-card{position:absolute;z-index:9;left:50%;top:45%;width:172px;height:202px;padding:22px 10px 12px;transform:translate(-50%,-50%);border:5px solid #fff;border-radius:27px;text-align:center;background:linear-gradient(145deg,#fff,#fff3d1);box-shadow:0 10px 0 #bd8257,0 22px 35px #59351f3b;transition:transform .25s ease,opacity .25s ease;cursor:grab}.sort-card.entering{transform:translate(-50%,-50%) scale(.2) rotate(-16deg)}.sort-card>span{display:block;margin:11px 0 3px;font-size:78px;filter:drop-shadow(0 6px 2px #82552b25)}.sort-card>strong{display:block;font-size:20px}.sort-card>small{font-size:8px;font-weight:1000;letter-spacing:.16em;color:#a3866d}.sort-card.exit-left{transform:translate(-190%,-25%) rotate(-24deg)}.sort-card.exit-right{transform:translate(90%,-25%) rotate(24deg)}.sort-card.exit-up{transform:translate(-50%,-160%) rotate(8deg)}.sort-card.correct{opacity:0}.sort-card.wrong{animation:wrongShake .36s}.timer-track{position:absolute;left:15px;right:15px;top:13px;height:8px;border-radius:99px;background:#eadbc5;overflow:hidden}.timer-track i{display:block;width:100%;height:100%;transform-origin:left;border-radius:inherit;background:#6bc26d}.timer-track i.urgent{background:#ec5765}
+  .sort-card.mixed{background:linear-gradient(145deg,#effff0,#fff0e6);border-style:double}.sort-card.mixed>span{font-size:58px;margin-top:21px}
   .sort-flash{position:absolute;z-index:25;left:50%;top:34%;transform:translate(-50%,-50%) scale(.5);opacity:0;padding:8px 14px;border:3px solid #fff;border-radius:14px;font-size:21px;font-weight:1000;pointer-events:none}.sort-flash.good{color:#fff;background:#57ac57}.sort-flash.bad{color:#fff;background:#e84e61}.sort-flash.active{animation:flash .65s ease-out}.sort-particles{position:absolute;z-index:22;left:50%;top:42%;pointer-events:none}.sort-particles i{position:absolute;font-size:17px;font-style:normal;animation:particle .72s ease-out forwards}
   .frenzy-banner{position:absolute;z-index:35;left:0;right:0;top:30%;padding:19px 10px;text-align:center;color:#fff;background:linear-gradient(90deg,#b52654,#ff5470,#b52654);border-block:5px solid #ffe674;box-shadow:0 12px 30px #6e173a66;transform:translateX(-105%) skewY(-2deg);transition:.35s cubic-bezier(.2,1.3,.4,1)}.frenzy-banner.active{transform:translateX(0) skewY(-2deg)}.frenzy-banner.normal{background:linear-gradient(90deg,#3e8e56,#72c66e,#3e8e56)}.frenzy-banner small,.frenzy-banner strong,.frenzy-banner span{display:block}.frenzy-banner small{color:#ffe77d;font-weight:1000}.frenzy-banner strong{font-size:23px}.frenzy-banner span{font-size:11px;font-weight:1000;letter-spacing:.05em}
   .sort-panel{position:absolute;z-index:50;inset:0;display:grid;place-items:center;padding:22px;background:#68452db8;backdrop-filter:blur(5px)}.sort-panel[hidden]{display:none}.panel-card{width:min(100%,410px);padding:25px 20px 21px;border:4px solid #fff;border-radius:30px;text-align:center;background:linear-gradient(#fffdf5,#fff0c8);box-shadow:0 14px 0 #764c31,0 25px 50px #3f261e66;animation:panelIn .35s cubic-bezier(.2,1.4,.4,1)}.panel-card.compact{padding-top:32px}.eyebrow{display:inline-block;padding:5px 10px;border-radius:99px;color:#7e4e31;background:#ffe39b;font-size:9px;font-weight:1000;letter-spacing:.13em}.panel-card h1{margin:8px 0;font-size:44px;line-height:.82;letter-spacing:-.06em;color:#4c6d41}.panel-card h1 em{color:#e35b68;font-style:normal}.panel-card h2{margin:7px;font-size:34px;color:#544635}.panel-card p{margin:9px auto 15px;max-width:320px;color:#756657;line-height:1.35}.tutorial-rules{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.tutorial-rules>div{padding:8px 3px;border-radius:15px;background:#fff}.tutorial-rules span,.tutorial-rules b,.tutorial-rules small{display:block}.tutorial-rules span{font-size:31px}.tutorial-rules b{font-size:9px}.tutorial-rules small{font-size:9px;font-weight:1000;color:#d2595f}.frenzy-tip{display:flex;align-items:center;gap:8px;margin:12px 0;padding:9px;border-radius:12px;text-align:left;background:#ffe38a}.frenzy-tip b{font-size:9px;color:#ad3551}.frenzy-tip span{font-size:9px;color:#735b38}.primary,.secondary{width:100%;min-height:50px;border-radius:16px;font-weight:1000;letter-spacing:.04em;cursor:pointer}.primary{border:0;color:#fff;background:linear-gradient(#6bc56b,#469d53);box-shadow:0 6px 0 #31723c}.primary:active{transform:translateY(4px);box-shadow:0 2px 0 #31723c}.secondary{margin-top:11px;border:2px solid #d7bf98;color:#775e47;background:#fff}.crate-medal{display:grid;place-items:center;width:70px;height:70px;margin:-63px auto 8px;border:5px solid #fff;border-radius:18px;color:#fff;background:#66b95f;box-shadow:0 7px #3e8643;font-size:41px;transform:rotate(-5deg)}.big-score{display:block;color:#e45b68;font-size:48px;line-height:1}.result>small{font-size:9px;font-weight:1000;letter-spacing:.15em;color:#9e846a}.best-line{margin:0 0 17px;padding:10px;border-radius:12px;background:#fff6d8;font-size:11px;font-weight:900;color:#79644e}
-  @keyframes streakPulse{to{transform:scale(1.05)}}@keyframes wrongShake{25%{transform:translate(-58%,-50%) rotate(-4deg)}50%{transform:translate(-42%,-50%) rotate(4deg)}75%{transform:translate(-55%,-50%)}}@keyframes flash{0%{opacity:0;transform:translate(-50%,-50%) scale(.5)}25%{opacity:1;transform:translate(-50%,-50%) scale(1.1)}75%{opacity:1}100%{opacity:0;transform:translate(-50%,-90%)}}@keyframes particle{to{opacity:0;transform:translate(var(--x),var(--y)) rotate(180deg) scale(.4)}}@keyframes panelIn{from{opacity:0;transform:scale(.82) translateY(20px)}}
-  .veggie-sort[data-reduced-motion="true"] *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+  @keyframes conveyorRoll{to{background-position:122px 0}}@keyframes streakPulse{to{transform:scale(1.05)}}@keyframes wrongShake{25%{transform:translate(-58%,-50%) rotate(-4deg)}50%{transform:translate(-42%,-50%) rotate(4deg)}75%{transform:translate(-55%,-50%)}}@keyframes flash{0%{opacity:0;transform:translate(-50%,-50%) scale(.5)}25%{opacity:1;transform:translate(-50%,-50%) scale(1.1)}75%{opacity:1}100%{opacity:0;transform:translate(-50%,-90%)}}@keyframes particle{to{opacity:0;transform:translate(var(--x),var(--y)) rotate(180deg) scale(.4)}}@keyframes panelIn{from{opacity:0;transform:scale(.82) translateY(20px)}}
+  .veggie-sort[data-reduced-motion="true"] *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}@media(prefers-reduced-motion:reduce){.veggie-sort *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
   @media(max-height:700px){.veggie-sort{min-height:500px}.sort-hud{top:7px}.rules-ribbon{top:57px}.sort-stage{inset:77px 0 0}.sort-card{top:43%;width:150px;height:174px}.sort-card>span{font-size:61px}.bin{height:86px}.panel-card{padding:17px}.panel-card h1{font-size:35px}.tutorial-rules span{font-size:25px}}
 `;

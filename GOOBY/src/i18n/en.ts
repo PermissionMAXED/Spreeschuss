@@ -246,12 +246,12 @@ export const EN_MINIGAME_COPY: Readonly<Record<MinigameId, MinigameCopy>> = {
   "bunny-hop": {
     title: "Bunny Hop",
     icon: "🐾",
-    instructions: "Time each hop and land on the soft stepping stones.",
+    instructions: "Steer every automatic bounce and climb from the meadow into space.",
   },
   "pancake-peak": {
     title: "Pancake Peak",
     icon: "🥞",
-    instructions: "Balance a wonderfully wobbly pancake tower.",
+    instructions: "Drop swinging pancakes and balance a wonderfully wobbly tower.",
   },
   "bubble-bath-blast": {
     title: "Bubble Bath Blast",

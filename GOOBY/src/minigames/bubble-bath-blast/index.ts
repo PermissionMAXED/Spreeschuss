@@ -1,22 +1,71 @@
 import type {
   MinigameContext,
+  MinigameManifest,
   MinigameModule,
   MinigamePayout,
 } from "../../core/contracts/minigame";
+import { validateMinigameManifest } from "../../core/contracts/minigame";
 import type { HapticPattern } from "../../core/contracts/platform";
 import type { MinigameStubDefinition } from "../stub";
+import { createDifficultyRamp, PauseGate } from "../shared";
 import {
+  BUBBLE_CUES,
   BUBBLE_COLORS,
+  BUBBLE_SYMBOLS,
+  bubblePayout,
+  bubbleSymbol,
   resolveBubbleTap,
   type BubbleColor,
+  type BubbleMode,
   type BubblePlayfield,
   type BubbleScoreState,
+  type BubbleSymbol,
 } from "./logic";
 
-export const definition = {
+export const manifest: MinigameManifest = validateMinigameManifest({
   id: "bubble-bath-blast",
-  title: "Bubble Bath Blast",
-  instructions: "Pop touching color-symbol-pattern chains, burst stars, and dodge the soap blocks.",
+  title: { en: "Bubble Bath Blast", de: "Schaumbad-Spaß" },
+  instructions: {
+    en: "Pop matching bubbles and keep Gooby squeaky clean.",
+    de: "Zerplatze passende Blasen und halte Gooby blitzsauber.",
+  },
+  icon: "◌",
+  category: "care",
+  stage3d: false,
+  unlockLevel: 2,
+  audioCues: ["go", "hit", "miss", "combo", "score", "win"],
+  tutorial: [
+    {
+      icon: "♥",
+      title: { en: "Match every cue", de: "Achte auf jedes Zeichen" },
+      body: {
+        en: "Tap a touching chain with the same symbol. Color, shape, label, and pattern repeat the match.",
+        de: "Tippe eine berührende Kette mit demselben Symbol. Farbe, Form, Name und Muster zeigen die gleiche Gruppe.",
+      },
+    },
+    {
+      icon: "🦆",
+      title: { en: "Catch the bath duck", de: "Fange die Badeente" },
+      body: {
+        en: "Rubber ducks grant 500 bonus points. Soap blocks break the streak and cost four seconds.",
+        de: "Badeenten bringen 500 Bonuspunkte. Seifenblöcke beenden die Serie und kosten vier Sekunden.",
+      },
+    },
+    {
+      icon: "∞",
+      title: { en: "Relax in Zen", de: "Entspanne im Zen-Modus" },
+      body: {
+        en: "Zen has no timer and pays half rewards, so you can practice chains at your own pace.",
+        de: "Zen hat keine Uhr und zahlt halbe Belohnungen, damit du Ketten in Ruhe üben kannst.",
+      },
+    },
+  ],
+});
+
+export const definition = {
+  id: manifest.id,
+  title: manifest.title.en,
+  instructions: manifest.instructions.en,
   create: (): MinigameModule => new BubbleBathBlastGame(),
 } as const satisfies MinigameStubDefinition & { readonly create: () => MinigameModule };
 
@@ -24,8 +73,9 @@ type Phase = "unmounted" | "tutorial" | "running" | "paused" | "ended" | "dispos
 
 interface RisingBubble {
   id: number;
-  kind: "bubble" | "soap";
+  kind: "bubble" | "soap" | "duck";
   color: BubbleColor;
+  symbol: BubbleSymbol;
   x: number;
   y: number;
   radius: number;
@@ -34,6 +84,12 @@ interface RisingBubble {
 }
 
 const GAME_SECONDS = 80;
+const bubbleDifficulty = createDifficultyRamp({
+  rampSeconds: GAME_SECONDS,
+  startIntensity: 0,
+  maxIntensity: 1,
+  shape: "smoothstep",
+});
 
 type MinigameSoundAction = "hit" | "miss" | "combo" | "countdown" | "go" | "win" | "lose" | "score";
 
@@ -50,19 +106,6 @@ const colorValue: Readonly<Record<BubbleColor, string>> = {
   mint: "#62dfbd",
   sky: "#5bbcf6",
   grape: "#a987f4",
-};
-
-const bubbleCue: Readonly<Record<BubbleColor, {
-  readonly label: string;
-  readonly symbol: string;
-  readonly shape: string;
-  readonly pattern: string;
-}>> = {
-  coral: { label: "Heart", symbol: "♥", shape: "heart", pattern: "stripes" },
-  sun: { label: "Sun", symbol: "☀", shape: "sun", pattern: "dots" },
-  mint: { label: "Diamond", symbol: "◆", shape: "diamond", pattern: "waves" },
-  sky: { label: "Triangle", symbol: "▼", shape: "triangle", pattern: "grid" },
-  grape: { label: "Star", symbol: "★", shape: "star", pattern: "rings" },
 };
 
 export class BubbleBathBlastGame implements MinigameModule {
@@ -84,6 +127,9 @@ export class BubbleBathBlastGame implements MinigameModule {
   private runStartedAt = 0;
   private best = 0;
   private actionsTaken = 0;
+  private mode: BubbleMode = "splash";
+  private elapsed = 0;
+  private readonly pauseGate = new PauseGate();
   private scoreState: BubbleScoreState = {
     score: 0,
     stars: 0,
@@ -102,9 +148,11 @@ export class BubbleBathBlastGame implements MinigameModule {
     const root = document.createElement("section");
     root.className = "bubble-blast";
     root.dataset.minigame = this.id;
+    root.tabIndex = 0;
     if (sharedContext.reducedMotion) root.dataset.reducedMotion = "true";
     root.innerHTML = this.markup();
     root.addEventListener("click", this.onClick, { signal: this.abortController.signal });
+    root.addEventListener("keydown", this.onKeyDown, { signal: this.abortController.signal });
     context.mount.replaceChildren(root);
     this.root = root;
     this.phase = "tutorial";
@@ -119,12 +167,14 @@ export class BubbleBathBlastGame implements MinigameModule {
 
   pause(): void {
     if (this.phase !== "running") return;
+    this.pauseGate.pause();
     this.phase = "paused";
     this.showPanel("pause");
   }
 
   resume(): void {
     if (this.phase !== "paused") return;
+    this.pauseGate.resume();
     this.phase = "running";
     this.showPanel(null);
     this.emitFeedback("countdown", undefined, "light");
@@ -132,11 +182,13 @@ export class BubbleBathBlastGame implements MinigameModule {
 
   update(deltaSeconds: number): void {
     if (this.phase !== "running" || !this.context || !this.root) return;
-    const delta = Math.min(0.1, Math.max(0, Number.isFinite(deltaSeconds) ? deltaSeconds : 0));
-    this.remaining = Math.max(0, this.remaining - delta);
+    const requested = Math.min(0.1, Math.max(0, Number.isFinite(deltaSeconds) ? deltaSeconds : 0));
+    const delta = this.pauseGate.filter(requested);
+    this.elapsed += delta;
+    if (this.mode === "splash") this.remaining = Math.max(0, this.remaining - delta);
     this.spawnAccumulator += delta;
     this.renderAccumulator += delta;
-    const intensity = 1 - this.remaining / GAME_SECONDS;
+    const intensity = bubbleDifficulty.intensityAt(this.elapsed);
     const spawnEvery = 0.68 - intensity * 0.36;
 
     while (this.spawnAccumulator >= spawnEvery) {
@@ -155,16 +207,11 @@ export class BubbleBathBlastGame implements MinigameModule {
       this.renderHud();
     }
 
-    if (this.remaining <= 0) this.finishGame();
+    if (this.mode === "splash" && this.remaining <= 0) this.finishGame();
   }
 
   payout(): MinigamePayout {
-    const score = Math.floor(this.scoreState.score);
-    return {
-      score,
-      coins: Math.max(1, Math.floor(score / 220) + this.scoreState.stars * 2),
-      xp: Math.max(2, Math.floor(score / 100) + this.scoreState.stars * 3),
-    };
+    return bubblePayout(this.scoreState, this.mode);
   }
 
   dispose(): void {
@@ -177,20 +224,25 @@ export class BubbleBathBlastGame implements MinigameModule {
     this.root?.remove();
     this.root = null;
     this.context = null;
+    this.pauseGate.dispose();
     this.phase = "disposed";
   }
 
-  private beginRound(): void {
+  private beginRound(mode: BubbleMode = this.mode): void {
     if (!this.context || !this.root) return;
+    this.pauseGate.resume();
+    this.mode = mode;
     this.bubbles = [];
     this.nextId = 1;
     this.remaining = GAME_SECONDS;
     this.spawnAccumulator = 0;
     this.renderAccumulator = 0;
+    this.elapsed = 0;
     this.actionsTaken = 0;
     this.scoreState = { score: 0, stars: 0, combo: 0, timePenalty: 0 };
     this.runStartedAt = this.context.clock.now();
     this.root.dataset.startedAt = String(this.runStartedAt);
+    this.root.dataset.mode = mode;
     this.finished = false;
     this.phase = "running";
     this.showPanel(null);
@@ -203,13 +255,22 @@ export class BubbleBathBlastGame implements MinigameModule {
 
   private spawnBubble(intensity: number): void {
     if (!this.context) return;
-    const isSoap = this.context.rng.next() < 0.08 + intensity * 0.05;
+    const kindRoll = this.context.rng.next();
+    const kind: RisingBubble["kind"] = kindRoll < 0.035
+      ? "duck"
+      : kindRoll < 0.115 + intensity * 0.05
+        ? "soap"
+        : "bubble";
     const lane = this.context.rng.int(0, 7);
-    const radius = isSoap ? 4.8 : 5 + this.context.rng.next() * 1.25;
+    const radius = kind === "soap" ? 4.8 : kind === "duck" ? 5.7 : 5 + this.context.rng.next() * 1.25;
+    const color = this.context.rng.pick(BUBBLE_COLORS);
     this.bubbles.push({
       id: this.nextId,
-      kind: isSoap ? "soap" : "bubble",
-      color: this.context.rng.pick(BUBBLE_COLORS),
+      kind,
+      color,
+      symbol: kind === "bubble"
+        ? bubbleSymbol({ color })
+        : this.context.rng.pick(BUBBLE_SYMBOLS),
       x: 8 + lane * 14 + (this.context.rng.next() - 0.5) * 2.4,
       y: 98 + this.context.rng.next() * 3,
       radius,
@@ -225,11 +286,15 @@ export class BubbleBathBlastGame implements MinigameModule {
     if (!target) return;
     const action = target.dataset.action;
     if (action === "begin") {
-      this.beginRound();
+      this.beginRound("splash");
+      return;
+    }
+    if (action === "begin-zen") {
+      this.beginRound("zen");
       return;
     }
     if (action === "again") {
-      if (!this.context?.lifecycle) this.beginRound();
+      if (!this.context?.lifecycle) this.beginRound(this.mode);
       return;
     }
     if (action === "pause") {
@@ -247,6 +312,24 @@ export class BubbleBathBlastGame implements MinigameModule {
     }
     const bubbleId = Number(target.dataset.bubble);
     if (this.phase === "running" && Number.isInteger(bubbleId)) this.tapBubble(bubbleId, target);
+  };
+
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (event.repeat) return;
+    const key = event.key.toLowerCase();
+    if (key === "escape" || key === "p") {
+      if (this.phase !== "running" && this.phase !== "paused") return;
+      event.preventDefault();
+      if (this.phase === "paused") this.resume();
+      else this.pause();
+      return;
+    }
+    if (this.phase !== "running" || !/^[1-9]$/u.test(key)) return;
+    const bubble = this.bubbles[Number(key) - 1];
+    const element = bubble ? this.bubbleElements.get(bubble.id) : null;
+    if (!bubble || !element) return;
+    event.preventDefault();
+    this.tapBubble(bubble.id, element);
   };
 
   private tapBubble(id: number, element: HTMLElement): void {
@@ -272,6 +355,11 @@ export class BubbleBathBlastGame implements MinigameModule {
       this.flashMessage("SOAP BLOCK! −4 SEC", "danger");
       this.burst(element, "#26334d", 10);
       this.emitFeedback("miss", undefined, "warning");
+    } else if (result.duckBonus) {
+      this.bubbles = this.bubbles.filter((bubble) => bubble.id !== id);
+      this.flashMessage("RUBBER DUCK! +500", "bonus");
+      this.burst(element, "#ffd64f", 18);
+      this.emitFeedback("score", 500, "success");
     } else {
       const removed = new Set(result.removedIds);
       this.bubbles = this.bubbles.filter((bubble) => !removed.has(bubble.id));
@@ -297,6 +385,7 @@ export class BubbleBathBlastGame implements MinigameModule {
     this.phase = "ended";
     const payout = this.payout();
     this.context.finish(payout);
+    this.emitFeedback(quit ? "score" : "win", payout.score, quit ? "light" : "success");
     this.best = this.context.lifecycle?.persistedBest ?? Math.max(this.best, payout.score);
     const panel = this.root.querySelector<HTMLElement>('[data-panel="result"]');
     if (panel) {
@@ -306,8 +395,12 @@ export class BubbleBathBlastGame implements MinigameModule {
       const reward = panel.querySelector<HTMLElement>("[data-result-reward]");
       const best = panel.querySelector<HTMLElement>("[data-result-best]");
       if (score) score.textContent = payout.score.toLocaleString();
-      if (reward) reward.textContent = `+${payout.coins} coins  ·  +${payout.xp} XP`;
-      if (best) best.textContent = `Best ${this.best.toLocaleString()} · ${this.scoreState.stars} star bursts`;
+      if (reward) {
+        reward.textContent = `${this.mode === "zen" ? "Zen half payout · " : ""}+${payout.coins} coins  ·  +${payout.xp} XP`;
+      }
+      if (best) {
+        best.textContent = `Best ${this.best.toLocaleString()} · ${this.scoreState.stars} star bursts`;
+      }
     }
     this.showPanel("result");
   }
@@ -343,8 +436,8 @@ export class BubbleBathBlastGame implements MinigameModule {
     const stars = this.root.querySelector<HTMLElement>("[data-stars]");
     const combo = this.root.querySelector<HTMLElement>("[data-combo]");
     if (time) {
-      time.textContent = `${Math.ceil(this.remaining)}s`;
-      time.classList.toggle("urgent", this.remaining <= 10);
+      time.textContent = this.mode === "zen" ? "∞ ZEN" : `${Math.ceil(this.remaining)}s`;
+      time.classList.toggle("urgent", this.mode === "splash" && this.remaining <= 10);
     }
     if (score) score.textContent = Math.floor(this.scoreState.score).toLocaleString();
     if (stars) stars.textContent = `★ ${this.scoreState.stars}`;
@@ -380,17 +473,20 @@ export class BubbleBathBlastGame implements MinigameModule {
       element.style.top = `${bubble.y * playfield.height / 100}px`;
       element.style.width = `${size * isotropicUnit}px`;
       element.style.height = `${size * isotropicUnit}px`;
-      if (bubble.kind === "soap") {
+      if (bubble.kind === "soap" || bubble.kind === "duck") {
         continue;
       }
       const color = colorValue[bubble.color];
-      const cue = bubbleCue[bubble.color];
+      const cue = BUBBLE_CUES[bubbleSymbol(bubble)];
       element.style.setProperty("--bubble", color);
       element.dataset.color = bubble.color;
       element.dataset.cue = cue.label.toLowerCase();
       element.dataset.shape = cue.shape;
       element.dataset.pattern = cue.pattern;
-      element.setAttribute("aria-label", `${bubble.color} ${cue.label} bubble, ${cue.pattern} pattern`);
+      element.setAttribute(
+        "aria-label",
+        `${bubble.color} ${cue.label} bubble, ${cue.shape} shape, ${cue.pattern} pattern`,
+      );
     }
   }
 
@@ -408,11 +504,21 @@ export class BubbleBathBlastGame implements MinigameModule {
       element.append(warning, label);
       return element;
     }
+    if (bubble.kind === "duck") {
+      element.className = "rubber-duck";
+      element.setAttribute("aria-label", "Rubber duck bonus, 500 points");
+      const duck = document.createElement("i");
+      duck.textContent = "🦆";
+      const label = document.createElement("small");
+      label.textContent = "+500";
+      element.append(duck, label);
+      return element;
+    }
     element.className = "rising-bubble";
-    const cue = bubbleCue[bubble.color];
+    const cue = BUBBLE_CUES[bubbleSymbol(bubble)];
     const symbol = document.createElement("i");
     symbol.className = "bubble-cue";
-    symbol.textContent = cue.symbol;
+    symbol.textContent = cue.glyph;
     symbol.setAttribute("aria-hidden", "true");
     const label = document.createElement("small");
     label.className = "bubble-label";
@@ -445,7 +551,7 @@ export class BubbleBathBlastGame implements MinigameModule {
     if (haptic) this.context?.haptics?.impact(haptic);
   }
 
-  private flashMessage(text: string, kind: "star" | "danger"): void {
+  private flashMessage(text: string, kind: "star" | "danger" | "bonus"): void {
     if (!this.root) return;
     const message = this.root.querySelector<HTMLElement>("[data-flash]");
     if (!message) return;
@@ -512,14 +618,15 @@ export class BubbleBathBlastGame implements MinigameModule {
       <div class="particle-layer" data-particles aria-hidden="true"></div>
       <section class="game-panel tutorial" data-panel="tutorial">
         <div class="panel-card">
-          <span class="eyebrow">80 SECOND SPLASH</span>
+          <span class="eyebrow">SPLASH OR ZEN</span>
           <h1>Bubble Bath<br><em>Blast!</em></h1>
-          <p>Tap one bubble to pop every touching match with the <b>same color, symbol, and pattern.</b></p>
+          <p>Tap one bubble to pop every touching match with the <b>same symbol, color, shape, and pattern.</b></p>
           <div class="tutorial-row">
             <div><span class="chain-demo">★★★★</span><b>4+ matching stars</b><small>Color + shape + pattern</small></div>
-            <div><span class="soap-demo">!</span><b>Soap block</b><small>Costs 4 seconds</small></div>
+            <div><span class="soap-demo">🦆</span><b>Duck bonus</b><small>+500 points</small></div>
           </div>
           <button class="primary" data-action="begin">START SPLASHING</button>
+          <button class="secondary" data-action="begin-zen">∞ ZEN · NO TIMER · HALF REWARDS</button>
           <button class="secondary" data-action="quit">LEAVE THE BATH</button>
         </div>
       </section>
@@ -548,7 +655,7 @@ export const createBubbleBathBlast = (): MinigameModule => new BubbleBathBlastGa
 
 const bubbleStyles = `
   .bubble-blast{position:relative;isolation:isolate;width:100%;height:100%;min-height:620px;overflow:hidden;color:#23334c;background:linear-gradient(#d8f7ff 0 58%,#91def0 58% 100%);font-family:Nunito,ui-rounded,"Arial Rounded MT Bold",system-ui,sans-serif;touch-action:manipulation;user-select:none}
-  .bubble-blast *{box-sizing:border-box}.bubble-blast button{font:inherit}
+  .bubble-blast *{box-sizing:border-box}.bubble-blast button{min-width:44px;min-height:44px;font:inherit}.bubble-blast button:focus-visible{outline:3px solid #23334c;outline-offset:3px}
   .bath-sky{position:absolute;inset:0;background:radial-gradient(circle at 78% 10%,#fff9 0 8%,transparent 8.5%),linear-gradient(135deg,#d9f9ff,#b8edfa)}
   .bath-sky>i{position:absolute;width:28px;height:28px;border-radius:50%;border:3px solid #fff9;animation:ambientFloat 5s ease-in-out infinite}.bath-sky>i:nth-child(1){left:9%;top:19%}.bath-sky>i:nth-child(2){right:12%;top:32%;animation-delay:-2s}.bath-sky>i:nth-child(3){left:21%;top:43%;width:16px;height:16px;animation-delay:-3s}
   .bubble-hud{position:absolute;z-index:12;top:max(14px,env(safe-area-inset-top));left:14px;right:14px;display:grid;grid-template-columns:1fr 1.15fr 1fr 44px;gap:7px;align-items:center}
@@ -559,13 +666,15 @@ const bubbleStyles = `
   .gooby-face{position:absolute;left:9px;right:9px;bottom:0;height:105px;border:6px solid #eabf93;border-radius:50% 50% 44% 44%;background:radial-gradient(circle at 27% 64%,#ffb4aa 0 8%,transparent 8.5%),radial-gradient(circle at 73% 64%,#ffb4aa 0 8%,transparent 8.5%),linear-gradient(135deg,#fff9e9,#f3d3aa);box-shadow:inset -12px -9px #efc391}.gooby-face b{position:absolute;top:42%;width:11px;height:15px;border-radius:50%;background:#25304a}.gooby-face b:first-child{left:29%}.gooby-face b:nth-child(2){right:29%}.gooby-face em{position:absolute;left:50%;top:57%;transform:translateX(-50%);font-style:normal;font-weight:1000;font-size:23px}
   .water{position:absolute;z-index:3;left:-10%;right:-10%;bottom:7%;height:29%;border-radius:48% 48% 0 0;background:linear-gradient(#bff8ff,#5ccbe7);box-shadow:inset 0 13px #eaffffcc}.water i{position:absolute;width:70px;height:35px;border-radius:50%;background:#ecffff;animation:foam 3s ease-in-out infinite}.water i:nth-child(1){left:17%;top:-5%}.water i:nth-child(2){left:34%;top:5%;animation-delay:-1s}.water i:nth-child(3){right:28%;top:-2%;animation-delay:-2s}.water i:nth-child(4){right:11%;top:9%;animation-delay:-.5s}
   .tub-front{position:absolute;z-index:7;left:4%;right:4%;bottom:-4%;height:23%;border:7px solid #f2b9a6;border-radius:27px 27px 50% 50%;background:linear-gradient(#fff7f0,#ffd9cd);box-shadow:inset 0 11px #fff,0 -8px 0 #579eb5}.tub-front strong{position:absolute;right:9%;top:30%;transform:rotate(-4deg);font-size:13px;line-height:1;color:#df7890;text-align:center}
-  .bubble-layer{position:absolute;z-index:6;inset:0 3% 10%}.rising-bubble,.soap-block{position:absolute;transform:translate(-50%,-50%);border:0;cursor:pointer}.rising-bubble{min-width:30px;min-height:30px;overflow:hidden;border-radius:50%;color:#23334c;background:radial-gradient(circle at 32% 24%,#fff 0 8%,#fff8 9% 15%,transparent 16%),radial-gradient(circle at 60% 70%,var(--bubble),#ffffff55);border:3px solid color-mix(in srgb,var(--bubble) 70%,white);box-shadow:inset -8px -9px 12px #2d5b7a28,0 5px 8px #408aa43d;animation:bubbleBreathe 1.5s ease-in-out infinite}.rising-bubble:active{transform:translate(-50%,-50%) scale(.82)}.rising-bubble:after{content:"";position:absolute;inset:7%;border-radius:50%;pointer-events:none;opacity:.42}.rising-bubble[data-pattern="stripes"]:after{background:repeating-linear-gradient(135deg,#fff 0 2px,transparent 2px 6px)}.rising-bubble[data-pattern="dots"]:after{background:radial-gradient(#fff 0 1.5px,transparent 2px);background-size:7px 7px}.rising-bubble[data-pattern="waves"]:after{background:repeating-radial-gradient(ellipse at 50% 120%,transparent 0 4px,#fff 5px 6px,transparent 7px 10px)}.rising-bubble[data-pattern="grid"]:after{background:linear-gradient(#fff8 1px,transparent 1px),linear-gradient(90deg,#fff8 1px,transparent 1px);background-size:7px 7px}.rising-bubble[data-pattern="rings"]:after{border:2px double #fff;background:radial-gradient(circle,transparent 0 24%,#fff8 26% 31%,transparent 33%)}.rising-bubble .bubble-cue{position:absolute;z-index:2;left:50%;top:46%;transform:translate(-50%,-50%);font-size:clamp(12px,45%,23px);line-height:1;font-style:normal;text-shadow:0 1px #fff}.rising-bubble .bubble-label{position:absolute;z-index:2;left:50%;bottom:12%;transform:translateX(-50%);font-size:clamp(5px,16%,8px);font-weight:1000;line-height:1;letter-spacing:.04em;text-transform:uppercase}
+  .bubble-layer{position:absolute;z-index:6;inset:0 3% 10%}.rising-bubble,.soap-block,.rubber-duck{position:absolute;transform:translate(-50%,-50%);border:0;cursor:pointer}.rising-bubble{min-width:44px;min-height:44px;overflow:hidden;border-radius:50%;color:#23334c;background:radial-gradient(circle at 32% 24%,#fff 0 8%,#fff8 9% 15%,transparent 16%),radial-gradient(circle at 60% 70%,var(--bubble),#ffffff55);border:3px solid color-mix(in srgb,var(--bubble) 70%,white);box-shadow:inset -8px -9px 12px #2d5b7a28,0 5px 8px #408aa43d;animation:bubbleBreathe 1.5s ease-in-out infinite}.rising-bubble:active{transform:translate(-50%,-50%) scale(.82)}.rising-bubble:after{content:"";position:absolute;inset:7%;border-radius:50%;pointer-events:none;opacity:.42}.rising-bubble[data-pattern="stripes"]:after{background:repeating-linear-gradient(135deg,#fff 0 2px,transparent 2px 6px)}.rising-bubble[data-pattern="dots"]:after{background:radial-gradient(#fff 0 1.5px,transparent 2px);background-size:7px 7px}.rising-bubble[data-pattern="waves"]:after{background:repeating-radial-gradient(ellipse at 50% 120%,transparent 0 4px,#fff 5px 6px,transparent 7px 10px)}.rising-bubble[data-pattern="grid"]:after{background:linear-gradient(#fff8 1px,transparent 1px),linear-gradient(90deg,#fff8 1px,transparent 1px);background-size:7px 7px}.rising-bubble[data-pattern="rings"]:after{border:2px double #fff;background:radial-gradient(circle,transparent 0 24%,#fff8 26% 31%,transparent 33%)}.rising-bubble .bubble-cue{position:absolute;z-index:2;left:50%;top:46%;transform:translate(-50%,-50%);font-size:clamp(12px,45%,23px);line-height:1;font-style:normal;text-shadow:0 1px #fff}.rising-bubble .bubble-label{position:absolute;z-index:2;left:50%;bottom:12%;transform:translateX(-50%);font-size:clamp(5px,16%,8px);font-weight:1000;line-height:1;letter-spacing:.04em;text-transform:uppercase}
   .soap-block{min-width:32px;border:3px solid #445068;border-radius:22%;color:white;background:linear-gradient(135deg,#758198,#29374e);box-shadow:inset 4px 4px #a8b0bf,0 7px 0 #172236;transform:translate(-50%,-50%) rotate(6deg)}.soap-block i{display:block;font-size:22px;line-height:.8;font-style:normal}.soap-block small{font-size:7px;font-weight:1000}
+  .rubber-duck{display:grid;place-items:center;min-width:48px;min-height:48px;border:3px solid #fff;border-radius:50%;background:#ffe981;box-shadow:0 6px 0 #d2a532}.rubber-duck i{font-size:24px;font-style:normal}.rubber-duck small{position:absolute;bottom:1px;font-size:8px;font-weight:1000;color:#745500}
   .bubble-flash{position:absolute;z-index:18;left:50%;top:27%;transform:translate(-50%,-50%) scale(.5);padding:9px 15px;border-radius:16px;opacity:0;font-size:20px;font-weight:1000;white-space:nowrap;pointer-events:none}.bubble-flash.active{animation:flashPop .7s ease-out}.bubble-flash.star{color:#7a4d00;background:#ffe76b;border:3px solid #fff}.bubble-flash.danger{color:#fff;background:#e84362;border:3px solid #fff}
+  .bubble-flash.bonus{color:#624900;background:#ffe56b;border:3px solid #fff}
   .particle-layer{position:absolute;z-index:30;inset:0;pointer-events:none}.bubble-particle{position:absolute;width:10px;height:10px;border-radius:50%;animation:particleFly .7s ease-out forwards}
   .game-panel{position:absolute;z-index:40;inset:0;display:grid;place-items:center;padding:24px;background:linear-gradient(#57a8c6a8,#274a6bd4);backdrop-filter:blur(5px)}.game-panel[hidden]{display:none}.panel-card{width:min(100%,410px);padding:26px 22px 22px;border:4px solid #fff;border-radius:30px;text-align:center;background:linear-gradient(#fff,#eefcff);box-shadow:0 14px 0 #356b85,0 22px 50px #1a3d5d66;animation:panelIn .35s cubic-bezier(.2,1.45,.35,1)}.panel-card.compact{padding-top:32px}.eyebrow{display:inline-block;padding:5px 10px;border-radius:99px;color:#1f718b;background:#c9f5ff;font-size:10px;font-weight:1000;letter-spacing:.13em}.panel-card h1{margin:10px 0 9px;font-size:42px;line-height:.84;letter-spacing:-.06em;color:#284461;text-shadow:0 3px #fff}.panel-card h1 em{color:#ed6b93;font-style:normal}.panel-card h2{margin:8px 0;font-size:34px;color:#294762}.panel-card p{margin:11px auto 18px;max-width:320px;line-height:1.35;color:#526d7f}.tutorial-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px}.tutorial-row>div{padding:12px 7px;border-radius:18px;background:#e9f9fb}.tutorial-row b,.tutorial-row small{display:block}.tutorial-row b{font-size:12px}.tutorial-row small{font-size:10px;color:#6d8797}.chain-demo{display:block;margin:3px;color:#ee6f95;font-size:20px;letter-spacing:-5px}.soap-demo{display:grid;place-items:center;width:31px;height:31px;margin:0 auto 4px;border-radius:7px;color:white;background:#344159;font-weight:1000;transform:rotate(5deg)}
   .primary,.secondary{width:100%;min-height:52px;border-radius:17px;font-weight:1000;letter-spacing:.04em;cursor:pointer}.primary{border:0;color:#fff;background:linear-gradient(#ff88a6,#ed5e84);box-shadow:0 6px 0 #bd3e68}.primary:active{transform:translateY(4px);box-shadow:0 2px 0 #bd3e68}.secondary{margin-top:12px;border:2px solid #b7d6df;color:#46697c;background:#fff}.result-star{display:grid;place-items:center;width:72px;height:72px;margin:-62px auto 10px;border:5px solid #fff;border-radius:50%;color:#fff;background:#ffd552;box-shadow:0 6px 0 #d6a728;font-size:40px}.big-score{display:block;color:#ed6489;font-size:48px;line-height:1}.result-card>small{font-size:10px;font-weight:1000;letter-spacing:.15em;color:#7b94a0}.best-line{margin:0 0 18px;padding:10px;border-radius:12px;background:#e7f7fa;font-size:12px;font-weight:900;color:#4e7385}
   @keyframes ambientFloat{50%{transform:translateY(-16px)}}@keyframes goobyBob{50%{transform:translate(-50%,7px) rotate(1deg)}}@keyframes foam{50%{transform:translateX(12px) scale(1.08)}}@keyframes bubbleBreathe{50%{scale:1.045}}@keyframes urgentPulse{to{transform:scale(1.16)}}@keyframes flashPop{0%{opacity:0;transform:translate(-50%,-50%) scale(.4)}25%{opacity:1;transform:translate(-50%,-50%) scale(1.1)}75%{opacity:1}100%{opacity:0;transform:translate(-50%,-85%) scale(1)}}@keyframes particleFly{to{opacity:0;transform:translate(var(--tx),var(--ty)) scale(.2)}}@keyframes panelIn{from{opacity:0;transform:scale(.82) translateY(20px)}}
-  .bubble-blast[data-reduced-motion="true"] *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+  .bubble-blast[data-reduced-motion="true"] *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}@media(prefers-reduced-motion:reduce){.bubble-blast *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
   @media (max-height:700px){.bubble-blast{min-height:500px}.bubble-hud{top:8px}.bath-tub{inset:92px 0 0}.combo-ribbon{top:70px}.panel-card{padding:18px}.panel-card h1{font-size:35px}.tutorial-row{margin-bottom:13px}}
 `;
