@@ -19,10 +19,13 @@ class CuprumCatalogGeneratedTest {
         JsonObject catalog = CatalogValidator.parseObject(CATALOG_DIR.resolve("catalog.json"));
         assertEquals(CanonicalJson.sha256(catalog), CuprumCatalog.CATALOG_SHA256);
         assertEquals(catalog.getAsJsonArray("entries").size(), CuprumCatalog.ENTRY_COUNT);
-        assertEquals(22, CuprumCatalog.IDS.size());
+        assertEquals(272, CuprumCatalog.IDS.size());
         for (int i = 0; i < 22; i++) {
             assertEquals(String.format("U%02d", i + 1), CuprumCatalog.IDS.get(i), "id order must match sequence");
         }
+        // The additional entries follow in concept order: PWR first, QOL last.
+        assertEquals("PWR-01", CuprumCatalog.IDS.get(22));
+        assertEquals("QOL-12", CuprumCatalog.IDS.get(271));
         assertTrue(CuprumCatalog.IDS.contains("U01") && CuprumCatalog.IDS.contains("U22"));
         assertEquals(64, CuprumCatalog.CATALOG_SHA256.length());
     }

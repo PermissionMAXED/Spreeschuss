@@ -52,11 +52,57 @@ this directory (`CUPRUM/`).
   `src/catalogTool/.../UserContracts.java` one-to-one — exact `contract_key`,
   canonical `name` and `family` per id are all validator-enforced (mutation tests in
   `src/test` prove renames/swaps/re-familying fail). `summary`/`vanilla_overlap` are
-  prose and not machine-checked: reviewers own their semantic accuracy. New
-  agent-proposed content gets family ids (`PWR-01`, …) with `origin: additional` and
+  prose and not machine-checked for U-entries: reviewers own their semantic accuracy.
+  Additional content gets family ids (`PWR-01`, …) with `origin: additional` and
   tier `core`/`stretch`; update `catalog/expected_counts.json` when counts change.
   The diagnostic Charge Probe is CP0 infrastructure and intentionally has **no**
   catalog entry.
+- **CP0B catalog state**: `catalog/catalog.json` holds all 272 entries — 22 user
+  contracts plus the 250 additional concept features (202 core + 48 stretch,
+  sequences 23–272, families PWR/OXI/SHD/TES/TUB/RAIL/GOL/WEA/TOOL/EXO/MOB/GEN/FX/
+  ADV/DEC/QOL). These are **planning data only: no additional gameplay is
+  implemented** — broad content implementation stays blocked until CP3 (playable
+  vertical slice). `docs/feature-concepts/` is the authoritative concept source; the
+  `verifyConceptParity` task (wired into `check`, plus `ConceptParityTest`) re-parses
+  those docs, recomputes the INDEX.md **full-row digest** (SHA-256 over the
+  compact-JSON encoding of all 250×12 family-table cells — the exact formula is
+  documented in INDEX.md; the current 64-hex literal is also pinned in
+  `ConceptParityTest`, so digest changes require a reviewed test diff) and compares
+  every additional entry field
+  (id/sequence/name/family/type/tier/prog/wave/deps/overlap/summary), so edits to
+  either side that drift apart fail the build.   Parity additionally enforces the
+  concept row-quality contract (all 12 cells nonblank; unique
+  `server_gametest:`/`client_gametest:`/`unit_test:` test ids; every Visual cell
+  carries an ordered pair of structured `T2:` then `T3:` clauses with meaningful
+  non-punctuation bodies — `T2: ; T3:` fails; acceptance criteria — after
+  stripping feature-id/T-tier/wave labels — must carry a number bound to an
+  allowlisted unit/comparator or an explicit `result/state/returns/equals =
+  VALUE` assertion (free-floating ALL_CAPS like `Looks GOOD.` and bare digits
+  fail), with banned vague tokens rejected; lexical test-scope suitability:
+  server tests never assert render/visual/screen/display/pixel/HUD/GUI/client/
+  fps/frame/shader/texture/model/audio unless the cell explicitly says it only
+  asserts dispatch/state, unit tests never assert block/world/level/entity/
+  player/inventory/claim/permission/render/screen/display/GUI, and words from the
+  row's own feature name are exempt as named game objects; every feature id
+  referenced in an acceptance cell — after Unicode dash/space normalization —
+  must be a declared, earlier-sequence dependency, core-only for core rows).
+  Hidden-content handling: raw HTML tag/comment constructs, **all** HTML entities
+  (named or numeric, case-insensitive, including `&VerticalLine;`/`&verbar;` and
+  encoded hyphens like `&#45;`) and blockquote lines are rejected outright
+  anywhere in a concept file (the docs never need them); backtick and tilde
+  fences (marker+length matching at 0–3 indent) and four-space/tab indented code
+  remain invisible; exactly one visible digest line; exact headers/dividers;
+  self-consistent family links; blank rows and escaped pipes rejected — all
+  failing with clean `CatalogValidationException` messages.
+  `RepairedConceptSemanticsTest` pins the evaluator-repaired semantic contracts
+  (canonical U03/U06 effect values and TES-03/FX-01 stacking, charge-economy,
+  PWR-14 line-loss, SHD ceil-upkeep and EXO-11 heat formulas, the numeric FX
+  budget, bootstrap/sink-route/authority/dependency rules, GEN-08's vanilla
+  copper-bulb lamp, DEC display bands and the QOL-07 REI scope) as named
+  regression tests independent of the generic parity path.
+  Additional-entry rules the validator also
+  enforces: unique names, no forward deps (additional entries may only reference
+  user entries or lower-sequence additional ids), and no core→stretch deps.
 - The probe block texture is generated deterministically by
   `python3 scripts/gen_probe_texture.py`; rerun it instead of editing the PNG.
 - No mixins are used so far (no mixin descriptor exists — add one only when needed).

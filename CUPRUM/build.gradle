@@ -127,13 +127,34 @@ def generateCatalog = tasks.register('generateCatalog', JavaExec) {
 
 sourceSets.main.java.srcDir(generateCatalog)
 
+// Proves every origin=additional catalog entry agrees 1:1 with the authoritative
+// concept docs (docs/feature-concepts): full-row SHA-256 digest over all 250x12
+// table cells, family ranges, row-quality contract (nonblank cells, unique
+// scope-suitable test ids, allowlist-concrete acceptance, ordered meaningful
+// T2:/T3: visual clauses, dependency-closed acceptance id references) and every
+// id/name/family/type/tier/prog/wave/deps/overlap/summary value. Raw HTML
+// tags/comments, all HTML entities and blockquote lines are rejected outright;
+// fenced/indented content is never authoritative (CommonMark-aware).
+def verifyConceptParity = tasks.register('verifyConceptParity', JavaExec) {
+    group = 'verification'
+    description = 'Verifies catalog/catalog.json against the concept docs in docs/feature-concepts.'
+    classpath = sourceSets.catalogTool.runtimeClasspath
+    mainClass = 'dev.cuprum.catalogtool.CatalogTool'
+    args(['parity'] + catalogToolArgs + [file('docs/feature-concepts').absolutePath])
+    inputs.dir('catalog')
+    inputs.dir('docs/feature-concepts')
+    inputs.files(sourceSets.catalogTool.runtimeClasspath)
+}
+
 tasks.named('check') {
     dependsOn validateCatalog
+    dependsOn verifyConceptParity
 }
 
 test {
     useJUnitPlatform()
     systemProperty 'cuprum.catalogDir', file('catalog').absolutePath
+    systemProperty 'cuprum.conceptDocsDir', file('docs/feature-concepts').absolutePath
 }
 
 java {

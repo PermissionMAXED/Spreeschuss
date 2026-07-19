@@ -68,7 +68,7 @@ class CatalogValidatorTest {
     @Test
     void repoCatalogCoversAllTwentyTwoUserContractsExactly() throws Exception {
         JsonObject catalog = repoCatalog();
-        assertEquals(22, catalog.getAsJsonArray("entries").size());
+        assertEquals(272, catalog.getAsJsonArray("entries").size());
         assertEquals(22, UserContracts.CONTRACTS.size());
         for (int i = 0; i < 22; i++) {
             JsonObject entry = catalog.getAsJsonArray("entries").get(i).getAsJsonObject();
@@ -78,6 +78,12 @@ class CatalogValidatorTest {
             assertEquals("user", entry.get("origin").getAsString(), id);
             assertEquals("core", entry.get("tier").getAsString(), id);
             assertEquals(i + 1, entry.get("sequence").getAsInt(), id);
+        }
+        // Entries 23..272 are the CP0B additional features; none may carry a contract_key.
+        for (int i = 22; i < 272; i++) {
+            JsonObject entry = catalog.getAsJsonArray("entries").get(i).getAsJsonObject();
+            assertEquals("additional", entry.get("origin").getAsString(), entry.get("id").getAsString());
+            assertFalse(entry.has("contract_key"), entry.get("id").getAsString());
         }
     }
 

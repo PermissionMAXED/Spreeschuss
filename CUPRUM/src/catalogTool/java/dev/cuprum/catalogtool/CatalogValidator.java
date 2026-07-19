@@ -34,7 +34,12 @@ import java.util.regex.Pattern;
  *   <li>stable, contiguous global {@code sequence} (1..N in file order);</li>
  *   <li>numeric-aware, family-aware id numbering (U01..Un contiguous; per-family
  *       additional ids contiguous from 01, family name ↔ id prefix bijection);</li>
- *   <li>unique ids, dependency closure, dependency DAG (no cycles, no self-deps);</li>
+ *   <li>unique ids and unique names, dependency closure, dependency DAG (no cycles,
+ *       no self-deps);</li>
+ *   <li>additional entries may only depend on user entries or on additional entries
+ *       with a lower global sequence (no forward references);</li>
+ *   <li>core entries must never depend on stretch entries (cutting all stretch
+ *       features must leave the core catalog closed under deps);</li>
  *   <li>expected origin/tier counts (user, additional core, additional stretch);</li>
  *   <li>non-blank dispositions (vanilla_overlap, summary, name, family).</li>
  * </ul>
@@ -77,6 +82,7 @@ public final class CatalogValidator {
         }
 
         checkSequence(entries, errors);
+        checkUniqueNames(byId, errors);
         checkOriginAndContracts(byId, expectedCounts, errors);
         checkFamilyIds(byId, errors);
         checkDependencies(byId, errors);
@@ -85,6 +91,26 @@ public final class CatalogValidator {
         checkCounts(byId, expectedCounts, errors);
 
         return errors;
+    }
+
+    /** Human-readable origin/tier totals, e.g. for the CLI success line. */
+    public static String describeCounts(JsonObject catalog) {
+        int user = 0;
+        int additionalCore = 0;
+        int additionalStretch = 0;
+        for (JsonElement element : catalog.getAsJsonArray("entries")) {
+            JsonObject entry = element.getAsJsonObject();
+            if ("user".equals(entry.get("origin").getAsString())) {
+                user++;
+            } else if ("core".equals(entry.get("tier").getAsString())) {
+                additionalCore++;
+            } else {
+                additionalStretch++;
+            }
+        }
+        int total = user + additionalCore + additionalStretch;
+        return total + " entries (" + user + " user + " + additionalCore + " additional core + "
+                + additionalStretch + " additional stretch)";
     }
 
     /** expected_counts.json must contain exactly: user, additional_core, additional_stretch. */
@@ -250,6 +276,19 @@ public final class CatalogValidator {
         }
     }
 
+    /** Entry names must be unique across the whole catalog (no silent duplicates). */
+    private static void checkUniqueNames(Map<String, JsonObject> byId, List<String> errors) {
+        Map<String, String> nameToId = new HashMap<>();
+        for (JsonObject entry : byId.values()) {
+            String id = entry.get("id").getAsString();
+            String name = entry.get("name").getAsString();
+            String otherId = nameToId.putIfAbsent(name, id);
+            if (otherId != null) {
+                errors.add("duplicate entry name '" + name + "' used by '" + otherId + "' and '" + id + "'");
+            }
+        }
+    }
+
     private static void checkDependencies(Map<String, JsonObject> byId, List<String> errors) {
         for (JsonObject entry : byId.values()) {
             String id = entry.get("id").getAsString();
@@ -257,8 +296,28 @@ public final class CatalogValidator {
                 String depId = dep.getAsString();
                 if (depId.equals(id)) {
                     errors.add("entry '" + id + "' depends on itself");
-                } else if (!byId.containsKey(depId)) {
+                    continue;
+                }
+                JsonObject depEntry = byId.get(depId);
+                if (depEntry == null) {
                     errors.add("entry '" + id + "' depends on unknown id '" + depId + "'");
+                    continue;
+                }
+                // Additional entries may only reference user contracts or additional
+                // entries that come earlier in the global sequence (no forward deps).
+                if ("additional".equals(entry.get("origin").getAsString())
+                        && "additional".equals(depEntry.get("origin").getAsString())
+                        && depEntry.get("sequence").getAsInt() >= entry.get("sequence").getAsInt()) {
+                    errors.add("additional entry '" + id + "' (sequence " + entry.get("sequence").getAsInt()
+                            + ") has forward dependency on '" + depId + "' (sequence "
+                            + depEntry.get("sequence").getAsInt()
+                            + "); additional deps must reference user entries or lower-sequence additional entries");
+                }
+                // Core scope must stay closed under deps when all stretch entries are cut.
+                if ("core".equals(entry.get("tier").getAsString())
+                        && "stretch".equals(depEntry.get("tier").getAsString())) {
+                    errors.add("core entry '" + id + "' depends on stretch entry '" + depId
+                            + "'; core must remain independent from stretch");
                 }
             }
         }
