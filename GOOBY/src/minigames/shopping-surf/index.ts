@@ -199,6 +199,13 @@ export class ShoppingSurfGame implements MinigameModule {
   private perfIndex = 0;
   private perfCount = 0;
 
+  // Last values pushed into the shared HUD. The HUD writes textContent
+  // unconditionally, so diffing here keeps steady frames free of DOM writes
+  // (and of the toLocaleString allocations) on SwiftShader-class devices.
+  private hudScore = 0;
+  private hudCombo = 0;
+  private hudTimer = 0;
+
   get title(): string {
     return pickLocalized(manifest.title);
   }
@@ -418,9 +425,21 @@ export class ShoppingSurfGame implements MinigameModule {
       });
       if (this.phase === "running") {
         if (dt > 0) this.samplePerf(dt);
-        this.hud?.setTimer(state.time);
-        this.hud?.setScore(state.score);
-        this.hud?.setCombo(state.combo);
+        // HUD DOM writes only when the displayed value actually changes.
+        const timerValue = Math.ceil(state.time);
+        if (timerValue !== this.hudTimer) {
+          this.hudTimer = timerValue;
+          this.hud?.setTimer(state.time);
+        }
+        const scoreValue = Math.floor(state.score);
+        if (scoreValue !== this.hudScore) {
+          this.hudScore = scoreValue;
+          this.hud?.setScore(scoreValue);
+        }
+        if (state.combo !== this.hudCombo) {
+          this.hudCombo = state.combo;
+          this.hud?.setCombo(state.combo);
+        }
         if (state.phase === "finished") {
           this.finishRun();
           return;
@@ -572,6 +591,9 @@ export class ShoppingSurfGame implements MinigameModule {
     this.hud?.setScore(0);
     this.hud?.setCombo(0);
     this.hud?.setTimer(0);
+    this.hudScore = 0;
+    this.hudCombo = 0;
+    this.hudTimer = 0;
     this.chrome?.setList(this.state.groceries);
     this.chrome?.setShields(SURF_SHIELD_COUNT, SURF_SHIELD_COUNT);
     this.chrome?.setMultiplier(1);
