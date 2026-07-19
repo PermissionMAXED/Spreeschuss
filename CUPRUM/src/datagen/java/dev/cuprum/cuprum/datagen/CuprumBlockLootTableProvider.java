@@ -1,0 +1,19 @@
+package dev.cuprum.cuprum.datagen;
+
+import dev.cuprum.cuprum.CuprumBlocks;
+import net.fabricmc.fabric.api.datagen.v1.FabricDataOutput;
+import net.fabricmc.fabric.api.datagen.v1.provider.FabricBlockLootTableProvider;
+import net.minecraft.core.HolderLookup;
+
+import java.util.concurrent.CompletableFuture;
+
+public final class CuprumBlockLootTableProvider extends FabricBlockLootTableProvider {
+    public CuprumBlockLootTableProvider(FabricDataOutput dataOutput, CompletableFuture<HolderLookup.Provider> registryLookup) {
+        super(dataOutput, registryLookup);
+    }
+
+    @Override
+    public void generate() {
+        dropSelf(CuprumBlocks.CHARGE_PROBE);
+    }
+}

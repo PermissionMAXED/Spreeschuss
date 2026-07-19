@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "cuprum-datagen",
+  "version": "1.0.0",
+  "name": "Cuprum Datagen",
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-datagen": [
+      "dev.cuprum.cuprum.datagen.CuprumDatagen"
+    ]
+  },
+  "depends": {
+    "cuprum": "*"
+  }
+}

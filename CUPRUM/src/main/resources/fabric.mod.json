@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "cuprum",
+  "version": "${version}",
+  "name": "Cuprum",
+  "description": "Copper-centric technology and diagnostics for Fabric 1.21.9. All content is driven by a build-time validated catalog.",
+  "authors": [
+    "Cuprum contributors"
+  ],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "dev.cuprum.cuprum.Cuprum"
+    ],
+    "client": [
+      "dev.cuprum.cuprum.client.CuprumClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "fabric-api": ">=0.134.1",
+    "cloth-config": ">=20.0.149",
+    "minecraft": "~1.21.9",
+    "java": ">=21"
+  },
+  "suggests": {
+    "modmenu": "*"
+  }
+}

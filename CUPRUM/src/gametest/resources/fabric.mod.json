@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "cuprum-gametest",
+  "version": "1.0.0",
+  "name": "Cuprum GameTests",
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": [
+      "dev.cuprum.cuprum.gametest.ChargeProbeGameTest"
+    ],
+    "fabric-client-gametest": [
+      "dev.cuprum.cuprum.gametest.CuprumClientGameTest"
+    ]
+  },
+  "depends": {
+    "cuprum": "*"
+  }
+}

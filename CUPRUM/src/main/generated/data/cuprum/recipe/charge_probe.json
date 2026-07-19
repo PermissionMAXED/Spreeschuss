@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "key": {
+    "C": "minecraft:copper_ingot",
+    "c": "minecraft:copper_nugget",
+    "r": "minecraft:redstone"
+  },
+  "pattern": [
+    "cCc",
+    "CrC",
+    "cCc"
+  ],
+  "result": {
+    "count": 1,
+    "id": "cuprum:charge_probe"
+  }
+}

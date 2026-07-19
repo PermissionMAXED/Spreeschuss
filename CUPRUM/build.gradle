@@ -1,0 +1,321 @@
+plugins {
+    // 1.21.9 ships obfuscated: the remap Loom variant is mandatory (plain net.fabricmc.fabric-loom is for
+    // unobfuscated versions only and must NOT be used here).
+    id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    maven {
+        name = 'ParchmentMC'
+        url = 'https://maven.parchmentmc.org'
+    }
+    maven {
+        name = 'shedaniel'
+        url = 'https://maven.shedaniel.me/'
+    }
+    maven {
+        name = 'TerraformersMC'
+        url = 'https://maven.terraformersmc.com/releases/'
+    }
+    mavenCentral()
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        cuprum {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+
+    runs {
+        serverSmoke {
+            server()
+            configName = 'Server Smoke'
+            runDir 'build/run/serverSmoke'
+            programArgs 'nogui'
+        }
+    }
+}
+
+fabricApi {
+    configureDataGeneration {
+        createSourceSet = true
+        modId = 'cuprum-datagen'
+        client = true
+    }
+    configureTests {
+        createSourceSet = true
+        modId = 'cuprum-gametest'
+        eula = true
+    }
+}
+
+// Plain-Java tool that validates the content catalog and generates CuprumCatalog.java.
+// Kept inside the project (no included build / buildSrc) for reliability; it has no
+// Minecraft dependencies.
+sourceSets {
+    catalogTool
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.layered() {
+        officialMojangMappings()
+        parchment("org.parchmentmc.data:parchment-${project.minecraft_version}:${project.parchment_version}@zip")
+    }
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // Required dependency
+    modImplementation("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+        exclude group: 'net.fabricmc.fabric-api'
+    }
+    // Dev-runtime convenience only
+    modLocalRuntime("com.terraformersmc:modmenu:${project.modmenu_version}") {
+        exclude group: 'net.fabricmc.fabric-api'
+    }
+
+    // Catalog tool + unit tests (plain JUnit; no Minecraft classes touched at runtime).
+    catalogToolImplementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation sourceSets.catalogTool.output
+    testImplementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// ---------------------------------------------------------------------------
+// Catalog validation + deterministic codegen
+// ---------------------------------------------------------------------------
+def catalogToolArgs = [
+        file('catalog/catalog.json').absolutePath,
+        file('catalog/schema.json').absolutePath,
+        file('catalog/expected_counts.json').absolutePath,
+]
+def generatedCatalogDir = layout.buildDirectory.dir('generated/sources/catalog/java/main')
+
+def validateCatalog = tasks.register('validateCatalog', JavaExec) {
+    group = 'verification'
+    description = 'Validates catalog/catalog.json against catalog/schema.json and semantic rules.'
+    classpath = sourceSets.catalogTool.runtimeClasspath
+    mainClass = 'dev.cuprum.catalogtool.CatalogTool'
+    args(['validate'] + catalogToolArgs)
+    inputs.dir('catalog')
+    inputs.files(sourceSets.catalogTool.runtimeClasspath)
+}
+
+def generateCatalog = tasks.register('generateCatalog', JavaExec) {
+    group = 'build'
+    description = 'Generates CuprumCatalog.java (ids + canonical SHA-256) from catalog/catalog.json.'
+    classpath = sourceSets.catalogTool.runtimeClasspath
+    mainClass = 'dev.cuprum.catalogtool.CatalogTool'
+    args(['generate'] + catalogToolArgs + ['dev.cuprum.cuprum', generatedCatalogDir.get().asFile.absolutePath])
+    inputs.dir('catalog')
+    inputs.files(sourceSets.catalogTool.runtimeClasspath)
+    outputs.dir(generatedCatalogDir)
+}
+
+sourceSets.main.java.srcDir(generateCatalog)
+
+tasks.named('check') {
+    dependsOn validateCatalog
+}
+
+test {
+    useJUnitPlatform()
+    systemProperty 'cuprum.catalogDir', file('catalog').absolutePath
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+    withSourcesJar()
+}
+
+processResources {
+    inputs.property 'version', project.version
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': inputs.properties.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = 'UTF-8'
+    it.options.release = 21
+}
+
+jar {
+    inputs.property 'archivesName', project.base.archivesName
+    from('LICENSE') {
+        rename { "${it}_${inputs.properties.archivesName}" }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Toolchain verification
+// ---------------------------------------------------------------------------
+// EXPECTED_PINS are immutable literals (NOT read from gradle.properties), so an
+// overridden -P property or an edited properties file can never change what this
+// task accepts. Checks compare the literals against:
+//   1. the running Gradle + resolved Java toolchain,
+//   2. the effective project properties (catches -P overrides),
+//   3. the declared dependency coordinates per configuration (what the build will use),
+//   4. the resolved fabric-loader artifact on the runtime classpath,
+//   5. the Loom plugin's own LOOM_VERSION constant,
+//   6. the layered-mappings hash (a function of mojmap+parchment spec, so a changed
+//      parchment version changes the hash).
+def EXPECTED_PINS = [
+        gradle       : '9.5.1',
+        javaMajor    : 21,
+        minecraft    : '1.21.9',
+        loader       : '0.19.3',
+        fabricApi    : '0.134.1+1.21.9',
+        loom         : '1.17.16',
+        parchment    : '2025.10.05',
+        clothConfig  : '20.0.149',
+        modmenu      : '16.0.1',
+        mappingsSpec : 'layered+hash.1797277479',
+].asImmutable()
+
+tasks.register('toolchainVerify') {
+    group = 'verification'
+    description = 'Verifies Gradle/Java and every pinned mod-stack version against immutable expected literals.'
+    // Everything below is captured at CONFIGURATION time into plain values/Providers so
+    // the doLast action never touches Task.project (Gradle 10 forbids execution-time
+    // Task.project access). Resolution of the runtime classpath stays lazy via the
+    // resolvedArtifacts Provider.
+    notCompatibleWithConfigurationCache('inspects resolved configurations')
+
+    def gradleVer = gradle.gradleVersion
+    def javaLauncher = javaToolchains.launcherFor(java.toolchain)
+
+    // Effective project properties (reflect -P overrides and gradle.properties edits).
+    def effectiveProps = [
+            minecraft_version   : String.valueOf(project.minecraft_version),
+            loader_version      : String.valueOf(project.loader_version),
+            fabric_api_version  : String.valueOf(project.fabric_api_version),
+            loom_version        : String.valueOf(project.loom_version),
+            parchment_version   : String.valueOf(project.parchment_version),
+            cloth_config_version: String.valueOf(project.cloth_config_version),
+            modmenu_version     : String.valueOf(project.modmenu_version),
+    ]
+
+    // Declared dependency coordinates actually registered on configurations.
+    def declaredVersion = { String confName, String depGroup, String depName ->
+        configurations.getByName(confName).dependencies
+                .find { it.group == depGroup && it.name == depName }?.version ?: '<absent>'
+    }
+    def declaredVersions = [
+            minecraft: declaredVersion('minecraft', 'com.mojang', 'minecraft'),
+            loader   : declaredVersion('modImplementation', 'net.fabricmc', 'fabric-loader'),
+            fabricApi: declaredVersion('modImplementation', 'net.fabricmc.fabric-api', 'fabric-api'),
+            cloth    : declaredVersion('modImplementation', 'me.shedaniel.cloth', 'cloth-config-fabric'),
+            modmenu  : declaredVersion('modLocalRuntime', 'com.terraformersmc', 'modmenu'),
+            mappings : declaredVersion('mappings', 'loom', 'mappings'),
+    ]
+
+    // Lazy Provider for the resolved fabric-loader artifact on the runtime classpath.
+    def resolvedLoaderVersion = configurations.runtimeClasspath.incoming.artifacts.resolvedArtifacts.map { artifacts ->
+        def component = artifacts
+                .collect { it.id.componentIdentifier }
+                .find { it instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier \
+                        && it.group == 'net.fabricmc' && it.module == 'fabric-loader' }
+        component != null ? component.version : '<absent>'
+    }
+
+    def loomPluginVersion = net.fabricmc.loom.LoomGradlePlugin.LOOM_VERSION
+
+    doLast {
+        def problems = []
+        def check = { String label, Object actual, Object wanted ->
+            def ok = actual?.toString() == wanted.toString()
+            println String.format('%-46s %-28s expected %-24s %s', label, actual, wanted, ok ? 'OK' : 'MISMATCH')
+            if (!ok) {
+                problems << "${label}: actual '${actual}' != expected '${wanted}'"
+            }
+        }
+
+        // 1. Environment.
+        check('Gradle version', gradleVer, EXPECTED_PINS.gradle)
+        check('Java toolchain (major)', javaLauncher.get().metadata.languageVersion.asInt(), EXPECTED_PINS.javaMajor)
+
+        // 2. Effective project properties (catch -P overrides / edited gradle.properties).
+        check('property minecraft_version', effectiveProps.minecraft_version, EXPECTED_PINS.minecraft)
+        check('property loader_version', effectiveProps.loader_version, EXPECTED_PINS.loader)
+        check('property fabric_api_version', effectiveProps.fabric_api_version, EXPECTED_PINS.fabricApi)
+        check('property loom_version', effectiveProps.loom_version, EXPECTED_PINS.loom)
+        check('property parchment_version', effectiveProps.parchment_version, EXPECTED_PINS.parchment)
+        check('property cloth_config_version', effectiveProps.cloth_config_version, EXPECTED_PINS.clothConfig)
+        check('property modmenu_version', effectiveProps.modmenu_version, EXPECTED_PINS.modmenu)
+
+        // 3. Declared dependency coordinates actually registered on configurations.
+        check('declared com.mojang:minecraft', declaredVersions.minecraft, EXPECTED_PINS.minecraft)
+        check('declared net.fabricmc:fabric-loader', declaredVersions.loader, EXPECTED_PINS.loader)
+        check('declared fabric-api', declaredVersions.fabricApi, EXPECTED_PINS.fabricApi)
+        check('declared cloth-config-fabric', declaredVersions.cloth, EXPECTED_PINS.clothConfig)
+        check('declared modmenu', declaredVersions.modmenu, EXPECTED_PINS.modmenu)
+        check('declared layered mappings spec', declaredVersions.mappings, EXPECTED_PINS.mappingsSpec)
+
+        // 4. Resolved fabric-loader artifact on the runtime classpath.
+        check('resolved net.fabricmc:fabric-loader', resolvedLoaderVersion.get(), EXPECTED_PINS.loader)
+
+        // 5. The Loom plugin reports its own version.
+        check('Loom plugin LOOM_VERSION', loomPluginVersion, EXPECTED_PINS.loom)
+
+        if (!problems.isEmpty()) {
+            throw new GradleException('toolchainVerify FAILED:\n  ' + problems.join('\n  '))
+        }
+        println 'toolchainVerify OK (all pins match immutable expected literals)'
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lint gate: compile every source set (main, client, datagen, gametest,
+// catalogTool, test) with -Xlint warnings enabled and treated as errors.
+// ---------------------------------------------------------------------------
+tasks.withType(JavaCompile).configureEach {
+    // -Xlint:all with targeted, documented exclusions (not suppressions of real problems):
+    //  -classfile : Loom-remapped third-party jars can carry newer minor class metadata.
+    //  -processing: no annotation processors are configured on purpose.
+    it.options.compilerArgs.addAll(['-Xlint:all,-classfile,-processing', '-Werror'])
+}
+
+def lint = tasks.register('lint') {
+    group = 'verification'
+    description = 'Compiles all source sets (main, client, datagen, gametest, catalogTool, test) with -Xlint -Werror.'
+    dependsOn tasks.named('compileJava')
+    dependsOn tasks.named('compileClientJava')
+    dependsOn tasks.named('compileDatagenJava')
+    dependsOn tasks.named('compileGametestJava')
+    dependsOn tasks.named('compileCatalogToolJava')
+    dependsOn tasks.named('compileTestJava')
+}
+
+tasks.named('check') {
+    // check therefore compiles datagen + gametest sources even when their run tasks are skipped.
+    dependsOn lint
+}
+
+// ---------------------------------------------------------------------------
+// Jar hygiene: the datagen .cache directory must never ship in any jar.
+// ---------------------------------------------------------------------------
+tasks.named('jar', Jar) {
+    exclude '.cache', '.cache/**'
+}
+tasks.named('sourcesJar', Jar) {
+    exclude '.cache', '.cache/**'
+}

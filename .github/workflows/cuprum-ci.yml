@@ -1,0 +1,153 @@
+# CI for the CUPRUM Fabric mod only (path-filtered; other projects in this repo
+# have their own workflows). All run steps execute inside CUPRUM/; artifact paths
+# are given from the repository root because upload-artifact ignores
+# defaults.run.working-directory.
+#
+# Action SHAs are immutable peeled commit SHAs (annotated tags resolved to their
+# target commits via the GitHub API):
+#   actions/checkout@v5.0.0        -> 08c6903cd8c0fde910a37f88322edcfb5dd907a8
+#   actions/setup-java@v5.0.0      -> dded0888837ed1f317902acf8a20df0ad188d165
+#   actions/upload-artifact@v4.6.2 -> ea165f8d65b6e75b540449e92b4886f43607fa02
+#   gradle/actions@v4.4.1          -> ac638b010cf58a27ee6c972d7336334ccaf61c96
+name: cuprum-ci
+
+on:
+  push:
+    paths:
+      - 'CUPRUM/**'
+      - '.github/workflows/cuprum-ci.yml'
+  pull_request:
+    paths:
+      - 'CUPRUM/**'
+      - '.github/workflows/cuprum-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: cuprum-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: CUPRUM
+
+jobs:
+  build:
+    name: Toolchain, lint, unit tests, GameTest, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96 # v4.4.1
+      - name: Verify pinned toolchain
+        run: ./gradlew toolchainVerify --stacktrace
+      - name: Negative toolchain check (wrong loader pin must fail)
+        run: |
+          if ./gradlew toolchainVerify -Ploader_version=0.19.2 --quiet; then
+            echo 'toolchainVerify accepted a wrong -Ploader_version override' >&2
+            exit 1
+          fi
+          echo 'override correctly rejected'
+      - name: Lint, catalog validation, unit tests, build
+        run: ./gradlew check build --stacktrace
+      - name: Server GameTests (headless)
+        run: ./gradlew runGameTest --stacktrace
+      - name: Inspect jars for cache/placeholder leakage
+        run: |
+          for jar in build/libs/*.jar; do
+            echo "== $jar"
+            if unzip -l "$jar" | grep -E '\.cache'; then
+              echo "$jar contains datagen .cache entries" >&2
+              exit 1
+            fi
+          done
+          if unzip -p build/libs/cuprum-*[0-9].jar fabric.mod.json | grep -F 'example.invalid'; then
+            echo 'placeholder contact metadata leaked into the jar' >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: cuprum-jars-and-reports
+          path: |
+            CUPRUM/build/libs/*.jar
+            CUPRUM/build/reports/tests/**
+            CUPRUM/build/run/gameTest/logs/**
+          if-no-files-found: warn
+
+  datagen:
+    name: Datagen determinism + committed-output freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96 # v4.4.1
+      - name: Run datagen twice and compare
+        run: ./scripts/datagen_determinism.sh
+      - name: Committed generated output must be fresh (tracked diffs + untracked files)
+        run: |
+          # Tracked modifications to committed datagen output:
+          git diff --exit-code -- src/main/generated
+          # Tracked AND untracked changes (new files datagen produced that were never
+          # committed). The gitignored src/main/generated/.cache/ never appears here.
+          STATUS=$(git status --porcelain --untracked-files=all -- src/main/generated)
+          if [ -n "$STATUS" ]; then
+            echo 'datagen produced uncommitted or untracked files under src/main/generated:' >&2
+            echo "$STATUS" >&2
+            exit 1
+          fi
+          echo 'generated output is fresh (no tracked diffs, no untracked files)'
+
+  server-smoke:
+    name: Dedicated server smoke (Done + clean console stop)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96 # v4.4.1
+      - name: Server smoke
+        run: ./scripts/server_smoke.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: cuprum-server-smoke-logs
+          path: |
+            CUPRUM/build/serverSmoke-console.log
+            CUPRUM/build/run/serverSmoke/logs/**
+          if-no-files-found: warn
+
+  client-smoke:
+    name: Client GameTest under Xvfb (screenshots)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96 # v4.4.1
+      - name: Install Xvfb and GL libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb mesa-utils libgl1 libglx-mesa0
+      - name: Client smoke (real client boot + screenshots)
+        run: ./scripts/client_smoke.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: cuprum-client-smoke-screenshots-and-logs
+          path: |
+            CUPRUM/build/run/clientGameTest/screenshots/**
+            CUPRUM/build/run/clientGameTest/logs/**
+            CUPRUM/build/clientSmoke-console.log
+          if-no-files-found: warn
