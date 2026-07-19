@@ -1,9 +1,11 @@
 import type {
   MinigameContext,
   MinigameFactory,
+  MinigameManifest,
   MinigameModule,
   MinigamePayout,
 } from "../../core/contracts/minigame";
+import { validateMinigameManifest } from "../../core/contracts/minigame";
 import type { MinigameStubDefinition } from "../stub";
 import {
   beginCannon,
@@ -17,6 +19,7 @@ import {
   resumeCannon,
   updateCannon,
   type CannonDifficulty,
+  type CannonCloud,
   type CannonPoint,
   type CannonState,
   type CannonTarget,
@@ -27,8 +30,57 @@ import {
 } from "./settlement";
 import "./style.css";
 
-const TITLE = "Carrot Cannon";
-const INSTRUCTIONS = "Drag back or use the aim buttons, then fire carrots through the picnic range.";
+/** Final launch manifest in the frozen CP1 shape, localized in both languages. */
+export const manifest: MinigameManifest = validateMinigameManifest({
+  id: "carrot-cannon",
+  title: { en: "Carrot Cannon", de: "Karottenkanone" },
+  instructions: {
+    en: "Aim bouncy carrots at the picnic targets.",
+    de: "Ziele mit hüpfenden Karotten auf die Picknick-Ziele.",
+  },
+  icon: "✹",
+  category: "skill",
+  stage3d: false,
+  unlockLevel: 4,
+  audioCues: ["go", "hit", "miss", "combo", "score", "lose", "win"],
+  tutorial: [
+    {
+      icon: "🥕",
+      title: { en: "Pull, aim, release", de: "Ziehen, zielen, loslassen" },
+      body: {
+        en: "Drag back like a slingshot, or use the arrow controls and Fire button.",
+        de: "Ziehe wie bei einer Schleuder zurück oder nutze Pfeiltasten und den Feuerknopf.",
+      },
+    },
+    {
+      icon: "🌬",
+      title: { en: "Read every wind", de: "Lies jeden Wind" },
+      body: {
+        en: "The seeded wind changes between shots but stays fixed for each entire flight.",
+        de: "Der feste Wind wechselt zwischen Schüssen, bleibt aber während jedes Flugs gleich.",
+      },
+    },
+    {
+      icon: "☁",
+      title: { en: "Bounce from clouds", de: "Pralle von Wolken ab" },
+      body: {
+        en: "Soft marked clouds ricochet a carrot once and add to its bank-shot bonus.",
+        de: "Weiche markierte Wolken lassen eine Karotte einmal abprallen und erhöhen den Trickbonus.",
+      },
+    },
+    {
+      icon: "🎯",
+      title: { en: "Clear under par", de: "Unter Par abräumen" },
+      body: {
+        en: "Shots are limited. Break the two-hit piñata and clear every target under par for a bonus.",
+        de: "Schüsse sind begrenzt. Zerbrich die Piñata mit zwei Treffern und räume unter Par ab.",
+      },
+    },
+  ],
+});
+
+const TITLE = manifest.title.en;
+const INSTRUCTIONS = manifest.instructions.en;
 const WORLD_WIDTH = 100;
 const WORLD_HEIGHT = 70;
 
@@ -48,6 +100,7 @@ interface SharedFeedbackContext extends MinigameContext {
   readonly haptics?: {
     impact(pattern: "light" | "medium" | "success" | "warning"): void;
   };
+  readonly reducedMotion?: boolean;
 }
 
 const DIFFICULTY_COPY: Readonly<Record<CannonDifficulty, { readonly label: string; readonly note: string }>> = {
@@ -61,7 +114,7 @@ export class CarrotCannonMinigame implements MinigameModule {
   readonly title = TITLE;
   readonly instructions = INSTRUCTIONS;
 
-  private context: MinigameContext | null = null;
+  private context: SharedFeedbackContext | null = null;
   private host: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private state: CannonState | null = null;
@@ -87,16 +140,18 @@ export class CarrotCannonMinigame implements MinigameModule {
     this.finished = false;
     const host = context.mount.ownerDocument.createElement("section");
     host.className = "cc-game";
+    host.classList.toggle("cc-reduced-motion", this.context.reducedMotion === true);
     host.setAttribute("aria-label", TITLE);
+    host.setAttribute("tabindex", "-1");
     host.innerHTML = `
       <header class="cc-topbar">
-        <div class="cc-shot-count"><small>CARROTS</small><strong data-cc="shots">10</strong></div>
+        <div class="cc-shot-count"><small>CARROTS</small><strong data-cc="shots">10</strong><span data-cc="par">PAR 3</span></div>
         <div class="cc-score"><small>SCORE</small><strong data-cc="score">0</strong><span data-cc="best">BEST 0</span></div>
         <button class="cc-icon-button" data-action="pause" aria-label="Pause game">Ⅱ</button>
       </header>
-      <div class="cc-wind" data-cc="wind"><small>WIND</small><b>CALM</b></div>
+      <div class="cc-wind" data-cc="wind" role="status" aria-live="polite"><small>WIND</small><b>CALM</b></div>
       <canvas class="cc-canvas" data-cc="canvas" tabindex="0" aria-label="Carrot cannon picnic range" aria-describedby="cc-control-help"></canvas>
-      <div class="cc-callout" data-cc="message">Drag to aim, or use the arrow controls!</div>
+      <div class="cc-callout" data-cc="message" role="status" aria-live="polite">Drag to aim, or use the arrow controls!</div>
       <div class="cc-power" aria-hidden="true"><i data-cc="power"></i></div>
       <div class="cc-aim-controls" role="group" aria-label="Carrot cannon aim controls">
         <button data-action="aim-up" aria-label="Aim higher">▲</button>
@@ -106,7 +161,7 @@ export class CarrotCannonMinigame implements MinigameModule {
         <button data-action="aim-down" aria-label="Aim lower">▼</button>
       </div>
       <p class="cc-control-help" id="cc-control-help">Arrow keys aim. Space fires. Dragging still works.</p>
-      <footer class="cc-footer"><span>🥕 BOUNCES ADD BONUS</span><span data-cc="difficulty">PICNIC</span></footer>
+      <footer class="cc-footer"><span>☁ CLOUD BANKS ADD BONUS</span><span data-cc="difficulty">PICNIC</span></footer>
       <div class="cc-overlay" data-cc="overlay"></div>
     `;
     context.mount.replaceChildren(host);
@@ -225,7 +280,7 @@ export class CarrotCannonMinigame implements MinigameModule {
     if (!action) return;
     switch (action) {
       case "tutorial-next":
-        if (this.tutorialPage < 2) {
+        if (this.tutorialPage < manifest.tutorial.length - 1) {
           this.tutorialPage += 1;
           this.showTutorial();
         } else {
@@ -249,8 +304,13 @@ export class CarrotCannonMinigame implements MinigameModule {
         this.resume();
         break;
       case "restart":
+        this.startRound();
+        break;
       case "quit":
+        this.abandonRun();
+        break;
       case "collect":
+        this.showDifficulty();
         break;
       case "aim-up":
         this.adjustAim(0, -1);
@@ -319,7 +379,15 @@ export class CarrotCannonMinigame implements MinigameModule {
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
-    if (!this.state || this.state.phase !== "aiming") return;
+    if (!this.state) return;
+    if (event.key.toLowerCase() === "p" || event.key === "Escape") {
+      if (this.state.phase !== "aiming" && this.state.phase !== "flying" && this.state.phase !== "paused") return;
+      event.preventDefault();
+      if (this.state.phase === "paused") this.resume();
+      else this.pause();
+      return;
+    }
+    if (this.state.phase !== "aiming") return;
     const target = event.target;
     const elementType = this.host?.ownerDocument.defaultView?.HTMLElement;
     if (elementType && target instanceof elementType && target.closest("button, input, textarea, select")) return;
@@ -341,6 +409,7 @@ export class CarrotCannonMinigame implements MinigameModule {
 
   private startRound(): void {
     if (!this.context) return;
+    this.settlement?.begin();
     this.state = createCannonState(this.difficulty, this.context.rng);
     beginCannon(this.state);
     this.particles = [];
@@ -381,25 +450,22 @@ export class CarrotCannonMinigame implements MinigameModule {
   }
 
   private showTutorial(): void {
-    const pages = [
-      ["🥕", "Pull, aim, release", "Drag back like a slingshot, or use the arrow controls and Fire button."],
-      ["↗", "Bank clever shots", "Carrots bounce off the ground and edges. A hit after a bounce earns a tasty bonus."],
-      ["🎯", "Clear the picnic", "Chain hay, cans, gophers, and the tough piñata in one flight for a multi-hit multiplier."],
-    ] as const;
+    const pages = manifest.tutorial.map((step) => [step.icon, step.title.en, step.body.en] as const);
     const page = pages[this.tutorialPage] ?? pages[0];
+    if (!page) return;
     const overlay = this.query("[data-cc='overlay']");
     if (!overlay) return;
     overlay.classList.add("is-visible");
     overlay.innerHTML = `
       <div class="cc-card">
-        <span class="cc-kicker">CANNON SCHOOL · ${this.tutorialPage + 1}/3</span>
+        <span class="cc-kicker">CANNON SCHOOL · ${this.tutorialPage + 1}/${pages.length}</span>
         <div class="cc-tutorial-icon">${page[0]}</div>
         <h2>${page[1]}</h2>
         <p>${page[2]}</p>
         <div class="cc-dots">${pages.map((_, index) => `<i class="${index === this.tutorialPage ? "active" : ""}"></i>`).join("")}</div>
         <div class="cc-card-actions">
           ${this.tutorialPage > 0 ? '<button class="cc-secondary" data-action="tutorial-back">Back</button>' : ""}
-          <button class="cc-primary" data-action="tutorial-next">${this.tutorialPage === 2 ? "Choose range" : "Next"}</button>
+          <button class="cc-primary" data-action="tutorial-next">${this.tutorialPage === pages.length - 1 ? "Choose range" : "Next"}</button>
         </div>
       </div>
     `;
@@ -437,16 +503,43 @@ export class CarrotCannonMinigame implements MinigameModule {
         <h2>Picnic break</h2>
         <p>Your carrot is safely suspended mid-flight.</p>
         <button class="cc-primary cc-wide" data-action="resume">Back to the range</button>
+        <button class="cc-secondary cc-wide" data-action="restart">Restart range</button>
+        <button class="cc-text-button" data-action="quit">Quit without reward</button>
       </div>
     `;
   }
 
   private completeRun(): void {
     if (!this.state || this.settlement?.closed) return;
-    this.bestScore = Math.max(this.bestScore, this.state.score);
     const payout = this.payout();
     this.finished = true;
     this.settlement?.complete(payout);
+    this.bestScore = Math.max(this.bestScore, this.settlement?.persistedBest ?? 0, this.state.score);
+    this.context?.audio?.emit("win", payout.score);
+    const overlay = this.query("[data-cc='overlay']");
+    if (!overlay) return;
+    overlay.classList.add("is-visible");
+    overlay.innerHTML = `
+      <div class="cc-card cc-result-card">
+        <span class="cc-kicker">${this.state.parBonus > 0 ? "UNDER PAR!" : "RANGE COMPLETE"}</span>
+        <div class="cc-result-medal">🎯</div>
+        <h2>${payout.score.toLocaleString()}</h2>
+        <p>${this.state.targetsCleared}/${this.state.targets.length} targets · ${this.state.cloudRicochets} cloud banks · par ${this.state.parShots}</p>
+        <div class="cc-rewards"><span>🪙 ${payout.coins}</span><span>★ ${payout.xp} XP</span></div>
+        <button class="cc-primary cc-wide" data-action="collect">Collect rewards</button>
+        <button class="cc-secondary cc-wide" data-action="restart">Play again</button>
+      </div>
+    `;
+  }
+
+  private abandonRun(): void {
+    this.settlement?.abandon();
+    this.cancelDrag();
+    this.state = null;
+    this.finished = false;
+    this.particles = [];
+    this.showDifficulty();
+    this.render();
   }
 
   private hideOverlay(): void {
@@ -458,6 +551,7 @@ export class CarrotCannonMinigame implements MinigameModule {
   private burstAtProjectile(points: number): void {
     if (!this.state?.projectile || !this.context) return;
     const colors = ["#f8cf4d", "#f27c3d", "#fff6c8", "#73aa5b", "#e45d72"] as const;
+    if (this.context.reducedMotion === true) return;
     for (let index = 0; index < Math.min(18, 7 + Math.floor(points / 60)); index += 1) {
       const angle = this.context.rng.next() * Math.PI * 2;
       const speed = 4 + this.context.rng.next() * 9;
@@ -501,6 +595,7 @@ export class CarrotCannonMinigame implements MinigameModule {
     this.drawRange(drawing);
     if (this.state) {
       this.drawTrajectory(drawing);
+      for (const cloud of this.state.clouds) this.drawCloud(drawing, cloud);
       for (const target of this.state.targets) this.drawTarget(drawing, target);
       this.drawProjectile(drawing);
     }
@@ -512,12 +607,14 @@ export class CarrotCannonMinigame implements MinigameModule {
     this.setText("[data-cc='shots']", String(state?.shotsRemaining ?? 10));
     this.setText("[data-cc='score']", Math.floor(state?.score ?? 0).toLocaleString());
     this.setText("[data-cc='best']", `BEST ${Math.floor(this.bestScore).toLocaleString()}`);
+    this.setText("[data-cc='par']", `PAR ${state?.parShots ?? 3}`);
     this.setText("[data-cc='message']", state?.message ?? "Drag to aim, or use the arrow controls!");
     this.setText("[data-cc='difficulty']", DIFFICULTY_COPY[this.difficulty].label.toUpperCase());
     const wind = this.query("[data-cc='wind']");
     if (wind) {
       const value = state?.wind ?? 0;
-      wind.innerHTML = `<small>WIND</small><b>${value === 0 ? "CALM" : `${value > 0 ? "→" : "←"} ${Math.abs(value).toFixed(1)}`}</b>`;
+      const round = Math.min(10, (state?.shotNumber ?? 0) + 1);
+      wind.innerHTML = `<small>WIND · ${round}/10</small><b>${value === 0 ? "CALM" : `${value > 0 ? "→" : "←"} ${Math.abs(value).toFixed(1)}`}</b>`;
       wind.classList.toggle("is-windy", value !== 0);
     }
     const power = this.query("[data-cc='power']");
@@ -604,6 +701,25 @@ export class CarrotCannonMinigame implements MinigameModule {
       drawing.stroke();
     }
     this.drawCarrot(drawing, carrot.x, carrot.y, this.dragging ? -0.35 : -0.65);
+    drawing.restore();
+  }
+
+  private drawCloud(drawing: CanvasRenderingContext2D, cloud: CannonCloud): void {
+    drawing.save();
+    drawing.translate(cloud.x, cloud.y);
+    drawing.fillStyle = "rgba(255,255,255,.72)";
+    drawing.strokeStyle = "rgba(74,140,158,.72)";
+    drawing.lineWidth = 0.45;
+    drawing.setLineDash([1.2, 1]);
+    drawing.beginPath();
+    drawing.ellipse(0, 0, cloud.radiusX, cloud.radiusY, 0, 0, Math.PI * 2);
+    drawing.fill();
+    drawing.stroke();
+    drawing.setLineDash([]);
+    drawing.fillStyle = "#397d8c";
+    drawing.font = "bold 2.4px sans-serif";
+    drawing.textAlign = "center";
+    drawing.fillText("BOUNCE", 0, 0.8);
     drawing.restore();
   }
 
@@ -787,7 +903,7 @@ export class CarrotCannonMinigame implements MinigameModule {
 export const createMinigame: MinigameFactory = () => new CarrotCannonMinigame();
 
 export const definition = {
-  id: "carrot-cannon",
-  title: TITLE,
-  instructions: INSTRUCTIONS,
+  id: manifest.id,
+  title: manifest.title.en,
+  instructions: manifest.instructions.en,
 } as const satisfies MinigameStubDefinition;

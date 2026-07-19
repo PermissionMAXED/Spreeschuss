@@ -33,6 +33,7 @@ export interface TrafficCar {
   vx: number;
   vy: number;
   readonly color: string;
+  honkCooldown: number;
 }
 
 export interface OneWay {
@@ -44,13 +45,23 @@ export interface OneWay {
   readonly direction: 1 | -1;
 }
 
+export interface DeliveryShortcut {
+  readonly from: CityPoint;
+  readonly to: CityPoint;
+  readonly width: number;
+  readonly speedMultiplier: number;
+  readonly riskInterval: number;
+}
+
 export interface DeliveryState {
   phase: DeliveryPhase;
   readonly difficulty: DeliveryDifficulty;
   remaining: number;
+  stepRemainder: number;
   score: number;
   deliveries: number;
   chain: number;
+  chainRemaining: number;
   bestChain: number;
   totalBonusTime: number;
   bestTimeBonus: number;
@@ -58,6 +69,12 @@ export interface DeliveryState {
   bumpCount: number;
   wrongWay: boolean;
   wrongWayTime: number;
+  inShortcut: boolean;
+  shortcutSeconds: number;
+  shortcutPenalties: number;
+  honkCount: number;
+  honkRemaining: number;
+  lastHonkTrafficId: number | null;
   nextParcelId: number;
   car: DeliveryCar;
   inputX: number;
@@ -74,6 +91,7 @@ interface DeliveryTuning {
   readonly traffic: number;
   readonly oneWayAfter: number;
   readonly chainTime: number;
+  readonly chainWindow: number;
   readonly scoreMultiplier: number;
 }
 
@@ -85,6 +103,7 @@ const TUNING: Readonly<Record<DeliveryDifficulty, DeliveryTuning>> = {
     traffic: 3,
     oneWayAfter: 4,
     chainTime: 3.4,
+    chainWindow: 15,
     scoreMultiplier: 1,
   },
   rush: {
@@ -94,6 +113,7 @@ const TUNING: Readonly<Record<DeliveryDifficulty, DeliveryTuning>> = {
     traffic: 5,
     oneWayAfter: 2,
     chainTime: 3,
+    chainWindow: 11,
     scoreMultiplier: 1.25,
   },
   express: {
@@ -103,6 +123,7 @@ const TUNING: Readonly<Record<DeliveryDifficulty, DeliveryTuning>> = {
     traffic: 7,
     oneWayAfter: 0,
     chainTime: 2.6,
+    chainWindow: 8,
     scoreMultiplier: 1.55,
   },
 };
@@ -124,6 +145,15 @@ export const CITY_ONE_WAYS: readonly OneWay[] = [
   { id: "east-south", orientation: "vertical", coordinate: 84, from: 50, to: 100, direction: 1 },
   { id: "west-north", orientation: "vertical", coordinate: 16, from: 0, to: 50, direction: -1 },
 ] as const;
+
+/** A fast diagonal alley: quicker than roads, but its cobbles cost time if lingered on. */
+export const DELIVERY_SHORTCUT: DeliveryShortcut = {
+  from: { x: 24, y: 76, name: "Shortcut south gate" },
+  to: { x: 76, y: 24, name: "Shortcut north gate" },
+  width: 4.5,
+  speedMultiplier: 1.35,
+  riskInterval: 1.5,
+};
 
 const TRAFFIC_COLORS = ["#e86f5d", "#6d9fc5", "#e3b64e", "#9473ae", "#62a878"] as const;
 const TRAFFIC_SPAWN_CLEARANCE = 7;
@@ -175,6 +205,7 @@ function createTraffic(
       vx: vertical ? 0 : speed * direction,
       vy: vertical ? speed * direction : 0,
       color: rng.pick(TRAFFIC_COLORS),
+      honkCooldown: rng.next() * 1.5,
     };
     if (isClearTrafficSpawn(sampled, forbidden)) return sampled;
   }
@@ -186,6 +217,7 @@ function createTraffic(
     vx: 0,
     vy: 8,
     color: TRAFFIC_COLORS[id % TRAFFIC_COLORS.length] ?? TRAFFIC_COLORS[0],
+    honkCooldown: 0,
   };
   for (let offset = 0; offset < 100; offset += 11) {
     const candidate = {
@@ -218,9 +250,11 @@ export function createDeliveryState(difficulty: DeliveryDifficulty, rng: RandomS
     phase: "ready",
     difficulty,
     remaining: tuning.startTime,
+    stepRemainder: 0,
     score: 0,
     deliveries: 0,
     chain: 0,
+    chainRemaining: 0,
     bestChain: 0,
     totalBonusTime: 0,
     bestTimeBonus: 0,
@@ -228,6 +262,12 @@ export function createDeliveryState(difficulty: DeliveryDifficulty, rng: RandomS
     bumpCount: 0,
     wrongWay: false,
     wrongWayTime: 0,
+    inShortcut: false,
+    shortcutSeconds: 0,
+    shortcutPenalties: 0,
+    honkCount: 0,
+    honkRemaining: 0,
+    lastHonkTrafficId: null,
     nextParcelId: 2,
     car,
     inputX: 0,
@@ -294,13 +334,31 @@ export function isWrongWay(
   return false;
 }
 
+function shortcutDistance(x: number, y: number): number {
+  const { from, to } = DELIVERY_SHORTCUT;
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const lengthSquared = dx * dx + dy * dy;
+  const progress = Math.max(0, Math.min(1, ((x - from.x) * dx + (y - from.y) * dy) / lengthSquared));
+  return Math.hypot(x - (from.x + dx * progress), y - (from.y + dy * progress));
+}
+
+export function isInDeliveryShortcut(x: number, y: number): boolean {
+  return shortcutDistance(x, y) <= DELIVERY_SHORTCUT.width;
+}
+
 function onRoad(x: number, y: number): boolean {
   return [16, 50, 84].some((road) => Math.abs(x - road) <= 7 || Math.abs(y - road) <= 7);
 }
 
 function updatePlayer(state: DeliveryState, deltaSeconds: number): void {
   const tuning = TUNING[state.difficulty];
-  const terrainMultiplier = onRoad(state.car.x, state.car.y) ? 1 : 0.42;
+  const startedInShortcut = isInDeliveryShortcut(state.car.x, state.car.y);
+  const terrainMultiplier = startedInShortcut
+    ? DELIVERY_SHORTCUT.speedMultiplier
+    : onRoad(state.car.x, state.car.y)
+      ? 1
+      : 0.42;
   const desiredX = state.inputX * tuning.speed * terrainMultiplier;
   const desiredY = state.inputY * tuning.speed * terrainMultiplier;
   const response = Math.min(1, deltaSeconds * 7);
@@ -316,6 +374,19 @@ function updatePlayer(state: DeliveryState, deltaSeconds: number): void {
   state.car.x = Math.min(97, Math.max(3, state.car.x + state.car.vx * deltaSeconds));
   state.car.y = Math.min(97, Math.max(3, state.car.y + state.car.vy * deltaSeconds));
   state.car.bumpCooldown = Math.max(0, state.car.bumpCooldown - deltaSeconds);
+  state.inShortcut = isInDeliveryShortcut(state.car.x, state.car.y);
+  if (state.inShortcut) {
+    state.shortcutSeconds += deltaSeconds;
+    state.message = "⚡ Shortcut boost — mind the rough cobbles!";
+    if (state.shortcutSeconds >= DELIVERY_SHORTCUT.riskInterval) {
+      state.shortcutSeconds -= DELIVERY_SHORTCUT.riskInterval;
+      state.remaining = Math.max(0, state.remaining - 0.75);
+      state.shortcutPenalties += 1;
+      state.message = "Shortcut pothole! −0.75 seconds";
+    }
+  } else {
+    state.shortcutSeconds = 0;
+  }
 
   state.wrongWay = isWrongWay(state.car, activeOneWays(state));
   if (state.wrongWay) {
@@ -334,12 +405,24 @@ function updatePlayer(state: DeliveryState, deltaSeconds: number): void {
 
 function updateTraffic(state: DeliveryState, deltaSeconds: number): void {
   for (const car of state.traffic) {
+    car.honkCooldown = Math.max(0, car.honkCooldown - deltaSeconds);
     car.x += car.vx * deltaSeconds;
     car.y += car.vy * deltaSeconds;
     if (car.x < -5) car.x = 105;
     if (car.x > 105) car.x = -5;
     if (car.y < -5) car.y = 105;
     if (car.y > 105) car.y = -5;
+    const toPlayerX = state.car.x - car.x;
+    const toPlayerY = state.car.y - car.y;
+    const distance = Math.hypot(toPlayerX, toPlayerY);
+    const approaching = toPlayerX * car.vx + toPlayerY * car.vy > 0;
+    if (distance < 12 && approaching && car.honkCooldown <= 0) {
+      car.honkCooldown = 2.4;
+      state.honkCount += 1;
+      state.honkRemaining = 0.8;
+      state.lastHonkTrafficId = car.id;
+      state.message = "HONK! Traffic crossing ahead.";
+    }
   }
 }
 
@@ -354,6 +437,7 @@ export function applyTrafficCollision(state: DeliveryState, traffic: Readonly<Tr
   state.score = Math.max(0, state.score - 25);
   state.bumpCount += 1;
   state.chain = 0;
+  state.chainRemaining = 0;
   state.message = "Soft bump! −2.5 seconds";
   return true;
 }
@@ -371,7 +455,9 @@ export interface DeliveryCompletion {
 
 export function completeDelivery(state: DeliveryState, rng: RandomSource): DeliveryCompletion {
   const tuning = TUNING[state.difficulty];
+  if (state.chainRemaining <= 0) state.chain = 0;
   state.chain += 1;
+  state.chainRemaining = tuning.chainWindow;
   state.bestChain = Math.max(state.bestChain, state.chain);
   state.deliveries += 1;
   const points = Math.round(
@@ -417,6 +503,7 @@ function updateParcel(state: DeliveryState, deltaSeconds: number, rng: RandomSou
     state.parcel = createParcel(state.nextParcelId, state.difficulty, rng, previous);
     state.nextParcelId += 1;
     state.chain = 0;
+    state.chainRemaining = 0;
     state.score = Math.max(0, state.score - 50);
     state.message = "Parcel reassigned — find the new pin!";
   }
@@ -424,27 +511,40 @@ function updateParcel(state: DeliveryState, deltaSeconds: number, rng: RandomSou
 
 export function updateDelivery(state: DeliveryState, deltaSeconds: number, rng: RandomSource): void {
   if (state.phase !== "playing" || !Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return;
-  let remainingStep = Math.min(deltaSeconds, 0.75);
-  while (remainingStep > 0 && state.phase === "playing") {
-    const step = Math.min(remainingStep, 1 / 60);
-    remainingStep -= step;
+  const step = 1 / 120;
+  state.stepRemainder += Math.min(deltaSeconds, 0.75);
+  while (state.stepRemainder >= step - 0.000_000_001 && state.phase === "playing") {
+    state.stepRemainder = Math.max(0, state.stepRemainder - step);
     state.remaining = Math.max(0, state.remaining - step);
+    state.honkRemaining = Math.max(0, state.honkRemaining - step);
+    if (state.chain > 0) {
+      state.chainRemaining = Math.max(0, state.chainRemaining - step);
+      if (state.chainRemaining <= 0) {
+        state.chain = 0;
+        state.message = "Delivery chain window closed.";
+      }
+    }
     updatePlayer(state, step);
     updateTraffic(state, step);
     checkTrafficCollisions(state);
     updateParcel(state, step, rng);
     if (state.remaining <= 0) {
       state.phase = "finished";
+      state.stepRemainder = 0;
       state.inputX = 0;
       state.inputY = 0;
+      state.chainRemaining = 0;
       state.message = "Delivery shift complete!";
     }
   }
+  if (state.stepRemainder < 0.000_000_001) state.stepRemainder = 0;
 }
 
 export function finishDelivery(state: DeliveryState, message = "Delivery shift ended"): void {
   state.phase = "finished";
+  state.stepRemainder = 0;
   state.inputX = 0;
   state.inputY = 0;
+  state.chainRemaining = 0;
   state.message = message;
 }

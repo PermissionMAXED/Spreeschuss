@@ -18,7 +18,7 @@ describe("deepened minigame manifests", () => {
       expect(manifest.title.de.trim()).not.toBe("");
       expect(manifest.instructions.en.trim()).not.toBe("");
       expect(manifest.instructions.de.trim()).not.toBe("");
-      expect(manifest.dev).toBeUndefined();
+      expect("dev" in manifest).toBe(false);
     }
   });
 });

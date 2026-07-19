@@ -1,17 +1,23 @@
 import type {
   MinigameContext,
   MinigameFactory,
+  MinigameManifest,
   MinigameModule,
   MinigamePayout,
   MinigameRunId,
 } from "../../core/contracts/minigame";
+import { validateMinigameManifest } from "../../core/contracts/minigame";
 import type { HapticPattern } from "../../core/contracts/platform";
 import type { MinigameStubDefinition } from "../stub";
 import {
+  beginGardenBonk,
   beginGarden,
+  ARMORED_BONK_SECONDS,
+  cancelGardenBonk,
   createGardenState,
-  finishGarden,
+  GARDEN_EXPANDED_SLOTS,
   pauseGarden,
+  releaseGardenBonk,
   resumeGarden,
   tapGardenSlot,
   updateGarden,
@@ -21,8 +27,57 @@ import {
 } from "./model";
 import "./style.css";
 
-const TITLE = "Garden Moles";
-const INSTRUCTIONS = "Tap carrot-stealing moles, spare baby bunnies, and catch gold for a frenzy.";
+/** Final launch manifest in the frozen CP1 shape, localized in both languages. */
+export const manifest: MinigameManifest = validateMinigameManifest({
+  id: "garden-moles",
+  title: { en: "Garden Moles", de: "Gartenmaulwürfe" },
+  instructions: {
+    en: "Gently shoo the moles before they nibble the garden.",
+    de: "Verscheuche die Maulwürfe sanft, bevor sie den Garten anknabbern.",
+  },
+  icon: "🌱",
+  category: "action",
+  stage3d: false,
+  unlockLevel: 4,
+  audioCues: ["go", "hit", "miss", "combo", "score", "lose", "win"],
+  tutorial: [
+    {
+      icon: "🥕",
+      title: { en: "Guard the patch", de: "Bewache das Beet" },
+      body: {
+        en: "Tap ordinary moles, but hold before releasing on armored moles.",
+        de: "Tippe normale Maulwürfe an, aber halte bei gepanzerten Maulwürfen vor dem Loslassen.",
+      },
+    },
+    {
+      icon: "🪴",
+      title: { en: "Spot the decoys", de: "Erkenne die Attrappen" },
+      body: {
+        en: "Flowerpots are mole decoys. Bonking one breaks your streak and costs points.",
+        de: "Blumentöpfe sind Attrappen. Ein Schlag beendet deine Serie und kostet Punkte.",
+      },
+    },
+    {
+      icon: "✨",
+      title: { en: "Golden frenzy", de: "Goldener Rausch" },
+      body: {
+        en: "Catch a golden mole for seven seconds of all-mole mayhem and double points.",
+        de: "Fange einen goldenen Maulwurf für sieben Sekunden Maulwurftrubel und doppelte Punkte.",
+      },
+    },
+    {
+      icon: "🌿",
+      title: { en: "The garden grows", de: "Der Garten wächst" },
+      body: {
+        en: "Late in the round, a final row opens. Use 1–9, then Q, W, and E.",
+        de: "Spät in der Runde öffnet sich eine letzte Reihe. Nutze 1–9, dann Q, W und E.",
+      },
+    },
+  ],
+});
+
+const TITLE = manifest.title.en;
+const INSTRUCTIONS = manifest.instructions.en;
 type SharedAudioAction = "hit" | "miss" | "combo" | "countdown" | "go" | "win" | "lose" | "score";
 
 type GardenContext = MinigameContext & {
@@ -34,23 +89,11 @@ type GardenContext = MinigameContext & {
 
 const EMPTY_PAYOUT: MinigamePayout = { score: 0, coins: 0, xp: 0 };
 
-const TUTORIAL = [
-  {
-    icon: "🥕",
-    title: "Guard the patch",
-    copy: "Tap the moles before they escape with Gooby’s carrots. Quick streaks are worth more!",
-  },
-  {
-    icon: "🐰",
-    title: "Friends, not foes",
-    copy: "Baby bunnies only want to say hello. Spare them—three mistaken taps end the round.",
-  },
-  {
-    icon: "✨",
-    title: "Golden frenzy",
-    copy: "Catch a golden mole for seven seconds of all-mole mayhem and double points.",
-  },
-] as const;
+const TUTORIAL = manifest.tutorial.map((step) => ({
+  icon: step.icon,
+  title: step.title.en,
+  copy: step.body.en,
+}));
 
 const DIFFICULTY_LABELS: Readonly<Record<GardenDifficulty, string>> = {
   gentle: "Gentle",
@@ -74,6 +117,10 @@ function actorPresentation(actor: GardenActor | undefined): {
       return { glyph: "🐰", label: "Baby bunny—do not tap", className: " has-bunny" };
     case "golden":
       return { glyph: "★", label: "Golden mole", className: " has-golden" };
+    case "flowerpot":
+      return { glyph: "🪴", label: "Decoy flowerpot—do not bonk", className: " has-flowerpot" };
+    case "armored":
+      return { glyph: "⛑", label: "Armored mole—hold to charge a bonk", className: " has-armored" };
   }
 }
 
@@ -91,9 +138,12 @@ export class GardenMolesMinigame implements MinigameModule {
   private bestScore = 0;
   private previousBest = 0;
   private actionsTaken = 0;
-  private quitEarly = false;
   private resultVisible = false;
   private finished = false;
+  private activeBonkPointer: number | null = null;
+  private activeBonkSlot: number | null = null;
+  private heldKeySlot: number | null = null;
+  private suppressClickSlot: number | null = null;
   private cleanup: Array<() => void> = [];
 
   mount(context: MinigameContext): void {
@@ -119,16 +169,16 @@ export class GardenMolesMinigame implements MinigameModule {
         <span data-gm="combo">READY</span>
       </div>
       <div class="gm-banner" data-gm="banner">Protect the carrot patch!</div>
-      <div class="gm-patch" role="group" aria-label="Nine garden holes">
-        ${Array.from({ length: 9 }, (_, slot) => `
-          <button class="gm-hole" data-slot="${slot}" aria-label="Empty garden hole" aria-keyshortcuts="${slot + 1}">
+      <div class="gm-patch" role="group" aria-label="Garden holes; hold armored moles to charge">
+        ${Array.from({ length: GARDEN_EXPANDED_SLOTS }, (_, slot) => `
+          <button class="gm-hole" data-slot="${slot}" aria-label="Empty garden hole" aria-keyshortcuts="${slot < 9 ? slot + 1 : ["Q", "W", "E"][slot - 9]}">
             <span class="gm-dirt" aria-hidden="true"></span>
             <span class="gm-actor" aria-hidden="true"></span>
             <span class="gm-carrot" aria-hidden="true">♢</span>
           </button>
         `).join("")}
       </div>
-      <footer class="gm-footer"><span>🥕 TAP OR KEYS 1–9</span><span data-gm="difficulty">GENTLE</span></footer>
+      <footer class="gm-footer"><span>🥕 HOLD ARMOR · 1–9 / QWE</span><span data-gm="difficulty">GENTLE</span></footer>
       <div class="gm-frenzy" data-gm="frenzy" aria-hidden="true"></div>
       <div class="gm-overlay" data-gm="overlay"></div>
       <div class="gm-float-layer" data-gm="float-layer" aria-hidden="true"></div>
@@ -136,7 +186,11 @@ export class GardenMolesMinigame implements MinigameModule {
     context.mount.replaceChildren(host);
     this.host = host;
     this.listen(host, "click", this.onClick);
+    this.listen(host, "pointerdown", this.onPointerDown);
+    this.listen(host, "pointerup", this.onPointerUp);
+    this.listen(host, "pointercancel", this.onPointerCancel);
     this.listen(host, "keydown", this.onKeyDown);
+    this.listen(host, "keyup", this.onKeyUp);
     this.showTutorial();
     this.render();
   }
@@ -147,6 +201,7 @@ export class GardenMolesMinigame implements MinigameModule {
   }
 
   pause(): void {
+    this.cancelHeldBonk();
     pauseGarden(this.state);
     if (this.state.phase === "paused") this.showPause();
     this.render();
@@ -208,7 +263,44 @@ export class GardenMolesMinigame implements MinigameModule {
     }
     const hole = target.closest<HTMLElement>("[data-slot]");
     if (!hole || this.state.phase !== "playing") return;
-    this.hitSlot(Number(hole.dataset.slot), hole);
+    const slot = Number(hole.dataset.slot);
+    if (this.suppressClickSlot === slot) {
+      this.suppressClickSlot = null;
+      return;
+    }
+    this.hitSlot(slot, hole, event.detail === 0 ? ARMORED_BONK_SECONDS : 0);
+  };
+
+  private readonly onPointerDown = (event: PointerEvent): void => {
+    const target = event.target;
+    const elementType = this.host?.ownerDocument.defaultView?.Element;
+    if (!elementType || !(target instanceof elementType) || this.state.phase !== "playing") return;
+    const hole = target.closest<HTMLElement>("[data-slot]");
+    if (!hole || hole.hasAttribute("disabled")) return;
+    const slot = Number(hole.dataset.slot);
+    if (!beginGardenBonk(this.state, slot)) return;
+    event.preventDefault();
+    this.activeBonkPointer = event.pointerId;
+    this.activeBonkSlot = slot;
+    hole.classList.add("is-charging");
+    hole.setPointerCapture?.(event.pointerId);
+  };
+
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    if (event.pointerId !== this.activeBonkPointer || this.activeBonkSlot === null) return;
+    event.preventDefault();
+    const slot = this.activeBonkSlot;
+    const hole = this.host?.querySelector<HTMLElement>(`[data-slot="${slot}"]`) ?? null;
+    this.activeBonkPointer = null;
+    this.activeBonkSlot = null;
+    this.suppressClickSlot = slot;
+    if (hole) this.releaseHeldBonk(slot, hole);
+  };
+
+  private readonly onPointerCancel = (event: PointerEvent): void => {
+    if (event.pointerId !== this.activeBonkPointer) return;
+    this.cancelHeldBonk();
+    this.render();
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
@@ -221,23 +313,54 @@ export class GardenMolesMinigame implements MinigameModule {
       else this.pause();
       return;
     }
-    if (this.state.phase !== "playing" || !/^[1-9]$/.test(key)) return;
+    const slot = this.slotForKey(key);
+    if (this.state.phase !== "playing" || slot === null || event.repeat) return;
     event.preventDefault();
-    const slot = Number(key) - 1;
-    const hole = this.host?.querySelector<HTMLElement>(`[data-slot="${slot}"]`) ?? null;
-    if (hole !== null) this.hitSlot(slot, hole);
+    if (slot >= this.state.gridSize || !beginGardenBonk(this.state, slot)) return;
+    this.heldKeySlot = slot;
+    this.host?.querySelector<HTMLElement>(`[data-slot="${slot}"]`)?.classList.add("is-charging");
   };
 
-  private hitSlot(slot: number, hole: HTMLElement): void {
+  private readonly onKeyUp = (event: KeyboardEvent): void => {
+    const slot = this.slotForKey(event.key.toLowerCase());
+    if (slot === null || slot !== this.heldKeySlot) return;
+    event.preventDefault();
+    this.heldKeySlot = null;
+    const hole = this.host?.querySelector<HTMLElement>(`[data-slot="${slot}"]`) ?? null;
+    if (hole) this.releaseHeldBonk(slot, hole);
+  };
+
+  private slotForKey(key: string): number | null {
+    if (/^[1-9]$/.test(key)) return Number(key) - 1;
+    const lateKeys: Readonly<Record<string, number>> = { q: 9, w: 10, e: 11 };
+    return lateKeys[key] ?? null;
+  }
+
+  private releaseHeldBonk(slot: number, hole: HTMLElement): void {
     this.actionsTaken += 1;
     const scoreBefore = this.state.score;
-    const result = tapGardenSlot(this.state, slot);
+    const result = releaseGardenBonk(this.state, slot);
+    this.applyHitFeedback(result, hole, this.state.score - scoreBefore);
+  }
+
+  private hitSlot(slot: number, hole: HTMLElement, accessibleCharge = 0): void {
+    this.actionsTaken += 1;
+    const scoreBefore = this.state.score;
+    const result = tapGardenSlot(this.state, slot, accessibleCharge);
     const gained = this.state.score - scoreBefore;
+    this.applyHitFeedback(result, hole, gained);
+  }
+
+  private applyHitFeedback(
+    result: ReturnType<typeof tapGardenSlot>,
+    hole: HTMLElement,
+    gained: number,
+  ): void {
     hole.classList.remove("is-hit", "is-oops");
     void hole.offsetWidth;
-    hole.classList.add(result === "bunny" ? "is-oops" : "is-hit");
+    hole.classList.add(result === "bunny" || result === "flowerpot" ? "is-oops" : "is-hit");
     if (gained > 0 && this.context?.reducedMotion !== true) this.floatScore(hole, `+${gained}`);
-    if (result === "mole") {
+    if (result === "mole" || (result === "armored" && gained > 0)) {
       this.context?.audio?.emit(
         this.state.combo > 0 && this.state.combo % 5 === 0 ? "combo" : "hit",
         this.state.combo,
@@ -248,7 +371,7 @@ export class GardenMolesMinigame implements MinigameModule {
       this.context?.haptics?.impact("success");
     } else {
       this.context?.audio?.emit("miss");
-      this.context?.haptics?.impact(result === "bunny" ? "warning" : "light");
+      this.context?.haptics?.impact(result === "bunny" || result === "flowerpot" ? "warning" : "light");
     }
     if (this.state.hearts <= 0) this.completeRun();
     this.render();
@@ -287,13 +410,7 @@ export class GardenMolesMinigame implements MinigameModule {
         this.startRound();
         break;
       case "quit":
-        if (this.actionsTaken === 0) {
-          this.abandonRun();
-        } else {
-          this.quitEarly = true;
-          finishGarden(this.state, "Garden run wrapped up.");
-          this.completeRun();
-        }
+        this.abandonRun();
         break;
       case "collect":
         this.showDifficulty();
@@ -307,6 +424,7 @@ export class GardenMolesMinigame implements MinigameModule {
     const overlay = this.query("[data-gm='overlay']");
     if (!overlay) return;
     const page = TUTORIAL[this.tutorialPage] ?? TUTORIAL[0];
+    if (!page) return;
     overlay.classList.add("is-visible");
     overlay.innerHTML = `
       <div class="gm-card gm-tutorial-card">
@@ -354,7 +472,7 @@ export class GardenMolesMinigame implements MinigameModule {
         <p>The moles will wait right where they are.</p>
         <button class="gm-primary gm-wide" data-action="resume">Keep gardening</button>
         <button class="gm-secondary gm-wide" data-action="restart">Restart round</button>
-        <button class="gm-text-button" data-action="quit">${this.actionsTaken === 0 ? "Quit without reward" : "Finish &amp; collect"}</button>
+        <button class="gm-text-button" data-action="quit">Quit without reward</button>
       </div>
     `;
     overlay.querySelector<HTMLButtonElement>('[data-action="resume"]')?.focus();
@@ -379,7 +497,7 @@ export class GardenMolesMinigame implements MinigameModule {
     overlay.classList.add("is-visible");
     overlay.innerHTML = `
       <div class="gm-card gm-result-card">
-        <span class="gm-kicker">${this.quitEarly ? "GARDEN WRAPPED UP" : this.state.hearts > 0 ? "HARVEST SAVED!" : "BUNNY BREAK"}</span>
+        <span class="gm-kicker">${this.state.hearts > 0 ? "HARVEST SAVED!" : "BUNNY BREAK"}</span>
         <div class="gm-result-badge">🥕</div>
         <h2>${payout.score.toLocaleString()}</h2>
         <p>Best streak <b>${this.state.bestCombo}×</b> · Best score <b>${this.bestScore.toLocaleString()}</b></p>
@@ -408,7 +526,7 @@ export class GardenMolesMinigame implements MinigameModule {
     this.resultVisible = false;
     this.finished = false;
     this.actionsTaken = 0;
-    this.quitEarly = false;
+    this.cancelHeldBonk();
     beginGarden(this.state);
     this.hideOverlay();
     this.render();
@@ -421,7 +539,7 @@ export class GardenMolesMinigame implements MinigameModule {
     this.finished = false;
     this.resultVisible = false;
     this.actionsTaken = 0;
-    this.quitEarly = false;
+    this.cancelHeldBonk();
     this.state = createGardenState(this.difficulty);
     this.showDifficulty();
     this.render();
@@ -439,6 +557,14 @@ export class GardenMolesMinigame implements MinigameModule {
     item.style.top = `${holeRect.top - layerRect.top + holeRect.height / 3}px`;
     layer.append(item);
     item.addEventListener("animationend", () => item.remove(), { once: true });
+  }
+
+  private cancelHeldBonk(): void {
+    cancelGardenBonk(this.state);
+    this.activeBonkPointer = null;
+    this.activeBonkSlot = null;
+    this.heldKeySlot = null;
+    this.host?.querySelectorAll(".is-charging").forEach((element) => element.classList.remove("is-charging"));
   }
 
   private render(): void {
@@ -468,10 +594,18 @@ export class GardenMolesMinigame implements MinigameModule {
     const holes = host.querySelectorAll<HTMLElement>("[data-slot]");
     for (const hole of holes) {
       const slot = Number(hole.dataset.slot);
+      const active = slot < this.state.gridSize;
       const actor = this.state.actors.find((candidate) => candidate.slot === slot);
       const presentation = actorPresentation(actor);
       hole.className = `gm-hole${presentation.className}`;
-      hole.setAttribute("aria-label", presentation.label);
+      hole.toggleAttribute("disabled", !active);
+      hole.setAttribute("aria-hidden", String(!active));
+      hole.setAttribute("aria-label", active ? presentation.label : "Garden row opens later");
+      hole.style.setProperty(
+        "--gm-charge",
+        `${this.state.heldSlot === slot ? Math.min(1, this.state.bonkCharge / 0.62) * 100 : 0}%`,
+      );
+      hole.classList.toggle("is-charging", this.state.heldSlot === slot);
       const glyph = hole.querySelector<HTMLElement>(".gm-actor");
       if (glyph) glyph.textContent = presentation.glyph;
     }
@@ -490,7 +624,7 @@ export class GardenMolesMinigame implements MinigameModule {
 export const createMinigame: MinigameFactory = () => new GardenMolesMinigame();
 
 export const definition = {
-  id: "garden-moles",
-  title: TITLE,
-  instructions: INSTRUCTIONS,
+  id: manifest.id,
+  title: manifest.title.en,
+  instructions: manifest.instructions.en,
 } as const satisfies MinigameStubDefinition;

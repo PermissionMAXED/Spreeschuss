@@ -22,6 +22,15 @@ export interface CannonTarget {
   wobble: number;
 }
 
+export interface CannonCloud {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly radiusX: number;
+  readonly radiusY: number;
+  readonly bouncePower: number;
+}
+
 export interface CarrotProjectile {
   x: number;
   y: number;
@@ -31,6 +40,7 @@ export interface CarrotProjectile {
   bounces: number;
   flightTime: number;
   hitIds: string[];
+  cloudHitIds: string[];
   trail: CannonPoint[];
 }
 
@@ -40,6 +50,7 @@ export interface CannonState {
   shotsRemaining: number;
   shotNumber: number;
   elapsed: number;
+  stepRemainder: number;
   score: number;
   bestShot: number;
   currentShotScore: number;
@@ -48,10 +59,14 @@ export interface CannonState {
   totalHits: number;
   targetsCleared: number;
   totalBounceBonus: number;
+  cloudRicochets: number;
+  readonly parShots: number;
+  parBonus: number;
   wind: number;
   readonly winds: number[];
   projectile: CarrotProjectile | null;
   targets: CannonTarget[];
+  readonly clouds: readonly CannonCloud[];
   message: string;
 }
 
@@ -59,6 +74,27 @@ const CANNON = { x: 12, y: 55 } as const;
 const FLOOR_Y = 62;
 const GRAVITY = 18;
 const SHOT_COUNT = 10;
+const PAR_SHOTS: Readonly<Record<CannonDifficulty, number>> = {
+  picnic: 3,
+  breezy: 5,
+  blustery: 7,
+};
+export const CANNON_PAR_BONUS_PER_SHOT = 250;
+
+const CLOUDS: Readonly<Record<CannonDifficulty, readonly CannonCloud[]>> = {
+  picnic: [
+    { id: "cloud-a", x: 30, y: 8, radiusX: 7, radiusY: 3.1, bouncePower: 0.82 },
+  ],
+  breezy: [
+    { id: "cloud-a", x: 30, y: 8, radiusX: 7, radiusY: 3.1, bouncePower: 0.82 },
+    { id: "cloud-b", x: 62, y: 25, radiusX: 8, radiusY: 3.5, bouncePower: 0.88 },
+  ],
+  blustery: [
+    { id: "cloud-a", x: 28, y: 10, radiusX: 7, radiusY: 3.1, bouncePower: 0.86 },
+    { id: "cloud-b", x: 53, y: 29, radiusX: 8, radiusY: 3.6, bouncePower: 0.92 },
+    { id: "cloud-c", x: 82, y: 21, radiusX: 7, radiusY: 3.2, bouncePower: 0.9 },
+  ],
+};
 
 /** A stable, switch-friendly Picnic solution used by model and accessibility tests. */
 export const PICNIC_CLEAR_SEQUENCE: readonly CannonPoint[] = [
@@ -112,6 +148,7 @@ export function createCannonState(difficulty: CannonDifficulty, rng: RandomSourc
     shotsRemaining: SHOT_COUNT,
     shotNumber: 0,
     elapsed: 0,
+    stepRemainder: 0,
     score: 0,
     bestShot: 0,
     currentShotScore: 0,
@@ -120,10 +157,14 @@ export function createCannonState(difficulty: CannonDifficulty, rng: RandomSourc
     totalHits: 0,
     targetsCleared: 0,
     totalBounceBonus: 0,
+    cloudRicochets: 0,
+    parShots: PAR_SHOTS[difficulty],
+    parBonus: 0,
     wind: winds[0] ?? 0,
     winds,
     projectile: null,
     targets: makeTargets(difficulty, rng),
+    clouds: CLOUDS[difficulty],
     message: "Drag to aim, or use the arrow controls!",
   };
 }
@@ -186,6 +227,7 @@ export function launchCarrot(state: CannonState, dragX: number, dragY: number): 
     bounces: 0,
     flightTime: 0,
     hitIds: [],
+    cloudHitIds: [],
     trail: [],
   };
   state.phase = "flying";
@@ -243,13 +285,51 @@ function collideTargets(state: CannonState, projectile: CarrotProjectile): void 
   }
 }
 
+/** Reflects a carrot once from each soft cloud, making bank shots deterministic. */
+export function applyCloudRicochet(
+  state: CannonState,
+  cloud: CannonCloud,
+  projectile: CarrotProjectile,
+): boolean {
+  if (projectile.cloudHitIds.includes(cloud.id)) return false;
+  const normalizedX = (projectile.x - cloud.x) / cloud.radiusX;
+  const normalizedY = (projectile.y - cloud.y) / cloud.radiusY;
+  if (normalizedX * normalizedX + normalizedY * normalizedY > 1) return false;
+  const normalLength = Math.max(0.001, Math.hypot(normalizedX, normalizedY));
+  const nx = normalizedX / normalLength;
+  const ny = normalizedY / normalLength;
+  const dot = projectile.vx * nx + projectile.vy * ny;
+  if (dot >= 0) return false;
+  projectile.cloudHitIds.push(cloud.id);
+  projectile.vx = (projectile.vx - 2 * dot * nx) * cloud.bouncePower;
+  projectile.vy = (projectile.vy - 2 * dot * ny) * cloud.bouncePower + 0.8;
+  projectile.x = cloud.x + nx * (cloud.radiusX + 1.4);
+  projectile.y = cloud.y + ny * (cloud.radiusY + 1.4);
+  projectile.bounces += 1;
+  state.cloudRicochets += 1;
+  state.message = "Cloud ricochet! Bank the next target.";
+  return true;
+}
+
+function collideClouds(state: CannonState, projectile: CarrotProjectile): void {
+  for (const cloud of state.clouds) applyCloudRicochet(state, cloud, projectile);
+}
+
 function finishShot(state: CannonState): void {
   state.bestShot = Math.max(state.bestShot, state.currentShotScore);
   state.projectile = null;
   const cleared = state.targets.every((target) => !target.active);
+  if (cleared && state.parBonus === 0 && state.shotNumber <= state.parShots) {
+    state.parBonus = (state.parShots - state.shotNumber + 1) * CANNON_PAR_BONUS_PER_SHOT;
+    state.score += state.parBonus;
+  }
   if (cleared || state.shotsRemaining <= 0) {
     state.phase = "finished";
-    state.message = cleared ? "Picnic range cleared!" : "Ten carrots fired!";
+    state.message = cleared
+      ? state.parBonus > 0
+        ? `Range cleared under par! +${state.parBonus}`
+        : "Picnic range cleared!"
+      : "Ten carrots fired!";
   } else {
     state.phase = "aiming";
     state.wind = state.winds[state.shotNumber] ?? 0;
@@ -272,14 +352,13 @@ export function updateCannon(state: CannonState, deltaSeconds: number): void {
   if ((state.phase !== "flying" && state.phase !== "aiming") || !Number.isFinite(deltaSeconds) || deltaSeconds <= 0) {
     return;
   }
-  state.elapsed += Math.min(1, deltaSeconds);
-  updateTargets(state, Math.min(1, deltaSeconds));
-  if (state.phase !== "flying" || !state.projectile) return;
-
-  let remaining = Math.min(deltaSeconds, 0.5);
-  while (remaining > 0 && state.projectile) {
-    const step = Math.min(remaining, 1 / 120);
-    remaining -= step;
+  const step = 1 / 120;
+  state.stepRemainder += Math.min(deltaSeconds, 0.5);
+  while (state.stepRemainder >= step - 0.000_000_001) {
+    state.stepRemainder = Math.max(0, state.stepRemainder - step);
+    state.elapsed += step;
+    updateTargets(state, step);
+    if (state.phase !== "flying" || !state.projectile) continue;
     const projectile = state.projectile;
     projectile.flightTime += step;
     projectile.vx += state.wind * step;
@@ -293,6 +372,7 @@ export function updateCannon(state: CannonState, deltaSeconds: number): void {
     }
 
     collideTargets(state, projectile);
+    collideClouds(state, projectile);
 
     if (projectile.y >= FLOOR_Y && projectile.vy > 0) {
       projectile.y = FLOOR_Y;
@@ -319,10 +399,12 @@ export function updateCannon(state: CannonState, deltaSeconds: number): void {
       finishShot(state);
     }
   }
+  if (state.stepRemainder < 0.000_000_001) state.stepRemainder = 0;
 }
 
 export function finishCannon(state: CannonState, message = "Cannon packed away"): void {
   state.phase = "finished";
+  state.stepRemainder = 0;
   state.projectile = null;
   state.message = message;
 }

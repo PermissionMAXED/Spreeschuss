@@ -1,15 +1,18 @@
 import type {
   MinigameContext,
   MinigameFactory,
+  MinigameManifest,
   MinigameModule,
   MinigamePayout,
 } from "../../core/contracts/minigame";
+import { validateMinigameManifest } from "../../core/contracts/minigame";
 import type { MinigameStubDefinition } from "../stub";
 import {
   activeOneWays,
   beginDelivery,
   CITY_STOPS,
   createDeliveryState,
+  DELIVERY_SHORTCUT,
   pauseDelivery,
   resumeDelivery,
   setDeliveryInput,
@@ -26,8 +29,57 @@ import {
 } from "./settlement";
 import "./style.css";
 
-const TITLE = "Delivery Dash";
-const INSTRUCTIONS = "Pick up cozy parcels and beat their timers through Gooby’s little city.";
+/** Final launch manifest in the frozen CP1 shape, localized in both languages. */
+export const manifest: MinigameManifest = validateMinigameManifest({
+  id: "delivery-dash",
+  title: { en: "Delivery Dash", de: "Lieferflitzer" },
+  instructions: {
+    en: "Steer through town and deliver every cozy parcel.",
+    de: "Steuere durch die Stadt und liefere jedes gemütliche Paket aus.",
+  },
+  icon: "▣",
+  category: "action",
+  stage3d: false,
+  unlockLevel: 5,
+  audioCues: ["go", "hit", "miss", "combo", "countdown", "score", "lose", "win"],
+  tutorial: [
+    {
+      icon: "📦",
+      title: { en: "Pick up, then deliver", de: "Abholen, dann liefern" },
+      body: {
+        en: "Follow the pulsing parcel pin, then drive the package to its matching doorstep.",
+        de: "Folge der pulsierenden Paketnadel und fahre das Paket dann zur passenden Haustür.",
+      },
+    },
+    {
+      icon: "⏱",
+      title: { en: "Build timed chains", de: "Bilde Serien auf Zeit" },
+      body: {
+        en: "Each drop opens a visible chain window. Express routes have the tightest links and biggest rewards.",
+        de: "Jede Lieferung öffnet ein sichtbares Serienfenster. Expressrouten sind knapp und besonders wertvoll.",
+      },
+    },
+    {
+      icon: "⚡",
+      title: { en: "Risk the shortcut", de: "Riskiere die Abkürzung" },
+      body: {
+        en: "The striped diagonal alley is faster, but rough cobbles cost time if you stay too long.",
+        de: "Die gestreifte diagonale Gasse ist schneller, doch langes Fahren auf Kopfsteinpflaster kostet Zeit.",
+      },
+    },
+    {
+      icon: "📣",
+      title: { en: "Listen for traffic", de: "Hör auf den Verkehr" },
+      body: {
+        en: "Nearby cars honk before crossing. Hold WASD, arrows, or a touch direction to keep steering.",
+        de: "Nahe Autos hupen vor dem Kreuzen. Halte WASD, Pfeile oder eine Touch-Richtung zum Lenken.",
+      },
+    },
+  ],
+});
+
+const TITLE = manifest.title.en;
+const INSTRUCTIONS = manifest.instructions.en;
 const WORLD_SIZE = 100;
 
 interface DashParticle {
@@ -46,6 +98,7 @@ interface SharedFeedbackContext extends MinigameContext {
   readonly haptics?: {
     impact(pattern: "light" | "medium" | "success" | "warning"): void;
   };
+  readonly reducedMotion?: boolean;
 }
 
 const DIFFICULTIES: Readonly<Record<DeliveryDifficulty, { readonly title: string; readonly note: string }>> = {
@@ -59,7 +112,7 @@ export class DeliveryDashMinigame implements MinigameModule {
   readonly title = TITLE;
   readonly instructions = INSTRUCTIONS;
 
-  private context: MinigameContext | null = null;
+  private context: SharedFeedbackContext | null = null;
   private host: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private state: DeliveryState | null = null;
@@ -83,14 +136,16 @@ export class DeliveryDashMinigame implements MinigameModule {
     this.finished = false;
     const host = context.mount.ownerDocument.createElement("section");
     host.className = "dd-game";
+    host.classList.toggle("dd-reduced-motion", this.context.reducedMotion === true);
     host.setAttribute("aria-label", TITLE);
+    host.setAttribute("tabindex", "-1");
     host.innerHTML = `
       <header class="dd-topbar">
         <div class="dd-time"><small>SHIFT</small><strong data-dd="time">1:02</strong></div>
         <div class="dd-score"><small>SCORE</small><strong data-dd="score">0</strong><span data-dd="best">BEST 0</span></div>
         <button class="dd-icon-button" data-action="pause" aria-label="Pause game">Ⅱ</button>
       </header>
-      <div class="dd-mission">
+      <div class="dd-mission" role="status" aria-live="polite">
         <div class="dd-parcel-icon" data-dd="parcel-icon">📦</div>
         <div><small data-dd="mission-label">PICK UP</small><b data-dd="mission">Find the parcel</b></div>
         <strong data-dd="parcel-time">24s</strong>
@@ -99,14 +154,15 @@ export class DeliveryDashMinigame implements MinigameModule {
         <canvas class="dd-canvas" data-dd="canvas" aria-label="Top-down city delivery map"></canvas>
         <div class="dd-chain" data-dd="chain">CHAIN ×0</div>
         <div class="dd-wrong-way" data-dd="wrong-way">↶ ONE WAY</div>
+        <div class="dd-honk" data-dd="honk">HONK!</div>
       </div>
-      <div class="dd-callout" data-dd="message">Follow the parcel pin!</div>
+      <div class="dd-callout" data-dd="message" role="status" aria-live="polite">Follow the parcel pin!</div>
       <div class="dd-controls" aria-label="Drive controls">
-        <button data-direction="up" aria-label="Drive up">▲</button>
-        <button data-direction="left" aria-label="Drive left">◀</button>
+        <button data-direction="up" aria-label="Drive up" aria-keyshortcuts="ArrowUp W">▲</button>
+        <button data-direction="left" aria-label="Drive left" aria-keyshortcuts="ArrowLeft A">◀</button>
         <span class="dd-wheel" aria-hidden="true">●</span>
-        <button data-direction="right" aria-label="Drive right">▶</button>
-        <button data-direction="down" aria-label="Drive down">▼</button>
+        <button data-direction="right" aria-label="Drive right" aria-keyshortcuts="ArrowRight D">▶</button>
+        <button data-direction="down" aria-label="Drive down" aria-keyshortcuts="ArrowDown S">▼</button>
       </div>
       <footer class="dd-footer"><span>WASD / ARROWS</span><span data-dd="difficulty">SUNDAY DRIVE</span></footer>
       <div class="dd-overlay" data-dd="overlay"></div>
@@ -121,9 +177,14 @@ export class DeliveryDashMinigame implements MinigameModule {
     const document = context.mount.ownerDocument;
     document.addEventListener("keydown", this.onKeyDown);
     document.addEventListener("keyup", this.onKeyUp);
+    const view = document.defaultView;
+    view?.addEventListener("blur", this.onInputBlur);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
     this.cleanup.push(
       () => document.removeEventListener("keydown", this.onKeyDown),
       () => document.removeEventListener("keyup", this.onKeyUp),
+      () => view?.removeEventListener("blur", this.onInputBlur),
+      () => document.removeEventListener("visibilitychange", this.onVisibilityChange),
     );
     this.showTutorial();
     this.render();
@@ -153,6 +214,7 @@ export class DeliveryDashMinigame implements MinigameModule {
     if (!this.state || !this.context || this.finished) return;
     const oldScore = this.state.score;
     const oldBumps = this.state.bumpCount;
+    const oldHonks = this.state.honkCount;
     const wasFinished = this.state.phase === "finished";
     this.applyInput();
     updateDelivery(this.state, deltaSeconds, this.context.rng);
@@ -169,6 +231,7 @@ export class DeliveryDashMinigame implements MinigameModule {
       this.shakeRemaining = 0.32;
       this.emitFeedback("hit", "warning");
     }
+    if (this.state.honkCount > oldHonks) this.emitFeedback("countdown", "light");
     this.updateEffects(deltaSeconds);
     if (!wasFinished && this.state.phase === "finished") this.completeRun();
     this.render();
@@ -215,7 +278,7 @@ export class DeliveryDashMinigame implements MinigameModule {
     if (!action) return;
     switch (action) {
       case "tutorial-next":
-        if (this.tutorialPage < 2) {
+        if (this.tutorialPage < manifest.tutorial.length - 1) {
           this.tutorialPage += 1;
           this.showTutorial();
         } else {
@@ -239,8 +302,13 @@ export class DeliveryDashMinigame implements MinigameModule {
         this.resume();
         break;
       case "restart":
+        this.startRound();
+        break;
       case "quit":
+        this.abandonRun();
+        break;
       case "collect":
+        this.showDifficulty();
         break;
       default:
         break;
@@ -271,7 +339,15 @@ export class DeliveryDashMinigame implements MinigameModule {
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
-    if (!this.state || this.state.phase !== "playing" || !this.directionForKey(event.key)) return;
+    if (!this.state) return;
+    if (event.key.toLowerCase() === "p" || event.key === "Escape") {
+      if (this.state.phase !== "playing" && this.state.phase !== "paused") return;
+      event.preventDefault();
+      if (this.state.phase === "paused") this.resume();
+      else this.pause();
+      return;
+    }
+    if (this.state.phase !== "playing" || !this.directionForKey(event.key)) return;
     event.preventDefault();
     this.pressedKeys.add(event.key.toLowerCase());
     this.applyInput();
@@ -283,6 +359,14 @@ export class DeliveryDashMinigame implements MinigameModule {
     event.preventDefault();
     this.pressedKeys.delete(key);
     this.applyInput();
+  };
+
+  private readonly onInputBlur = (): void => {
+    this.clearInput();
+  };
+
+  private readonly onVisibilityChange = (): void => {
+    if (this.host?.ownerDocument.visibilityState === "hidden") this.clearInput();
   };
 
   private directionForKey(key: string): string | null {
@@ -328,6 +412,7 @@ export class DeliveryDashMinigame implements MinigameModule {
 
   private startRound(): void {
     if (!this.context) return;
+    this.settlement?.begin();
     this.state = createDeliveryState(this.difficulty, this.context.rng);
     beginDelivery(this.state);
     this.particles = [];
@@ -339,25 +424,22 @@ export class DeliveryDashMinigame implements MinigameModule {
   }
 
   private showTutorial(): void {
-    const pages = [
-      ["📦", "Pick up, then deliver", "Follow the pulsing parcel pin. Once it is aboard, race to the matching doorstep."],
-      ["⏱", "Build a delivery chain", "Every on-time drop adds precious shift time. Fast chains earn bigger extensions and scores."],
-      ["↪", "Share the cozy roads", "Watch traffic and one-way arrows. Bumps are gentle, but cost 2.5 seconds."],
-    ] as const;
+    const pages = manifest.tutorial.map((step) => [step.icon, step.title.en, step.body.en] as const);
     const page = pages[this.tutorialPage] ?? pages[0];
+    if (!page) return;
     const overlay = this.query("[data-dd='overlay']");
     if (!overlay) return;
     overlay.classList.add("is-visible");
     overlay.innerHTML = `
       <div class="dd-card">
-        <span class="dd-kicker">DRIVER GUIDE · ${this.tutorialPage + 1}/3</span>
+        <span class="dd-kicker">DRIVER GUIDE · ${this.tutorialPage + 1}/${pages.length}</span>
         <div class="dd-tutorial-icon">${page[0]}</div>
         <h2>${page[1]}</h2>
         <p>${page[2]}</p>
         <div class="dd-dots">${pages.map((_, index) => `<i class="${index === this.tutorialPage ? "active" : ""}"></i>`).join("")}</div>
         <div class="dd-card-actions">
           ${this.tutorialPage > 0 ? '<button class="dd-secondary" data-action="tutorial-back">Back</button>' : ""}
-          <button class="dd-primary" data-action="tutorial-next">${this.tutorialPage === 2 ? "Choose shift" : "Next"}</button>
+          <button class="dd-primary" data-action="tutorial-next">${this.tutorialPage === pages.length - 1 ? "Choose shift" : "Next"}</button>
         </div>
       </div>
     `;
@@ -395,6 +477,8 @@ export class DeliveryDashMinigame implements MinigameModule {
         <h2>Parked safely</h2>
         <p>Parcel clocks and traffic are waiting too.</p>
         <button class="dd-primary dd-wide" data-action="resume">Continue shift</button>
+        <button class="dd-secondary dd-wide" data-action="restart">Restart shift</button>
+        <button class="dd-text-button" data-action="quit">Quit without reward</button>
       </div>
     `;
   }
@@ -402,10 +486,35 @@ export class DeliveryDashMinigame implements MinigameModule {
   private completeRun(): void {
     if (!this.state || this.settlement?.closed) return;
     this.clearInput();
-    this.bestScore = Math.max(this.bestScore, this.state.score);
     const payout = this.payout();
     this.finished = true;
     this.settlement?.complete(payout);
+    this.bestScore = Math.max(this.bestScore, this.settlement?.persistedBest ?? 0, this.state.score);
+    this.context?.audio?.emit("win", payout.score);
+    const overlay = this.query("[data-dd='overlay']");
+    if (!overlay) return;
+    overlay.classList.add("is-visible");
+    overlay.innerHTML = `
+      <div class="dd-card dd-result-card">
+        <span class="dd-kicker">SHIFT COMPLETE</span>
+        <div class="dd-result-stamp">✓</div>
+        <h2>${payout.score.toLocaleString()}</h2>
+        <p>${this.state.deliveries} deliveries · best chain ${this.state.bestChain}× · ${this.state.honkCount} traffic honks</p>
+        <div class="dd-rewards"><span>🪙 ${payout.coins}</span><span>★ ${payout.xp} XP</span></div>
+        <button class="dd-primary dd-wide" data-action="collect">Collect rewards</button>
+        <button class="dd-secondary dd-wide" data-action="restart">Drive again</button>
+      </div>
+    `;
+  }
+
+  private abandonRun(): void {
+    this.settlement?.abandon();
+    this.clearInput();
+    this.state = null;
+    this.finished = false;
+    this.particles = [];
+    this.showDifficulty();
+    this.render();
   }
 
   private hideOverlay(): void {
@@ -416,6 +525,7 @@ export class DeliveryDashMinigame implements MinigameModule {
 
   private deliveryBurst(): void {
     if (!this.state || !this.context) return;
+    if (this.context.reducedMotion === true) return;
     const colors = ["#f3c94e", "#ed7960", "#72ad7b", "#6aa5c4", "#fff4c9"] as const;
     for (let index = 0; index < 20; index += 1) {
       const angle = this.context.rng.next() * Math.PI * 2;
@@ -456,6 +566,7 @@ export class DeliveryDashMinigame implements MinigameModule {
     drawing.scale(canvas.width / WORLD_SIZE, canvas.height / WORLD_SIZE);
     this.drawCity(drawing);
     if (this.state) {
+      this.drawShortcut(drawing);
       this.drawOneWays(drawing, activeOneWays(this.state));
       this.drawRoute(drawing);
       this.drawParcelPin(drawing);
@@ -472,7 +583,12 @@ export class DeliveryDashMinigame implements MinigameModule {
     this.setText("[data-dd='best']", `BEST ${Math.floor(this.bestScore).toLocaleString()}`);
     this.setText("[data-dd='message']", state?.message ?? "Follow the parcel pin!");
     this.setText("[data-dd='difficulty']", DIFFICULTIES[this.difficulty].title.toUpperCase());
-    this.setText("[data-dd='chain']", `CHAIN ×${state?.chain ?? 0}`);
+    this.setText(
+      "[data-dd='chain']",
+      state && state.chain > 0
+        ? `CHAIN ×${state.chain} · ${state.chainRemaining.toFixed(1)}s`
+        : "CHAIN ×0",
+    );
     this.setText("[data-dd='parcel-time']", `${Math.ceil(state?.parcel.deadline ?? 24)}s`);
     this.setText("[data-dd='mission-label']", state?.parcel.carrying ? "DELIVER TO" : "PICK UP AT");
     this.setText(
@@ -481,13 +597,15 @@ export class DeliveryDashMinigame implements MinigameModule {
     );
     this.setText("[data-dd='parcel-icon']", state?.parcel.carrying ? "🐰📦" : "📦");
     this.query("[data-dd='wrong-way']")?.classList.toggle("is-visible", state?.wrongWay ?? false);
+    this.query("[data-dd='honk']")?.classList.toggle("is-visible", (state?.honkRemaining ?? 0) > 0);
     this.host?.classList.toggle("is-bump", this.shakeRemaining > 0);
     this.host?.classList.toggle("is-delivery", this.deliveryFeedbackRemaining > 0);
+    this.host?.classList.toggle("is-shortcut", state?.inShortcut ?? false);
   }
 
   private emitFeedback(
-    action: "hit" | "combo" | "score",
-    pattern: "success" | "warning",
+    action: "hit" | "combo" | "score" | "countdown",
+    pattern: "light" | "success" | "warning",
     value?: number,
   ): void {
     const shared: SharedFeedbackContext | null = this.context;
@@ -566,6 +684,26 @@ export class DeliveryDashMinigame implements MinigameModule {
         drawing.fillText(arrow, road.coordinate, middle);
       }
     }
+  }
+
+  private drawShortcut(drawing: CanvasRenderingContext2D): void {
+    drawing.save();
+    drawing.strokeStyle = "rgba(255,226,104,.82)";
+    drawing.lineWidth = DELIVERY_SHORTCUT.width * 2;
+    drawing.setLineDash([2.2, 1.5]);
+    drawing.beginPath();
+    drawing.moveTo(DELIVERY_SHORTCUT.from.x, DELIVERY_SHORTCUT.from.y);
+    drawing.lineTo(DELIVERY_SHORTCUT.to.x, DELIVERY_SHORTCUT.to.y);
+    drawing.stroke();
+    drawing.strokeStyle = "rgba(139,92,57,.68)";
+    drawing.lineWidth = 0.7;
+    drawing.setLineDash([]);
+    drawing.stroke();
+    drawing.fillStyle = "#6f4e36";
+    drawing.font = "bold 2.5px sans-serif";
+    drawing.textAlign = "center";
+    drawing.fillText("RISKY SHORTCUT", 50, 49);
+    drawing.restore();
   }
 
   private currentTarget(): CityPoint | null {
@@ -678,7 +816,7 @@ export class DeliveryDashMinigame implements MinigameModule {
 export const createMinigame: MinigameFactory = () => new DeliveryDashMinigame();
 
 export const definition = {
-  id: "delivery-dash",
-  title: TITLE,
-  instructions: INSTRUCTIONS,
+  id: manifest.id,
+  title: manifest.title.en,
+  instructions: manifest.instructions.en,
 } as const satisfies MinigameStubDefinition;

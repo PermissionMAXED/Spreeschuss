@@ -9,6 +9,7 @@ import type { MinigameStubDefinition } from "../stub";
 import {
   MEADOW_CONFIGS,
   MemoryMeadowRound,
+  meadowPayout,
   type MeadowDifficulty,
   type MeadowResult,
 } from "./model";
@@ -120,6 +121,7 @@ export class MemoryMeadow implements MinigameModule {
   update(deltaSeconds: number): void {
     if (!this.running || this.round === null) return;
     const wasBusy = this.round.isBusy;
+    const faceUpBefore = this.round.board.filter(({ faceUp }) => faceUp).length;
     this.round.update(deltaSeconds);
 
     if (this.toastSeconds > 0) {
@@ -139,6 +141,16 @@ export class MemoryMeadow implements MinigameModule {
       return;
     }
 
+    // Breeze reveals land one by one on the deterministic schedule; repaint
+    // whenever another card turns face-up mid-peek.
+    if (
+      this.round.isBusy &&
+      this.round.board.filter(({ faceUp }) => faceUp).length !== faceUpBefore
+    ) {
+      this.render();
+      return;
+    }
+
     const shownSecond = Math.ceil(this.round.remainingSeconds);
     if (shownSecond !== this.lastShownSecond) {
       this.lastShownSecond = shownSecond;
@@ -149,11 +161,7 @@ export class MemoryMeadow implements MinigameModule {
   payout(): MinigamePayout {
     const result = this.finalResult ?? this.round?.result();
     if (result === undefined || this.round?.isComplete !== true) return EMPTY_PAYOUT;
-    return {
-      score: result.score,
-      coins: result.stars * 6 + this.difficulty * 3,
-      xp: Math.max(1, Math.floor(result.score / 90)),
-    };
+    return meadowPayout(result, this.difficulty);
   }
 
   dispose(): void {
@@ -244,18 +252,23 @@ export class MemoryMeadow implements MinigameModule {
     if (!this.running || this.round === null) return;
     const result = this.round.flip(cardId);
     if (!result.accepted) return;
+    const streak = this.round.sereneStreak;
     if (result.waitingForTrio) {
       this.toast = "A special trio needs one more!";
       this.toastSeconds = 1;
     } else if (result.match) {
-      this.toast = result.completed ? "Meadow complete!" : "Bloom-tastic match!";
+      this.toast = result.completed
+        ? "Meadow complete!"
+        : streak >= 2
+          ? `Serene streak ×${streak} — so calm!`
+          : "Bloom-tastic match!";
       this.toastSeconds = 0.9;
     } else {
       this.toast = "Almost — watch them closely!";
       this.toastSeconds = 0.8;
     }
     if (result.match) {
-      this.context?.audio?.emit("combo", this.round.matchedGroups);
+      this.context?.audio?.emit("combo", streak);
       this.context?.haptics?.impact("success");
     } else if (this.round.isBusy) {
       this.context?.audio?.emit("miss");
@@ -359,6 +372,7 @@ export class MemoryMeadow implements MinigameModule {
           <div class="stat"><span>Time</span><b data-stat="time">${time}s</b></div>
           <div class="stat"><span>Moves</span><b data-stat="moves">${round?.moves ?? 0}</b></div>
           <div class="stat"><span>Blooms</span><b data-stat="matches">${round?.matchedGroups ?? 0}/${round?.totalGroups ?? config.pairGroups + config.trioGroups}</b></div>
+          <div class="stat serene ${(round?.sereneStreak ?? 0) >= 2 ? "glow" : ""}"><span>Serene</span><b data-stat="serene">×${round?.sereneStreak ?? 0}</b></div>
         </section>
         <div class="progress"><i data-stat="progress" style="width:${progress}%"></i></div>
         <section class="board" style="grid-template-columns:repeat(${config.columns},1fr)" aria-label="Flower cards. Use arrow keys to move and Enter or Space to flip.">${board}</section>
@@ -400,16 +414,16 @@ export class MemoryMeadow implements MinigameModule {
       {
         icon: "🌬️",
         title: "Mind the breeze",
-        copy: "Halfway through, a dandelion breeze reveals and shuffles every unmatched card.",
+        copy: "Halfway through, a dandelion breeze reveals unmatched cards one by one, then shuffles them.",
         tipIcon: "👀",
-        tip: "Watch the visible flowers until the breeze settles.",
+        tip: "Watch the reveal order — the flowers settle in new spots.",
       },
       {
         icon: "✨",
-        title: "Special meadow magic",
-        copy: "Moonlit Meadow has glowing trios. Match all three, then earn stars with speed and few moves.",
+        title: "Serene meadow magic",
+        copy: "Moonlit Meadow packs glowing trios onto a 4×4 board. Chain matches without a miss for a serene streak.",
         tipIcon: "⭐⭐⭐",
-        tip: "Fast, careful rounds earn the biggest payout.",
+        tip: "Every extra streak match grows your bloom bonus.",
       },
     ] as const;
     const page = pages[this.tutorialPage] ?? pages[0];
@@ -455,7 +469,8 @@ export class MemoryMeadow implements MinigameModule {
           <div class="mascot">${result.stars === 3 ? "🐰✨" : "🐰🌼"}</div>
           <h2>${this.round?.isComplete === true ? "Meadow in bloom!" : "Lovely remembering!"}</h2>
           <div class="stars">${"★".repeat(result.stars)}${"☆".repeat(3 - result.stars)}</div>
-          <p>${result.moves} moves · ${Math.ceil(result.elapsedSeconds)} seconds</p>
+          <p>${result.moves} moves · ${Math.ceil(result.elapsedSeconds)} seconds${result.bestSereneStreak >= 2 ? ` · serene ×${result.bestSereneStreak}` : ""}</p>
+          ${result.sereneBonus > 0 ? `<div class="serene-bonus">+${result.sereneBonus} serene bonus</div>` : ""}
           <div class="score">${result.score.toLocaleString()} pts</div>
           ${isBest ? `<div class="new-best">NEW HIGH SCORE</div>` : ""}
           <button class="primary" data-action="done">Collect ${this.payout().coins} coins</button>
@@ -469,10 +484,15 @@ export class MemoryMeadow implements MinigameModule {
     const time = this.shadow.querySelector<HTMLElement>('[data-stat="time"]');
     const moves = this.shadow.querySelector<HTMLElement>('[data-stat="moves"]');
     const matches = this.shadow.querySelector<HTMLElement>('[data-stat="matches"]');
+    const serene = this.shadow.querySelector<HTMLElement>('[data-stat="serene"]');
     const progress = this.shadow.querySelector<HTMLElement>('[data-stat="progress"]');
     if (time !== null) time.textContent = `${Math.ceil(this.round.remainingSeconds)}s`;
     if (moves !== null) moves.textContent = String(this.round.moves);
     if (matches !== null) matches.textContent = `${this.round.matchedGroups}/${this.round.totalGroups}`;
+    if (serene !== null) {
+      serene.textContent = `×${this.round.sereneStreak}`;
+      serene.closest(".stat")?.classList.toggle("glow", this.round.sereneStreak >= 2);
+    }
     if (progress !== null) progress.style.width = `${(this.round.matchedGroups / this.round.totalGroups) * 100}%`;
   }
 

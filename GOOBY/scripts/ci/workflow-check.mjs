@@ -261,9 +261,22 @@ const PLAYWRIGHT_SUITE_CONFIGS = [
   "GOOBY/src/ui/playwright.config.ts",
   "GOOBY/src/scenes/city/playwright.config.ts",
   "GOOBY/src/minigames/bubble-bath-blast/playwright.config.mjs",
+  "GOOBY/src/minigames/burrow-dig/playwright.config.mjs",
   "GOOBY/src/minigames/cake-atelier/playwright.config.mjs",
   "GOOBY/src/minigames/carrot-catch/playwright.config.mjs",
+  "GOOBY/src/minigames/cloud-bounce/playwright.config.mjs",
+  "GOOBY/src/minigames/firefly-lantern/playwright.config.mjs",
+  "GOOBY/src/minigames/honey-drizzle/playwright.config.mjs",
+  "GOOBY/src/minigames/library-stack/playwright.config.mjs",
+  "GOOBY/src/minigames/market-scales/playwright.config.mjs",
+  "GOOBY/src/minigames/memory-meadow/playwright.config.mjs",
+  "GOOBY/src/minigames/picnic-packer/playwright.config.mjs",
+  "GOOBY/src/minigames/pond-fishing/playwright.config.mjs",
+  "GOOBY/src/minigames/puddle-hopper/playwright.config.mjs",
+  "GOOBY/src/minigames/rhythm-hop/playwright.config.mjs",
   "GOOBY/src/minigames/shopping-surf/playwright.config.mjs",
+  "GOOBY/src/minigames/snail-mail/playwright.config.mjs",
+  "GOOBY/src/minigames/topiary-trim/playwright.config.mjs",
 ];
 
 /** Every browser suite must own a fresh, unique, fail-fast dev server port. */

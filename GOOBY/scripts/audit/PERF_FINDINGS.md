@@ -29,6 +29,11 @@ The fixed FPS ratios are the former documented SwiftShader minimums divided by t
 | Delivery Dash Express | 0.800 (48/60) | 0.667 (16.667/25) | 30 | 1 / 1 |
 | Pond Fishing Legend | 0.800 (48/60) | 0.667 (16.667/25) | 30 | 1 / 1 |
 | Rhythm Hop hard mode | 0.800 (48/60) | 0.667 (16.667/25) | 30 | 1 / 1 |
+| Cake Atelier scored orders | 0.800 (48/60) | 0.667 (16.667/25) | 30 | 1 / 1 |
+| Cloud Bounce run | 0.500 (30/60) | 0.397 (16.667/42) | 20 | 1 / 1 |
+| Honey Drizzle round | 0.800 (48/60) | 0.667 (16.667/25) | 30 | 1 / 1 |
+
+Shopping Surf and Cloud Bounce render through the shared Stage3D lease, which the in-app probe (main renderer only) cannot see, so their draw-call budgets are asserted against the live modules in their own harnesses: ≥30 FPS, p95 ≤42 ms, ≤70 draw calls, ≥60 sampled real-rAF frames, and a leak-neutral lease release (zero geometry/texture/program delta after dispose). Cloud Bounce's in-app scene row above additionally gates its frame timing inside the real app loop.
 
 The calibration rejects any missing 120-sample trial. A cohort is unstable when its three-trial FPS range exceeds 20% of the median or its p95 range exceeds 35% of the median. A stable first cohort gates the scenes without a retry. An unstable first cohort is retained in the report but discarded for gating, then exactly one fresh cohort (new page navigation, WebGL context, warmup, and three trials) runs. A stable second cohort gates the scenes using only its three trials; trials are never merged or selected across cohorts. Two unstable cohorts fail before the app is loaded. The report records every cohort, warmup, trial, variance, classification and reason, plus every app trial and partial state on failure before the error is propagated.
 
@@ -38,7 +43,7 @@ Forced city quality tiers still record 60 samples each and assert pixel ratio, s
 
 ## Lifecycle and leak limits
 
-The leak pass first warms all exercised scenes, games, and the purchased cosmetic, then takes a same-scene living-room baseline. Eight cycles run 32 post-baseline transitions across four home zones and four minigames, with a cosmetic equip/remove and minigame mount/dispose in every cycle. CDP forces GC before all nine checkpoints.
+The leak pass first warms all exercised scenes, games, and the purchased cosmetic, then takes a same-scene living-room baseline. Eight cycles run 32 post-baseline transitions across four home zones and eight minigames (mixed DOM-canvas and Stage3D-lease games, each mounted and disposed exactly once per pass), with a cosmetic equip/remove and minigame mount/dispose in every cycle. CDP forces GC before all nine checkpoints.
 
 | Metric | Baseline → final | Slope per cycle | Allowed slope / final / peak growth |
 | --- | ---: | ---: | ---: |

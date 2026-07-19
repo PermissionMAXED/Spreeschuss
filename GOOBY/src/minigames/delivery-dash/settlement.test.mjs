@@ -64,3 +64,24 @@ test("completed shifts settle once before a replay begins a distinct run", () =>
   assert.equal(harness.receipts.size, 2);
   assert.equal(new Set(harness.receipts.keys()).size, 2);
 });
+
+test("module-managed Delivery runs settle once and unpaid quits never pay", () => {
+  const harness = createHarness();
+  const paid = createDeliverySettlement(harness.context);
+  paid.begin();
+  assert.equal(paid.runActive, true);
+  assert.equal(paid.complete({ score: 760, coins: 5, xp: 11 }), true);
+  assert.equal(paid.complete({ score: 9_999, coins: 99, xp: 99 }), false);
+  assert.equal(paid.receipt?.bestScore, 760);
+  assert.equal(harness.receipts.size, 1);
+
+  const unpaid = createDeliverySettlement(harness.context);
+  unpaid.begin();
+  assert.equal(unpaid.abandon(), true);
+  assert.equal(unpaid.complete({ score: 900, coins: 8, xp: 17 }), false);
+  assert.equal(harness.receipts.size, 1);
+  assert.deepEqual(
+    harness.feedback.map((event) => event.kind),
+    ["run-began", "run-completed", "run-began", "run-exited"],
+  );
+});

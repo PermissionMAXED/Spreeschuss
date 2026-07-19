@@ -39,16 +39,6 @@ export interface MinigameTutorialStep {
 export const MINIGAME_TUTORIAL_MIN_STEPS = 2;
 export const MINIGAME_TUTORIAL_MAX_STEPS = 4;
 
-/**
- * Development-only provenance marker. Checkpoint stubs are fully playable and
- * are never branded as stubs in player-facing strings; only this metadata
- * records that a dedicated specialist build is still expected.
- */
-export interface MinigameDevMetadata {
-  readonly cpStub: true;
-  readonly checkpoint: "CP1";
-}
-
 export interface MinigameManifest {
   readonly id: MinigameId;
   readonly title: LocalizedText;
@@ -62,7 +52,6 @@ export interface MinigameManifest {
   /** Non-empty set of shared audio cues the module emits. */
   readonly audioCues: readonly MinigameAudioCue[];
   readonly unlockLevel: number;
-  readonly dev?: MinigameDevMetadata;
 }
 
 function assertLocalized(text: LocalizedText, label: string): void {
@@ -71,7 +60,7 @@ function assertLocalized(text: LocalizedText, label: string): void {
   }
 }
 
-/** Throws when a manifest violates the frozen CP1 metadata contract. */
+/** Throws when a manifest violates the frozen metadata contract. */
 export function validateMinigameManifest(manifest: MinigameManifest): MinigameManifest {
   assertLocalized(manifest.title, `Manifest ${manifest.id} title`);
   assertLocalized(manifest.instructions, `Manifest ${manifest.id} instructions`);

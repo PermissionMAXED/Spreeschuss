@@ -160,7 +160,8 @@
 }
 
 .dd-chain,
-.dd-wrong-way {
+.dd-wrong-way,
+.dd-honk {
   position: absolute;
   z-index: 2;
   top: 8px;
@@ -186,7 +187,17 @@
   animation: dd-warning .4s ease-in-out infinite alternate;
 }
 
-.dd-wrong-way.is-visible {
+.dd-honk {
+  top: 42px;
+  right: 8px;
+  display: none;
+  color: #4c3c2c;
+  background: #fff3a8;
+  transform: rotate(4deg);
+}
+
+.dd-wrong-way.is-visible,
+.dd-honk.is-visible {
   display: block;
 }
 
@@ -282,6 +293,10 @@
 
 .dd-game.is-delivery .dd-map-wrap {
   box-shadow: 0 0 0 4px #ffe874, 0 8px 0 #5b7f50, 0 13px 22px rgb(48 69 43 / 24%);
+}
+
+.dd-game.is-shortcut .dd-map-wrap {
+  border-color: #ffe46e;
 }
 
 .dd-overlay {
@@ -511,6 +526,22 @@
 
 @keyframes dd-fade-in {
   from { opacity: 0; }
+}
+
+.dd-game.dd-reduced-motion *,
+.dd-game.dd-reduced-motion *::before,
+.dd-game.dd-reduced-motion *::after {
+  animation-duration: 1ms !important;
+  transition-duration: 1ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dd-game *,
+  .dd-game *::before,
+  .dd-game *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
 }
 
 @media (max-height: 700px) {

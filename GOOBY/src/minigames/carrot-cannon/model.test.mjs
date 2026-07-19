@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SeededRng } from "../../core/contracts/rng.ts";
 import {
+  applyCloudRicochet,
   beginCannon,
+  CANNON_PAR_BONUS_PER_SHOT,
   createCannonState,
   launchCarrot,
   PICNIC_CLEAR_SEQUENCE,
@@ -26,6 +28,18 @@ test("difficulty wind and target layouts replay from a seed", () => {
   assert.deepEqual(first.winds, second.winds);
   assert.deepEqual(first.targets, second.targets);
   assert.ok(first.winds.some((wind) => wind !== 0));
+});
+
+test("wind flights are frame-partition invariant at 30, 60, and 120 Hz", () => {
+  const run = (hz) => {
+    const state = createCannonState("blustery", new SeededRng(119));
+    beginCannon(state);
+    launchCarrot(state, 15, -11);
+    for (let frame = 0; frame < hz * 3; frame += 1) updateCannon(state, 1 / hz);
+    return state;
+  };
+  assert.deepEqual(run(30), run(120));
+  assert.deepEqual(run(60), run(120));
 });
 
 test("bounces and unique multi-hits increase target scoring", () => {
@@ -56,6 +70,29 @@ test("bounces and unique multi-hits increase target scoring", () => {
   assert.equal(state.totalHits, 2);
   assert.equal(state.targetsCleared, 2);
   assert.equal(state.totalBounceBonus, 140);
+});
+
+test("marked clouds ricochet each projectile once and count as a bank", () => {
+  const state = createCannonState("breezy", new SeededRng(13));
+  const cloud = state.clouds[1];
+  assert.ok(cloud);
+  const projectile = {
+    x: cloud.x - cloud.radiusX * 0.9,
+    y: cloud.y,
+    vx: 18,
+    vy: 0,
+    rotation: 0,
+    bounces: 0,
+    flightTime: 0,
+    hitIds: [],
+    cloudHitIds: [],
+    trail: [],
+  };
+  assert.equal(applyCloudRicochet(state, cloud, projectile), true);
+  assert.equal(projectile.bounces, 1);
+  assert.equal(state.cloudRicochets, 1);
+  assert.ok(projectile.vx < 0);
+  assert.equal(applyCloudRicochet(state, cloud, projectile), false);
 });
 
 test("a launched shot consumes exactly one carrot and runs through physics", () => {
@@ -91,4 +128,5 @@ test("Picnic has visible piñata health and a deterministic full-clear sequence"
   assert.equal(state.targetsCleared, state.targets.length);
   assert.equal(state.totalHits, state.targets.length + 1);
   assert.equal(state.shotsRemaining, 8);
+  assert.ok(state.parBonus >= CANNON_PAR_BONUS_PER_SHOT);
 });

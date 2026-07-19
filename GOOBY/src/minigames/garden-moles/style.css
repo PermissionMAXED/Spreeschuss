@@ -170,6 +170,28 @@
   cursor: pointer;
 }
 
+.gm-hole[disabled] {
+  display: none;
+}
+
+.gm-hole::after {
+  position: absolute;
+  z-index: 5;
+  right: 12%;
+  bottom: 4%;
+  left: 12%;
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ffe46e var(--gm-charge, 0%), rgb(255 255 255 / 22%) 0);
+  box-shadow: 0 1px 2px rgb(42 31 23 / 35%);
+  content: "";
+  opacity: 0;
+}
+
+.gm-hole.is-charging::after {
+  opacity: 1;
+}
+
 .gm-hole:focus-visible {
   border-radius: 50%;
   outline: 4px solid #fff2a6;
@@ -205,6 +227,8 @@
 .gm-hole.has-mole .gm-actor,
 .gm-hole.has-bunny .gm-actor,
 .gm-hole.has-golden .gm-actor,
+.gm-hole.has-flowerpot .gm-actor,
+.gm-hole.has-armored .gm-actor,
 .gm-hole.is-rustling .gm-actor {
   transform: translate(-50%, 0) scale(1);
 }
@@ -224,6 +248,26 @@
   background: radial-gradient(circle at 35% 30%, #fffbd0, #f5b833 34%, #d98222 75%);
   box-shadow: 0 0 0 5px rgb(255 224 94 / 25%), 0 0 22px #ffe96e;
   animation: gm-gold-spin 1s ease-in-out infinite alternate;
+}
+
+.gm-hole.has-flowerpot .gm-actor {
+  filter: drop-shadow(0 5px 2px rgb(35 25 19 / 28%)) saturate(.8);
+}
+
+.gm-hole.has-armored .gm-actor {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border: 3px solid #d9e2df;
+  border-radius: 50% 50% 42% 42%;
+  color: #f5b45a;
+  font-size: clamp(2rem, 9vw, 3.6rem);
+  background: linear-gradient(#eef5f1 0 38%, #917158 39% 100%);
+  box-shadow: inset 0 5px #fff, 0 5px 2px rgb(35 25 19 / 28%);
+}
+
+.gm-hole.has-armored.is-charging .gm-actor {
+  filter: brightness(1.12) drop-shadow(0 0 8px #ffe46e);
 }
 
 .gm-hole.is-rustling .gm-actor {

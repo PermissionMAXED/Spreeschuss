@@ -18,10 +18,12 @@ export const MEMORY_MEADOW_STYLES = `
   .title { min-width:0; text-align:center; text-shadow:0 1px #fff8; }
   .title strong { display:block; font-size:19px; letter-spacing:-.5px; }
   .title small { display:block; color:#53764a; font-size:10px; font-weight:800; letter-spacing:1.1px; text-transform:uppercase; }
-  .stats { position:relative; z-index:2; display:grid; grid-template-columns:repeat(3,1fr); gap:7px; padding:0 14px 10px; }
-  .stat { padding:8px 5px; border:1px solid #fff9; border-radius:14px; background:#fffbd9c7; box-shadow:0 6px 16px #35683d22; text-align:center; }
+  .stats { position:relative; z-index:2; display:grid; grid-template-columns:repeat(4,1fr); gap:7px; padding:0 14px 10px; }
+  .stat { padding:8px 5px; border:1px solid #fff9; border-radius:14px; background:#fffbd9c7; box-shadow:0 6px 16px #35683d22; text-align:center; transition:box-shadow .2s ease; }
   .stat span { display:block; color:#6b825a; font-size:8px; font-weight:900; letter-spacing:1px; text-transform:uppercase; }
   .stat b { display:block; margin-top:2px; color:#3e5e37; font-size:15px; font-variant-numeric:tabular-nums; }
+  .stat.glow { border-color:#f5c95f; background:#fff6c9; box-shadow:0 0 14px #ffe27daa,0 6px 16px #35683d22; }
+  .stat.glow b { color:#a3762a; }
   .progress { position:relative; z-index:2; height:7px; margin:0 18px 12px; overflow:hidden; border-radius:99px; background:#4d875655; }
   .progress i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#fff5a8,#f5c95f); box-shadow:0 0 10px #fff3a8; transition:width .3s ease; }
   .board { position:relative; z-index:2; display:grid; gap:8px; width:calc(100% - 28px); max-width:440px; height:min(62vh,540px);
@@ -76,6 +78,7 @@ export const MEMORY_MEADOW_STYLES = `
   .primary { color:#fff; background:linear-gradient(145deg,#74a84f,#477f4f); box-shadow:0 8px 18px #477f4f44,inset 0 1px #fff6; }
   .secondary { margin-top:8px; color:#60785a; background:#dbe8c4; }
   .stars { margin:7px 0; color:#f3bd38; font-size:38px; letter-spacing:5px; text-shadow:0 3px #b47b2d; }
+  .serene-bonus { display:inline-block; margin-bottom:6px; padding:4px 11px; border-radius:99px; color:#3f6f4f; background:#d0f0cf; font-size:10px; font-weight:950; letter-spacing:.6px; }
   .score { margin:8px 0 17px; color:#3f633c; font-size:34px; font-weight:950; }
   .new-best { display:inline-block; margin-bottom:12px; padding:5px 10px; border-radius:99px; color:#8b5d1f; background:#ffe798; font-size:9px; font-weight:950; letter-spacing:1px; }
   @media (max-height:700px) { .game{min-height:100%}.board{height:54vh}.panel{padding:16px}.mascot{font-size:42px}.panel h2{font-size:23px}.tip{margin:8px 0}.difficulty{gap:5px;margin:7px 0 10px}.difficulty button{padding:7px 10px} }

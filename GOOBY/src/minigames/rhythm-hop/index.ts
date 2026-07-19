@@ -6,10 +6,11 @@ import type {
 } from "../../core/contracts/minigame";
 import type { HapticPattern } from "../../core/contracts/platform";
 import type { MinigameStubDefinition } from "../stub";
+import { RHYTHM_BEATMAPS } from "./beatmaps";
 import {
-  RHYTHM_BEATMAPS,
   RhythmBeatCueTransport,
   RhythmSession,
+  rhythmPayout,
   type JudgmentEvent,
   type RhythmDifficulty,
   type RhythmJudgment,
@@ -40,6 +41,8 @@ const SONG_ORDER: readonly RhythmSongId[] = [
   "carrot-bounce",
   "puddle-pop",
   "moonhop-magic",
+  "firefly-waltz",
+  "dewdrop-derby",
 ];
 
 export class RhythmHop implements MinigameModule {
@@ -69,16 +72,29 @@ export class RhythmHop implements MinigameModule {
   private actionsTaken = 0;
   private completedSong = false;
   private finalScore = 0;
+  private finalSparkles = 0;
   private finalPerfects = 0;
   private finalGoods = 0;
   private finalMisses = 0;
   private finalBestCombo = 0;
+  private readonly heldKeys = new Map<string, RhythmLane>();
+  private readonly heldPointers = new Map<number, RhythmLane>();
+  private readonly laneHoldCounts: [number, number, number] = [0, 0, 0];
 
   private readonly handleClick = (event: Event): void => {
     this.onClick(event);
   };
   private readonly handleKeyDown = (event: Event): void => {
     this.onKeyDown(event as KeyboardEvent);
+  };
+  private readonly handleKeyUp = (event: Event): void => {
+    this.onKeyUp(event as KeyboardEvent);
+  };
+  private readonly handlePointerDown = (event: Event): void => {
+    this.onPointerDown(event as PointerEvent);
+  };
+  private readonly handlePointerUp = (event: Event): void => {
+    this.onPointerUp(event as PointerEvent);
   };
 
   mount(context: MinigameContext): void {
@@ -96,7 +112,11 @@ export class RhythmHop implements MinigameModule {
     this.root = root;
     this.shadow = root.attachShadow({ mode: "open" });
     this.shadow.addEventListener("click", this.handleClick);
+    this.shadow.addEventListener("pointerdown", this.handlePointerDown);
+    this.shadow.addEventListener("pointerup", this.handlePointerUp);
+    this.shadow.addEventListener("pointercancel", this.handlePointerUp);
     root.addEventListener("keydown", this.handleKeyDown);
+    root.addEventListener("keyup", this.handleKeyUp);
     context.mount.replaceChildren(root);
     this.render();
   }
@@ -124,6 +144,13 @@ export class RhythmHop implements MinigameModule {
     this.session.resume();
     this.paused = false;
     this.running = true;
+    // Holds ride the frozen audio clock: any lane physically let go during the
+    // pause is released now, at the exact song time where the pause began.
+    for (const lane of this.session.heldLanes) {
+      if (this.laneHoldCounts[lane] > 0) continue;
+      const event = this.session.release(lane);
+      if (event !== null) this.applyJudgment(event);
+    }
     this.render();
     this.root?.focus();
   }
@@ -136,8 +163,8 @@ export class RhythmHop implements MinigameModule {
     for (const cue of this.beatTransport?.drain(this.session) ?? []) {
       this.context?.audio?.emit("countdown", cue.beatIndex);
     }
-    const misses = this.session.update();
-    for (const miss of misses) this.applyJudgment(miss);
+    const events = this.session.update();
+    for (const event of events) this.applyJudgment(event);
     if (this.session.state === "ended") {
       this.showResults(true);
       return;
@@ -151,19 +178,17 @@ export class RhythmHop implements MinigameModule {
 
   payout(): MinigamePayout {
     if (this.screen !== "results") return EMPTY_PAYOUT;
-    const score = this.finalScore;
-    const bestCombo = this.finalBestCombo;
-    return {
-      score,
-      coins: Math.floor(score / 3_500) + Math.floor(bestCombo / 8) + 3,
-      xp: Math.max(0, Math.floor(score / 180)),
-    };
+    return rhythmPayout(this.finalScore, this.finalBestCombo);
   }
 
   dispose(): void {
     this.context?.lifecycle?.exit();
     this.shadow?.removeEventListener("click", this.handleClick);
+    this.shadow?.removeEventListener("pointerdown", this.handlePointerDown);
+    this.shadow?.removeEventListener("pointerup", this.handlePointerUp);
+    this.shadow?.removeEventListener("pointercancel", this.handlePointerUp);
     this.root?.removeEventListener("keydown", this.handleKeyDown);
+    this.root?.removeEventListener("keyup", this.handleKeyUp);
     this.root?.remove();
     this.context = null;
     this.root = null;
@@ -174,6 +199,15 @@ export class RhythmHop implements MinigameModule {
     this.running = false;
     this.paused = false;
     this.feedbackSeconds = 0;
+    this.clearHeldInput();
+  }
+
+  private clearHeldInput(): void {
+    this.heldKeys.clear();
+    this.heldPointers.clear();
+    this.laneHoldCounts[0] = 0;
+    this.laneHoldCounts[1] = 0;
+    this.laneHoldCounts[2] = 0;
   }
 
   private onClick(event: Event): void {
@@ -197,8 +231,8 @@ export class RhythmHop implements MinigameModule {
     }
     if (action === "song") {
       const song = button.dataset.song;
-      if (song === "carrot-bounce" || song === "puddle-pop" || song === "moonhop-magic") {
-        this.songId = song;
+      if ((SONG_ORDER as readonly string[]).includes(song ?? "")) {
+        this.songId = song as RhythmSongId;
       }
       this.render();
       return;
@@ -229,35 +263,93 @@ export class RhythmHop implements MinigameModule {
       return;
     }
     if (action === "lane") {
+      // Pointer sessions are handled by pointerdown/up for real hold support;
+      // a keyboard-activated click (Enter/Space on the button) taps instead.
+      if (button.dataset.pointerSession === "true") {
+        delete button.dataset.pointerSession;
+        return;
+      }
       const lane = Number(button.dataset.lane);
-      if (lane === 0 || lane === 1 || lane === 2) this.hitLane(lane);
+      if (lane === 0 || lane === 1 || lane === 2) {
+        this.pressLane(lane);
+        this.releaseLane(lane);
+      }
     }
+  }
+
+  private laneForKey(key: string): RhythmLane | null {
+    return key === "arrowleft" || key === "a" || key === "1"
+      ? 0
+      : key === "arrowdown" || key === "s" || key === "2"
+        ? 1
+        : key === "arrowright" || key === "d" || key === "3"
+          ? 2
+          : null;
   }
 
   private onKeyDown(event: KeyboardEvent): void {
     if (event.repeat) return;
     const key = event.key.toLowerCase();
-    const lane =
-      key === "arrowleft" || key === "a" || key === "1"
-        ? 0
-        : key === "arrowdown" || key === "s" || key === "2"
-          ? 1
-          : key === "arrowright" || key === "d" || key === "3"
-            ? 2
-            : null;
+    const lane = this.laneForKey(key);
     if (lane === null) return;
     event.preventDefault();
-    this.hitLane(lane);
+    if (this.heldKeys.has(key)) return;
+    this.heldKeys.set(key, lane);
+    this.laneHoldCounts[lane] += 1;
+    this.pressLane(lane);
   }
 
-  private hitLane(lane: RhythmLane): void {
+  private onKeyUp(event: KeyboardEvent): void {
+    const key = event.key.toLowerCase();
+    const lane = this.heldKeys.get(key);
+    if (lane === undefined) return;
+    event.preventDefault();
+    this.heldKeys.delete(key);
+    this.laneHoldCounts[lane] = Math.max(0, this.laneHoldCounts[lane] - 1);
+    if (this.laneHoldCounts[lane] === 0) this.releaseLane(lane);
+  }
+
+  private onPointerDown(event: PointerEvent): void {
+    const documentView = this.root?.ownerDocument.defaultView;
+    if (documentView === null || documentView === undefined || !(event.target instanceof documentView.Element)) {
+      return;
+    }
+    const button = event.target.closest<HTMLButtonElement>('button[data-action="lane"]');
+    if (button === null) return;
+    const lane = Number(button.dataset.lane);
+    if (lane !== 0 && lane !== 1 && lane !== 2) return;
+    button.dataset.pointerSession = "true";
+    try {
+      button.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Pointer capture is best-effort; synthetic pointers may not support it.
+    }
+    this.heldPointers.set(event.pointerId, lane);
+    this.laneHoldCounts[lane] += 1;
+    this.pressLane(lane);
+  }
+
+  private onPointerUp(event: PointerEvent): void {
+    const lane = this.heldPointers.get(event.pointerId);
+    if (lane === undefined) return;
+    this.heldPointers.delete(event.pointerId);
+    this.laneHoldCounts[lane] = Math.max(0, this.laneHoldCounts[lane] - 1);
+    if (this.laneHoldCounts[lane] === 0) this.releaseLane(lane);
+  }
+
+  private pressLane(lane: RhythmLane): void {
     if (!this.running || this.session === null) return;
     this.actionsTaken += 1;
     this.lane = lane;
     const event = this.session.input(lane);
     this.applyJudgment(event);
-    const note = event.noteId === null ? null : this.shadow?.querySelector(`[data-note-id="${event.noteId}"]`);
-    note?.remove();
+    this.updateTrack();
+  }
+
+  private releaseLane(lane: RhythmLane): void {
+    if (this.session === null) return;
+    const event = this.session.release(lane);
+    if (event !== null) this.applyJudgment(event);
     this.updateTrack();
   }
 
@@ -269,6 +361,9 @@ export class RhythmHop implements MinigameModule {
       if (context.reducedMotion !== true) this.wobbleUntilMs = context.clock.now() + 360;
       context.audio?.emit("miss");
       context.haptics?.impact("warning");
+    } else if (event.judgment === "sparkle") {
+      this.context?.audio?.emit("score", event.combo);
+      this.context?.haptics?.impact("medium");
     } else {
       this.context?.audio?.emit(
         event.combo > 0 && event.combo % 5 === 0 ? "combo" : "hit",
@@ -280,12 +375,21 @@ export class RhythmHop implements MinigameModule {
     if (judgment !== null && judgment !== undefined) {
       judgment.className = `judgment ${event.judgment} show`;
       judgment.textContent =
-        event.judgment === "perfect" ? "PERFECT!" : event.judgment === "good" ? "GOOD!" : "MISS";
+        event.hold === "completed"
+          ? "HOLD!"
+          : event.judgment === "sparkle"
+            ? "SPARKLE!"
+            : event.judgment === "perfect"
+              ? "PERFECT!"
+              : event.judgment === "good"
+                ? "GOOD!"
+                : "MISS";
     }
     const combo = this.shadow?.querySelector<HTMLElement>(".combo-pop");
     if (combo !== null && combo !== undefined) combo.textContent = event.combo >= 2 ? `${event.combo}× COMBO` : "";
     const note = event.noteId === null ? null : this.shadow?.querySelector(`[data-note-id="${event.noteId}"]`);
-    note?.remove();
+    if (event.hold === "started") note?.classList.add("holding");
+    else note?.remove();
   }
 
   private beginSong(): void {
@@ -306,6 +410,7 @@ export class RhythmHop implements MinigameModule {
     this.wobbleUntilMs = 0;
     this.actionsTaken = 0;
     this.completedSong = false;
+    this.clearHeldInput();
     this.render();
     this.root?.focus();
   }
@@ -316,6 +421,7 @@ export class RhythmHop implements MinigameModule {
     this.session.pause();
     this.completedSong = completedSong;
     this.finalScore = this.session.score;
+    this.finalSparkles = this.session.sparkles;
     this.finalPerfects = this.session.perfects;
     this.finalGoods = this.session.goods;
     this.finalMisses = this.session.misses;
@@ -351,6 +457,7 @@ export class RhythmHop implements MinigameModule {
     this.paused = false;
     this.finished = false;
     this.screen = "select";
+    this.clearHeldInput();
     this.render();
   }
 
@@ -388,10 +495,12 @@ export class RhythmHop implements MinigameModule {
           <div class="lane-glow" style="--lane:${this.lane}"></div>
           <div class="finish-line"></div>
           ${beatmap.notes
-            .filter((note) => session?.isJudged(note.id) !== true)
+            .filter((note) => session?.isJudged(note.id) !== true || session?.isHoldActive(note.id) === true)
             .map(
               (note) =>
-                `<div class="note ${beatmap.difficulty}" data-note-id="${note.id}" data-time="${note.timeMs}" style="--lane:${note.lane};--note-y:110%">${beatmap.icon}</div>`,
+                `<div class="note ${beatmap.difficulty} ${note.holdMs !== undefined ? "hold" : ""} ${session?.isHoldActive(note.id) === true ? "holding" : ""}"
+                  data-note-id="${note.id}" data-time="${note.timeMs}" data-hold="${note.holdMs ?? 0}"
+                  style="--lane:${note.lane};--note-y:110%;--hold-len:0px">${beatmap.icon}</div>`,
             )
             .join("")}
           <div class="gooby" style="--lane:${this.lane}" aria-label="Gooby in lane ${this.lane + 1}"></div>
@@ -414,7 +523,7 @@ export class RhythmHop implements MinigameModule {
     if (this.paused) {
       return `
         <div class="overlay"><section class="panel" role="dialog" aria-label="Song paused">
-          <div class="mascot">🐰🎵</div><h2>Beat paused</h2><p>The audio clock and every note are frozen right on beat.</p>
+          <div class="mascot">🐰🎵</div><h2>Beat paused</h2><p>The audio clock, every note, and even held notes are frozen right on beat.</p>
           <button class="primary" data-action="resume">Resume the groove</button>
           <button class="secondary" data-action="quit">${this.actionsTaken === 0 ? "Quit without reward" : "Finish &amp; collect"}</button>
         </section></div>`;
@@ -424,9 +533,9 @@ export class RhythmHop implements MinigameModule {
 
   private renderTutorial(): string {
     const pages = [
-      { icon: "🎵", title: "Follow the beat", copy: "Notes glide down three moonlit lanes. Watch the glowing HOP line near Gooby.", tip: "Each song uses timestamped notes ready for an audio clock." },
-      { icon: "🐰", title: "Hop lanes", copy: "Tap the lane buttons or use A/S/D and arrow keys as a note reaches Gooby.", tip: "Gooby hops instantly and wobbles after a miss." },
-      { icon: "✨", title: "Build a combo", copy: "Perfect hits are closest to the beat, Good hits are near it, and Misses reset your combo.", tip: "Hard mode has tighter windows and off-beat notes." },
+      { icon: "🎵", title: "Follow the beat", copy: "Notes glide down three moonlit lanes. Watch the glowing HOP line near Gooby.", tip: "Each song is an authored chart riding one audio clock." },
+      { icon: "🐰", title: "Hop and hold", copy: "Tap the lane buttons or use A/S/D and arrow keys. Notes with a glowing trail are holds — keep the lane held to the end of the trail.", tip: "Gooby hops instantly and wobbles after a miss." },
+      { icon: "✨", title: "Sparkle the combo", copy: "Dead-center hits SPARKLE for extra points, Perfect and Good keep the combo, Misses reset it.", tip: "Hard mode has tighter windows and off-beat notes." },
     ] as const;
     const page = pages[this.tutorialPage] ?? pages[0];
     return `
@@ -442,12 +551,13 @@ export class RhythmHop implements MinigameModule {
   private renderSelection(): string {
     return `
       <div class="overlay"><section class="panel">
-        <div class="mascot">🐰🎧</div><h2>Choose your groove</h2><p>Three complete songs, each with two hand-tuned beatmaps.</p>
+        <div class="mascot">🐰🎧</div><h2>Choose your groove</h2><p>Five complete songs, each with two hand-tuned beatmaps.</p>
         <div class="songs">
           ${SONG_ORDER.map((songId) => {
             const song = RHYTHM_BEATMAPS[songId].easy;
+            const hasHolds = song.notes.some(({ holdMs }) => holdMs !== undefined);
             return `<button class="song ${songId === this.songId ? "selected" : ""}" data-action="song" data-song="${songId}">
-              <em>${song.icon}</em><span><b>${song.title}</b><small>${song.subtitle} · ${song.bpm} BPM</small></span><strong>${Math.ceil(song.durationMs / 1000)}s</strong>
+              <em>${song.icon}</em><span><b>${song.title}</b><small>${song.subtitle} · ${song.bpm} BPM${hasHolds ? " · holds" : ""}</small></span><strong>${Math.ceil(song.durationMs / 1000)}s</strong>
             </button>`;
           }).join("")}
         </div>
@@ -460,8 +570,11 @@ export class RhythmHop implements MinigameModule {
   }
 
   private renderResults(): string {
-    const total = this.finalPerfects + this.finalGoods + this.finalMisses;
-    const accuracy = total === 0 ? 0 : (this.finalPerfects + this.finalGoods * 0.65) / total;
+    const total = this.finalSparkles + this.finalPerfects + this.finalGoods + this.finalMisses;
+    const accuracy =
+      total === 0
+        ? 0
+        : (this.finalSparkles + this.finalPerfects + this.finalGoods * 0.65) / total;
     const grade = accuracy >= 0.95 ? "S" : accuracy >= 0.84 ? "A" : accuracy >= 0.7 ? "B" : accuracy >= 0.5 ? "C" : "D";
     const isBest = this.finalScore > this.previousBest;
     return `
@@ -469,6 +582,7 @@ export class RhythmHop implements MinigameModule {
         <div class="mascot">🐰✨</div><h2>${this.completedSong ? "Song complete!" : "Song wrapped up"}</h2><div class="grade">${grade}</div>
         <div class="result-score">${this.finalScore.toLocaleString()} pts</div>
         <div class="result-grid">
+          <div class="sparkle-cell"><b>${this.finalSparkles}</b><span>Sparkle</span></div>
           <div><b>${this.finalPerfects}</b><span>Perfect</span></div>
           <div><b>${this.finalGoods}</b><span>Good</span></div>
           <div><b>${this.finalBestCombo}×</b><span>Best combo</span></div>
@@ -487,10 +601,20 @@ export class RhythmHop implements MinigameModule {
     const usableHeight = Math.max(180, track.clientHeight - 83);
     for (const note of track.querySelectorAll<HTMLElement>("[data-time]")) {
       const time = Number(note.dataset.time);
+      const holdMs = Number(note.dataset.hold ?? "0");
+      const holding = note.classList.contains("holding");
       const difference = time - now;
-      note.hidden = difference < -180 || difference > 2_200;
+      const tailDifference = time + holdMs - now;
+      note.hidden = tailDifference < -180 || difference > 2_200;
       const ratio = Math.max(0, Math.min(1, difference / 2_200));
-      note.style.setProperty("--note-y", `${83 + ratio * usableHeight}px`);
+      note.style.setProperty("--note-y", holding ? "83px" : `${83 + ratio * usableHeight}px`);
+      if (holdMs > 0) {
+        const remainingMs = holding ? Math.max(0, tailDifference) : holdMs;
+        note.style.setProperty(
+          "--hold-len",
+          `${(Math.min(remainingMs, 2_200) / 2_200) * usableHeight}px`,
+        );
+      }
     }
     const context = this.requireMounted();
     const gooby = this.shadow.querySelector<HTMLElement>(".gooby");
@@ -502,6 +626,7 @@ export class RhythmHop implements MinigameModule {
     if (glow !== null) {
       glow.style.setProperty("--lane", String(this.lane));
       glow.classList.toggle("on", this.feedbackSeconds > 0 && this.feedback !== "miss");
+      glow.classList.toggle("sparkle", this.feedbackSeconds > 0 && this.feedback === "sparkle");
     }
     const score = this.shadow.querySelector<HTMLElement>('[data-stat="score"]');
     const combo = this.shadow.querySelector<HTMLElement>('[data-stat="combo"]');

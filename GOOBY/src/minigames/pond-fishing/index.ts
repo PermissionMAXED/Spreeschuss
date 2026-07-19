@@ -7,10 +7,17 @@ import type {
 import type { HapticPattern } from "../../core/contracts/platform";
 import type { MinigameStubDefinition } from "../stub";
 import {
-  FISH_SPECIES,
   PondFishingRound,
+  TACKLE_IDS,
+  TACKLE_INFO,
+  pondPayout,
+  pondStockPhaseAt,
+  rarityRank,
+  stockOdds,
   type FishingDifficulty,
   type PondPhase,
+  type PondStockPhase,
+  type TackleId,
 } from "./model";
 import { POND_FISHING_STYLES } from "./styles";
 
@@ -52,6 +59,7 @@ export class PondFishing implements MinigameModule {
   private runId: MinigameRunId | null = null;
   private screen: FishingScreen = "tutorial";
   private difficulty: FishingDifficulty = "relaxed";
+  private tackle: TackleId = "everyday-float";
   private tutorialPage = 0;
   private running = false;
   private paused = false;
@@ -70,6 +78,7 @@ export class PondFishing implements MinigameModule {
   private finalScore = 0;
   private finalWeight = 0;
   private finalCatchCount = 0;
+  private finalLegendaryCount = 0;
 
   private readonly handleClick = (event: Event): void => {
     this.onClick(event);
@@ -165,15 +174,7 @@ export class PondFishing implements MinigameModule {
 
   payout(): MinigamePayout {
     if (this.screen !== "results") return EMPTY_PAYOUT;
-    const score = this.finalScore;
-    const catchCount = this.finalCatchCount;
-    const legendaryBonus =
-      this.round?.catches.filter(({ species }) => species.rarity === "legendary").length ?? 0;
-    return {
-      score,
-      coins: catchCount * 3 + Math.floor(score / 400) + legendaryBonus * 12,
-      xp: Math.max(0, Math.floor(score / 65)),
-    };
+    return pondPayout(this.finalScore, this.finalCatchCount, this.finalLegendaryCount);
   }
 
   dispose(): void {
@@ -207,7 +208,7 @@ export class PondFishing implements MinigameModule {
     if (button === null) return;
     const action = button.dataset.action;
     if (action === "tutorial-next") {
-      if (this.tutorialPage < 2) this.tutorialPage += 1;
+      if (this.tutorialPage < 3) this.tutorialPage += 1;
       else this.screen = "select";
       this.render();
       return;
@@ -221,6 +222,14 @@ export class PondFishing implements MinigameModule {
       const difficulty = button.dataset.difficulty;
       if (difficulty === "relaxed" || difficulty === "ripple" || difficulty === "legend") {
         this.difficulty = difficulty;
+      }
+      this.render();
+      return;
+    }
+    if (action === "tackle") {
+      const tackle = button.dataset.tackle;
+      if ((TACKLE_IDS as readonly string[]).includes(tackle ?? "")) {
+        this.tackle = tackle as TackleId;
       }
       this.render();
       return;
@@ -322,7 +331,10 @@ export class PondFishing implements MinigameModule {
     this.runId = context.lifecycle?.beginRun() ?? null;
     this.previousBest = context.lifecycle?.persistedBest ?? context.bestScore ?? this.highScore;
     this.highScore = this.previousBest;
-    this.round = new PondFishingRound(this.difficulty, context.rng);
+    this.round = new PondFishingRound(this.difficulty, context.rng, {
+      tackle: this.tackle,
+      stockPhase: this.currentStockPhase(),
+    });
     this.screen = "playing";
     this.running = true;
     this.paused = false;
@@ -343,6 +355,9 @@ export class PondFishing implements MinigameModule {
     this.finalScore = this.round.score;
     this.finalWeight = this.round.totalWeightKg;
     this.finalCatchCount = this.round.catches.length;
+    this.finalLegendaryCount = this.round.catches.filter(
+      ({ species }) => species.rarity === "legendary",
+    ).length;
     this.screen = "results";
     this.settleTerminalResult();
     this.render();
@@ -380,6 +395,11 @@ export class PondFishing implements MinigameModule {
   private requireMounted(): FishingContext {
     if (this.context === null) throw new Error("Pond Fishing must be mounted before use");
     return this.context;
+  }
+
+  /** Day/night stock follows the injected clock, never the wall clock. */
+  private currentStockPhase(): PondStockPhase {
+    return pondStockPhaseAt(this.requireMounted().clock.now());
   }
 
   private render(): void {
@@ -555,20 +575,24 @@ export class PondFishing implements MinigameModule {
     const pages = [
       { icon: "🎣", title: "Cast with care", copy: "Drag to a shadow, or Tab to one and press Enter. Number keys 1–5 cast directly.", tip: "Longer fish shadows often hide heavier catches." },
       { icon: "❗", title: "Wait for the bite", copy: "The bobber will plunge and glow. Tap it or press Enter quickly to set the hook.", tip: "Tapping early scares the fish — patience wins." },
-      { icon: "🟢", title: "Balance the tension", copy: "Hold Reel, Space, or R to pull; release to ease. Keep the needle in green.", tip: "Every species has its own surge rhythm." },
+      { icon: "🟢", title: "Balance the tension", copy: "Hold Reel, Space, or R to pull; release to ease. Keep the needle in green.", tip: "Every species has its own pull pattern — zigzags, thumps, and feints." },
+      { icon: "🧰", title: "Read the posted odds", copy: "Pick a tackle before casting — every spot posts its exact stock odds, and the pond restocks between day and night.", tip: "Moonback Catfish only prowl after dark; Prism Trout love daylight." },
     ] as const;
+    const lastPage = pages.length - 1;
     const page = pages[this.tutorialPage] ?? pages[0];
     return `
       <div class="overlay"><section class="panel">
         <div class="mascot">${page.icon}</div><h2>${page.title}</h2><p>${page.copy}</p>
         <div class="tip"><em>🐰</em><div><b>Gooby's pond tip</b><span>${page.tip}</span></div></div>
         <div class="dots">${pages.map((_, index) => `<i class="${index === this.tutorialPage ? "on" : ""}"></i>`).join("")}</div>
-        <button class="primary" data-action="tutorial-next">${this.tutorialPage === 2 ? "Choose a pond" : "Next tip"}</button>
+        <button class="primary" data-action="tutorial-next">${this.tutorialPage === lastPage ? "Choose a pond" : "Next tip"}</button>
         <button class="secondary" data-action="tutorial-skip">Skip tutorial</button>
       </section></div>`;
   }
 
   private renderDifficulty(): string {
+    const phase = this.currentStockPhase();
+    const odds = stockOdds(this.difficulty, this.tackle, phase);
     return `
       <div class="overlay"><section class="panel">
         <div class="mascot">🐰🎣</div><h2>Pick a fishing spot</h2><p>All ponds last 90 seconds. Braver waters hide rarer fish.</p>
@@ -582,20 +606,37 @@ export class PondFishing implements MinigameModule {
             })
             .join("")}
         </div>
+        <div class="tackle" role="group" aria-label="Tackle">
+          ${TACKLE_IDS.map((tackleId) => {
+            const info = TACKLE_INFO[tackleId];
+            return `<button data-action="tackle" data-tackle="${tackleId}" class="${tackleId === this.tackle ? "selected" : ""}" aria-pressed="${tackleId === this.tackle}">
+              <em>${info.icon}</em><b>${info.name}</b><small>${info.copy}</small>
+            </button>`;
+          }).join("")}
+        </div>
+        <div class="odds" data-phase="${phase}" aria-label="Exact pond stock odds">
+          <div class="odds-title">${phase === "night" ? "🌙 Night stock" : "☀️ Day stock"} · exact odds</div>
+          ${odds
+            .filter(({ percent }) => percent > 0)
+            .map(
+              ({ species, percent }) =>
+                `<div class="odds-row ${species.rarity}"><em>${species.icon}</em><span>${species.name}</span><i></i><b data-odds="${species.id}">${percent.toFixed(1)}%</b></div>`,
+            )
+            .join("")}
+        </div>
         <button class="primary" data-action="play">Cast a line</button>
       </section></div>`;
   }
 
   private renderResults(): string {
     const isBest = this.finalScore > this.previousBest;
-    const rarest = this.round?.catches.reduce(
+    const catches = this.round?.catches ?? [];
+    const rarest = catches.reduce<(typeof catches)[number] | undefined>(
       (best, caught) =>
-        FISH_SPECIES.indexOf(caught.species) > FISH_SPECIES.indexOf(best.species) ? caught : best,
-      this.round.catches[0] ?? {
-        species: FISH_SPECIES[0] as (typeof FISH_SPECIES)[number],
-        weightKg: 0,
-        score: 0,
-      },
+        best === undefined || rarityRank(caught.species) > rarityRank(best.species)
+          ? caught
+          : best,
+      undefined,
     );
     return `
       <div class="overlay"><section class="panel">

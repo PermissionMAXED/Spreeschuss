@@ -125,20 +125,12 @@ describe("frozen registries", () => {
     }
   });
 
-  it("marks exactly the ten unshipped expansion manifests as CP1 dev stubs", () => {
-    const specialistExpansionIds = ["cake-atelier", "shopping-surf"] as const;
-    for (const id of LAUNCH_MINIGAME_IDS) {
-      expect(MINIGAME_MANIFESTS.get(id)?.dev, `${id} must not carry stub metadata`).toBeUndefined();
-    }
-    for (const id of specialistExpansionIds) {
-      expect(MINIGAME_MANIFESTS.get(id)?.dev, `${id} must not carry stub metadata`).toBeUndefined();
-    }
-    for (const id of EXPANSION_MINIGAME_IDS) {
-      if ((specialistExpansionIds as readonly string[]).includes(id)) continue;
-      expect(MINIGAME_MANIFESTS.get(id)?.dev, `${id} must carry stub metadata`).toEqual({
-        cpStub: true,
-        checkpoint: "CP1",
-      });
+  it("ships every manifest final with zero stub or dev markers", () => {
+    for (const id of MINIGAME_IDS) {
+      const manifest = MINIGAME_MANIFESTS.get(id);
+      expect(manifest, `missing manifest for ${id}`).toBeDefined();
+      if (!manifest) continue;
+      expect("dev" in manifest, `${id} must not carry dev metadata`).toBe(false);
     }
   });
 

@@ -23,20 +23,32 @@ import {
   definition as cakeAtelier,
   manifest as cakeAtelierManifest,
 } from "./cake-atelier";
-import { definition as carrotCannon, createMinigame as createCarrotCannon } from "./carrot-cannon";
+import {
+  createMinigame as createCarrotCannon,
+  definition as carrotCannon,
+  manifest as carrotCannonManifest,
+} from "./carrot-cannon";
 import { definition as carrotCatch, manifest as carrotCatchManifest } from "./carrot-catch";
 import {
   createMinigame as createCloudBounce,
   definition as cloudBounce,
   manifest as cloudBounceManifest,
 } from "./cloud-bounce";
-import { definition as deliveryDash, createMinigame as createDeliveryDash } from "./delivery-dash";
+import {
+  createMinigame as createDeliveryDash,
+  definition as deliveryDash,
+  manifest as deliveryDashManifest,
+} from "./delivery-dash";
 import {
   createMinigame as createFireflyLantern,
   definition as fireflyLantern,
   manifest as fireflyLanternManifest,
 } from "./firefly-lantern";
-import { definition as gardenMoles, createMinigame as createGardenMoles } from "./garden-moles";
+import {
+  createMinigame as createGardenMoles,
+  definition as gardenMoles,
+  manifest as gardenMolesManifest,
+} from "./garden-moles";
 import { definition as goobySays, manifest as goobySaysManifest } from "./gooby-says";
 import {
   createMinigame as createHoneyDrizzle,
@@ -168,7 +180,7 @@ function launchManifest(spec: LaunchManifestSpec): MinigameManifest {
 }
 
 /**
- * The six deepened launch specialists export their own final manifests; the
+ * The nine deepened launch specialists export their own final manifests; the
  * frozen hub unlock gates must stay byte-identical to the launch layout.
  */
 const DEEPENED_LAUNCH_MANIFESTS: readonly MinigameManifest[] = [
@@ -178,6 +190,9 @@ const DEEPENED_LAUNCH_MANIFESTS: readonly MinigameManifest[] = [
   bubbleBathBlastManifest,
   veggieSortManifest,
   goobySaysManifest,
+  gardenMolesManifest,
+  carrotCannonManifest,
+  deliveryDashManifest,
 ];
 if (
   DEEPENED_LAUNCH_MANIFESTS.some(
@@ -190,78 +205,6 @@ if (
 const LAUNCH_MANIFESTS: readonly MinigameManifest[] = [
   ...DEEPENED_LAUNCH_MANIFESTS,
   launchManifest({
-    id: "garden-moles",
-    category: "action",
-    audioCues: ["go", "hit", "miss", "combo", "countdown", "score", "lose", "win"],
-    unlockLevel: LAUNCH_UNLOCK_LEVELS[6],
-    tutorial: [
-      {
-        icon: "🌱",
-        title: { en: "Shoo the moles", de: "Verscheuche die Maulwürfe" },
-        body: {
-          en: "Tap moles the moment they pop out of their burrows.",
-          de: "Tippe Maulwürfe an, sobald sie aus ihren Höhlen schauen.",
-        },
-      },
-      {
-        icon: "🐇",
-        title: { en: "Spare the friends", de: "Verschone die Freunde" },
-        body: {
-          en: "Bunny friends peek out too. Tapping them costs garden points.",
-          de: "Auch Hasenfreunde schauen heraus. Sie anzutippen kostet Gartenpunkte.",
-        },
-      },
-    ],
-  }),
-  launchManifest({
-    id: "carrot-cannon",
-    category: "skill",
-    audioCues: ["go", "hit", "miss", "combo", "countdown", "score", "lose", "win"],
-    unlockLevel: LAUNCH_UNLOCK_LEVELS[7],
-    tutorial: [
-      {
-        icon: "✹",
-        title: { en: "Aim the cannon", de: "Ziele mit der Kanone" },
-        body: {
-          en: "Drag to aim, release to launch bouncy carrots at the picnic targets.",
-          de: "Ziehe zum Zielen und lass los, um Hüpfkarotten auf die Picknick-Ziele zu schießen.",
-        },
-      },
-      {
-        icon: "✦",
-        title: { en: "Bank the bounces", de: "Nutze die Abpraller" },
-        body: {
-          en: "Carrots bounce off walls. Trick shots hit distant targets for more points.",
-          de: "Karotten prallen von Wänden ab. Trickschüsse treffen ferne Ziele für mehr Punkte.",
-        },
-      },
-    ],
-  }),
-  launchManifest({
-    id: "delivery-dash",
-    category: "action",
-    audioCues: ["go", "hit", "miss", "combo", "countdown", "score", "lose", "win"],
-    unlockLevel: LAUNCH_UNLOCK_LEVELS[8],
-    tutorial: [
-      {
-        icon: "▣",
-        title: { en: "Deliver the parcels", de: "Liefere die Pakete aus" },
-        body: {
-          en: "Steer through town and drop each parcel at its glowing doorstep.",
-          de: "Steuere durch die Stadt und lege jedes Paket vor der leuchtenden Haustür ab.",
-        },
-      },
-      {
-        icon: "⏱",
-        title: { en: "Beat the clock", de: "Schlage die Uhr" },
-        body: {
-          en: "Fast, tidy deliveries earn time bonuses before the route ends.",
-          de: "Schnelle, saubere Lieferungen bringen Zeitboni, bevor die Route endet.",
-        },
-      },
-    ],
-  }),
-  launchManifest({
     id: "memory-meadow",
     category: "puzzle",
     audioCues: ["go", "hit", "miss", "combo", "countdown", "win"],
@@ -271,16 +214,24 @@ const LAUNCH_MANIFESTS: readonly MinigameManifest[] = [
         icon: "❀",
         title: { en: "Flip the flowers", de: "Drehe die Blumen um" },
         body: {
-          en: "Turn over two cards at a time to hunt for matching flowers.",
+          en: "Turn over two cards at a time to hunt for matching flower pairs.",
           de: "Decke zwei Karten gleichzeitig auf und suche passende Blumenpaare.",
         },
       },
       {
-        icon: "✦",
-        title: { en: "Remember the meadow", de: "Merke dir die Wiese" },
+        icon: "🌙",
+        title: { en: "Find the glowing trios", de: "Finde die leuchtenden Trios" },
         body: {
-          en: "Fewer flips mean a bigger bloom bonus at the end.",
-          de: "Weniger Versuche bedeuten am Ende einen größeren Blütenbonus.",
+          en: "Moonlit Meadow hides glowing trios — match all three glowing cards in a row.",
+          de: "Die Mondwiese verbirgt leuchtende Trios — finde alle drei leuchtenden Karten nacheinander.",
+        },
+      },
+      {
+        icon: "✦",
+        title: { en: "Chain a streak", de: "Bilde eine Serie" },
+        body: {
+          en: "Chain matches without a miss. Every extra streak match grows your bloom bonus.",
+          de: "Reihe Treffer ohne Fehlversuch aneinander. Jeder weitere Serientreffer vergrößert deinen Blütenbonus.",
         },
       },
     ],
@@ -292,19 +243,27 @@ const LAUNCH_MANIFESTS: readonly MinigameManifest[] = [
     unlockLevel: LAUNCH_UNLOCK_LEVELS[10],
     tutorial: [
       {
-        icon: "≈",
-        title: { en: "Wait for a nibble", de: "Warte auf ein Anbeißen" },
+        icon: "🎣",
+        title: { en: "Cast with care", de: "Wirf mit Bedacht aus" },
         body: {
-          en: "Cast the line and watch the bobber. Patience lures the shiniest fish.",
-          de: "Wirf die Angel aus und beobachte den Schwimmer. Geduld lockt die glänzendsten Fische.",
+          en: "Drag the line to a fish shadow. Longer shadows often hide heavier catches.",
+          de: "Ziehe die Angel zu einem Fischschatten. Längere Schatten verbergen oft schwerere Fänge.",
         },
       },
       {
-        icon: "✦",
-        title: { en: "Reel in gently", de: "Kurbel sanft ein" },
+        icon: "❗",
+        title: { en: "Set the hook", de: "Setze den Haken" },
         body: {
-          en: "Tap right when the bobber dips to reel the catch in gently.",
-          de: "Tippe genau dann, wenn der Schwimmer eintaucht, um den Fang sanft einzuholen.",
+          en: "When the bobber plunges and glows, tap it quickly to hook the fish.",
+          de: "Wenn der Schwimmer eintaucht und leuchtet, tippe ihn schnell an, um den Fisch zu haken.",
+        },
+      },
+      {
+        icon: "🟢",
+        title: { en: "Balance the tension", de: "Halte die Spannung im Griff" },
+        body: {
+          en: "Hold to reel, release to ease, and keep the needle in green. Tackle and the day-night stock change the posted odds.",
+          de: "Halte zum Einholen, lass zum Entspannen los und halte die Nadel im Grünen. Köder und Tag-Nacht-Besatz ändern die angezeigten Chancen.",
         },
       },
     ],
@@ -317,18 +276,26 @@ const LAUNCH_MANIFESTS: readonly MinigameManifest[] = [
     tutorial: [
       {
         icon: "♫",
-        title: { en: "Feel the beat", de: "Fühle den Takt" },
+        title: { en: "Follow the beat", de: "Folge dem Takt" },
         body: {
-          en: "Notes glide toward the glowing line. Hop exactly on the beat.",
-          de: "Noten gleiten auf die leuchtende Linie zu. Hüpfe genau im Takt.",
+          en: "Notes glide down three moonlit lanes toward the glowing hop line near Gooby.",
+          de: "Noten gleiten drei mondhelle Bahnen hinab zur leuchtenden Hüpflinie bei Gooby.",
+        },
+      },
+      {
+        icon: "🐰",
+        title: { en: "Hop and hold", de: "Hüpfen und halten" },
+        body: {
+          en: "Tap the lane buttons or use A/S/D and the arrows. Notes with a glowing trail are holds — keep the lane held to the end.",
+          de: "Tippe die Bahntasten oder nutze A/S/D und die Pfeile. Noten mit Leuchtspur sind Haltenoten — halte die Bahn bis zum Ende gedrückt.",
         },
       },
       {
         icon: "✦",
-        title: { en: "Light the meadow", de: "Erleuchte die Wiese" },
+        title: { en: "Sparkle the combo", de: "Lass die Combo funkeln" },
         body: {
-          en: "Perfect hops light up the meadow and multiply your score.",
-          de: "Perfekte Sprünge erleuchten die Wiese und vervielfachen deine Punkte.",
+          en: "Dead-center hits sparkle for extra points; misses reset the combo. Hard mode tightens every timing window.",
+          de: "Punktgenaue Treffer funkeln für Extrapunkte; Fehler setzen die Combo zurück. Der harte Modus verengt jedes Zeitfenster.",
         },
       },
     ],

@@ -82,6 +82,14 @@
   letter-spacing: .08em;
 }
 
+.cc-shot-count span {
+  margin-top: 2px;
+  color: #55706e;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
 .cc-icon-button {
   justify-self: end;
   width: 44px;
@@ -448,6 +456,22 @@
 
 @keyframes cc-miss {
   to { opacity: .72; }
+}
+
+.cc-game.cc-reduced-motion *,
+.cc-game.cc-reduced-motion *::before,
+.cc-game.cc-reduced-motion *::after {
+  animation-duration: 1ms !important;
+  transition-duration: 1ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-game *,
+  .cc-game *::before,
+  .cc-game *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
 }
 
 @media (max-height: 700px) {

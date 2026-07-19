@@ -40,7 +40,7 @@ export type MinigameId = (typeof MINIGAME_IDS)[number];
 
 /** The first twelve launch minigames owned by their original specialists. */
 export const LAUNCH_MINIGAME_IDS = MINIGAME_IDS.slice(0, 12);
-/** The twelve CP1 expansion minigames introduced as playable checkpoint stubs. */
+/** The twelve expansion minigames, now shipped as final specialist builds. */
 export const EXPANSION_MINIGAME_IDS = MINIGAME_IDS.slice(12);
 
 export type SceneId =

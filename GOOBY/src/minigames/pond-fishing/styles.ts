@@ -80,6 +80,17 @@ export const POND_FISHING_STYLES = `
   .difficulty { display:grid; gap:7px; margin:12px 0 16px; }
   .difficulty button { display:grid; grid-template-columns:43px 1fr auto; gap:9px; align-items:center; padding:10px 11px; border:2px solid transparent; border-radius:17px; color:#49726d; background:#b8e2c8; text-align:left; }
   .difficulty button.selected { border-color:#e4aa4e; background:#fff0b5; transform:scale(1.02); }.difficulty em{font-style:normal;font-size:25px}.difficulty b,.difficulty small{display:block}.difficulty b{font-size:12px}.difficulty small{font-size:9px}.difficulty strong{font-size:9px}
+  .tackle { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin:0 0 10px; }
+  .tackle button { padding:9px 5px; border:2px solid transparent; border-radius:15px; color:#49726d; background:#b8e2c8; }
+  .tackle button.selected { border-color:#e4aa4e; background:#fff0b5; }
+  .tackle em { display:block; font-style:normal; font-size:21px; } .tackle b { display:block; font-size:10px; } .tackle small { display:block; margin-top:1px; font-size:7.5px; color:#66877e; }
+  .odds { margin:0 0 14px; padding:9px 11px 11px; border:1px solid #8ec9ae; border-radius:15px; background:#e7f8ec; text-align:left; }
+  .odds[data-phase="night"] { border-color:#8b98d6; background:#e7ebfb; }
+  .odds-title { margin-bottom:6px; color:#33635f; font-size:9px; font-weight:950; letter-spacing:.8px; text-transform:uppercase; }
+  .odds[data-phase="night"] .odds-title { color:#46528f; }
+  .odds-row { display:grid; grid-template-columns:22px auto 1fr auto; gap:6px; align-items:center; padding:1.5px 0; font-size:10px; color:#3f6862; }
+  .odds-row em { font-style:normal; font-size:13px; } .odds-row i { border-bottom:1px dotted #9dc4b4; } .odds-row b { font-variant-numeric:tabular-nums; }
+  .odds-row.legendary b { color:#b07c17; } .odds-row.epic b { color:#7c5bb0; } .odds-row.rare b { color:#2673a8; }
   .primary,.secondary { width:100%; min-height:49px; border-radius:17px; font-weight:950; }.primary{color:#fff;background:linear-gradient(145deg,#42a58a,#247276);box-shadow:0 8px 18px #246f7044,inset 0 1px #fff6}.secondary{margin-top:8px;color:#477069;background:#c5e5cb}
   .result-weight { margin:8px 0 3px; color:#25676b; font-size:36px; font-weight:950; }.result-score{margin-bottom:14px;color:#5e7d72;font-size:13px}.new-best{display:inline-block;margin-bottom:11px;padding:5px 10px;border-radius:99px;color:#8b5d1f;background:#ffe798;font-size:9px;font-weight:950;letter-spacing:1px}
   @media (max-height:700px){.game{min-height:100%}.panel{padding:15px}.mascot{font-size:41px}h2{font-size:22px}.tip{margin:7px 0}.difficulty{gap:5px;margin:7px 0 10px}.difficulty button{padding:7px 9px}.gooby{transform:translateX(-50%) scale(.8);transform-origin:bottom}.tension-wrap{bottom:13%}}

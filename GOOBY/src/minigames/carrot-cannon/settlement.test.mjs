@@ -63,3 +63,16 @@ test("a clear settles once and replay starts a separately payable run", () => {
   assert.equal(harness.receipts.size, 2);
   assert.equal(new Set(harness.receipts.keys()).size, 2);
 });
+
+test("module-managed Cannon runs begin, settle, and ignore duplicate terminal actions", () => {
+  const harness = createHarness();
+  const settlement = createCannonSettlement(harness.context);
+  settlement.begin();
+  assert.equal(settlement.runActive, true);
+  assert.equal(settlement.complete({ score: 720, coins: 3, xp: 8 }), true);
+  assert.equal(settlement.complete({ score: 9_999, coins: 90, xp: 180 }), false);
+  assert.equal(settlement.runActive, false);
+  assert.equal(settlement.receipt?.bestScore, 720);
+  assert.equal(harness.receipts.size, 1);
+  assert.deepEqual(harness.feedback.map((event) => event.kind), ["run-began", "run-completed"]);
+});
