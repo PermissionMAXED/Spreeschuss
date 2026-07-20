@@ -6,8 +6,19 @@
   "license": "MIT",
   "environment": "*",
   "entrypoints": {
+    "main": [
+      "dev.cuprum.cuprum.gametest.CuprumGametestInit"
+    ],
     "fabric-gametest": [
-      "dev.cuprum.cuprum.gametest.ChargeProbeGameTest"
+      "dev.cuprum.cuprum.gametest.ChargeProbeGameTest",
+      "dev.cuprum.cuprum.gametest.config.ConfigGameTest",
+      "dev.cuprum.cuprum.gametest.net.DiagEchoCodecFuzzGameTest",
+      "dev.cuprum.cuprum.gametest.net.GuardLazinessGameTest",
+      "dev.cuprum.cuprum.gametest.net.NetDisconnectRaceGameTest",
+      "dev.cuprum.cuprum.gametest.net.NetGuardGameTest",
+      "dev.cuprum.cuprum.gametest.net.NetReconnectRaceGameTest",
+      "dev.cuprum.cuprum.gametest.net.NetShutdownClearGameTest",
+      "dev.cuprum.cuprum.gametest.state.StateProbeGameTest"
     ],
     "fabric-client-gametest": [
       "dev.cuprum.cuprum.gametest.CuprumClientGameTest"

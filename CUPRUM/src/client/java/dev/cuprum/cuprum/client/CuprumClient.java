@@ -1,13 +1,18 @@
 package dev.cuprum.cuprum.client;
 
 import dev.cuprum.cuprum.Cuprum;
+import dev.cuprum.cuprum.client.config.CuprumClientConfigs;
+import dev.cuprum.cuprum.client.net.CuprumClientNet;
 import net.fabricmc.api.ClientModInitializer;
 
 public final class CuprumClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
-        // RenderApiProbe (same package) is a compile-time-only signature probe and is
+        // Bootstrap order is binding (FOUNDATION_PLAN §5.1); each W1 phase appends its line(s).
+        // RenderApiProbe and ClientNetApiProbe are compile-time-only signature probes and are
         // deliberately never touched at runtime.
+        CuprumClientConfigs.init();
+        CuprumClientNet.init();
         Cuprum.LOGGER.info("Cuprum client initialized");
     }
 }

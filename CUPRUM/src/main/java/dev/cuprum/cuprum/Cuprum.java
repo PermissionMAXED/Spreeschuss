@@ -1,5 +1,8 @@
 package dev.cuprum.cuprum;
 
+import dev.cuprum.cuprum.config.CuprumConfigs;
+import dev.cuprum.cuprum.net.CuprumNet;
+import dev.cuprum.cuprum.state.StateProbe;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
@@ -11,9 +14,13 @@ public final class Cuprum implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        // Bootstrap order is binding (FOUNDATION_PLAN §5.1); each W1 phase appends its line(s).
+        CuprumConfigs.init();
+        CuprumNet.init();
         CuprumBlocks.init();
         CuprumItems.init();
         CuprumCreativeTabs.init();
+        StateProbe.init();
         LOGGER.info("Cuprum {} initialized; catalog {} entries, sha256={}", version(), CuprumCatalog.ENTRY_COUNT, CuprumCatalog.CATALOG_SHA256);
     }
 

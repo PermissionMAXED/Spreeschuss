@@ -10,6 +10,13 @@
 #     tree (never by name) and FAILS: a forced kill is not a clean stop,
 #   * fails on FATAL / ERROR lines and on common-side loading of client classes.
 #
+# Opt-ins (defaults unchanged; used by server_restart_probe.sh):
+#   * PRESERVE_RUN_DIR=1  keeps the existing run dir (world included) instead of
+#     wiping it, so a second boot loads the same world,
+#   * REQUIRE_LOG_REGEX='...'  after Done, waits up to REQUIRE_LOG_TIMEOUT (60s)
+#     for the extended regex to appear in the console log and fails if it never
+#     does (post-Done lines such as SERVER_STARTED logs land after "Done").
+#
 # Uses only POSIX-ish tools available on GitHub runners (bash, grep, ps); no rg.
 set -euo pipefail
 
@@ -20,8 +27,15 @@ LOG=build/serverSmoke-console.log
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-600}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-120}"
 SMOKE_PORT="${SMOKE_PORT:-25599}"
+PRESERVE_RUN_DIR="${PRESERVE_RUN_DIR:-0}"
+REQUIRE_LOG_REGEX="${REQUIRE_LOG_REGEX:-}"
+REQUIRE_LOG_TIMEOUT="${REQUIRE_LOG_TIMEOUT:-60}"
 
-rm -rf "$RUN_DIR" "$LOG"
+if [[ "$PRESERVE_RUN_DIR" == 1 ]]; then
+    rm -f "$LOG"
+else
+    rm -rf "$RUN_DIR" "$LOG"
+fi
 mkdir -p "$RUN_DIR" "$(dirname "$LOG")"
 echo 'eula=true' > "$RUN_DIR/eula.txt"
 {
@@ -101,6 +115,22 @@ done
 grep -Eq 'Done \([0-9.]+s\)!' "$LOG" || fail "server did not reach Done within ${BOOT_TIMEOUT}s"
 echo "server reached Done"
 
+# Opt-in post-Done requirement: wait (bounded) for REQUIRE_LOG_REGEX to appear.
+if [[ -n "$REQUIRE_LOG_REGEX" ]]; then
+    for ((i = 0; i < REQUIRE_LOG_TIMEOUT; i++)); do
+        if grep -Eq "$REQUIRE_LOG_REGEX" "$LOG" 2>/dev/null; then
+            break
+        fi
+        if ! kill -0 "$GRADLE_PID" 2>/dev/null; then
+            fail "server exited before required log line matched: $REQUIRE_LOG_REGEX"
+        fi
+        sleep 1
+    done
+    grep -Eq "$REQUIRE_LOG_REGEX" "$LOG" \
+        || fail "required log line did not appear within ${REQUIRE_LOG_TIMEOUT}s: $REQUIRE_LOG_REGEX"
+    echo "required log line matched: $REQUIRE_LOG_REGEX"
+fi
+
 # Health checks on the console log.
 if grep -Eqi '\bFATAL\b' "$LOG"; then
     fail "FATAL lines found in server log"
@@ -142,4 +172,8 @@ if [[ "$GRADLE_EXIT" != 0 ]]; then
 fi
 
 grep -q 'Stopping server' "$LOG" || fail "server did not log a clean shutdown"
+# The SERVER_STOPPED per-connection sweep must run at every real shutdown (its operation is
+# pinned by NetShutdownClearGameTest; this proves the production event wiring end to end).
+grep -Fq '[net] per-connection state cleared (server stopped)' "$LOG" \
+    || fail "SERVER_STOPPED per-connection state sweep did not run at shutdown"
 echo "OK: dedicated server booted to Done and stopped cleanly via console (log: $LOG)"
