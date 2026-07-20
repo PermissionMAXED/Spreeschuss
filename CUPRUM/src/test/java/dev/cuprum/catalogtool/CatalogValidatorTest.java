@@ -66,10 +66,10 @@ class CatalogValidatorTest {
     }
 
     @Test
-    void repoCatalogCoversAllTwentyTwoUserContractsExactly() throws Exception {
+    void repoCatalogCoversAllTwentyThreeUserContractsExactly() throws Exception {
         JsonObject catalog = repoCatalog();
-        assertEquals(272, catalog.getAsJsonArray("entries").size());
-        assertEquals(22, UserContracts.CONTRACTS.size());
+        assertEquals(300, catalog.getAsJsonArray("entries").size());
+        assertEquals(23, UserContracts.CONTRACTS.size());
         for (int i = 0; i < 22; i++) {
             JsonObject entry = catalog.getAsJsonArray("entries").get(i).getAsJsonObject();
             String id = String.format("U%02d", i + 1);
@@ -79,8 +79,19 @@ class CatalogValidatorTest {
             assertEquals("core", entry.get("tier").getAsString(), id);
             assertEquals(i + 1, entry.get("sequence").getAsInt(), id);
         }
-        // Entries 23..272 are the CP0B additional features; none may carry a contract_key.
-        for (int i = 22; i < 272; i++) {
+        // CP0C: U23 holds global sequence 273 (file position 273), after the CP0B
+        // additional block and directly before the VFX family.
+        JsonObject u23 = catalog.getAsJsonArray("entries").get(272).getAsJsonObject();
+        assertEquals("U23", u23.get("id").getAsString());
+        assertEquals(UserContracts.CONTRACTS.get("U23"), u23.get("contract_key").getAsString());
+        assertEquals("user", u23.get("origin").getAsString());
+        assertEquals("core", u23.get("tier").getAsString());
+        assertEquals(273, u23.get("sequence").getAsInt());
+        // Entries 23..272 (CP0B) and 274..300 (VFX) are additional; no contract_key.
+        for (int i = 22; i < 300; i++) {
+            if (i == 272) {
+                continue; // U23
+            }
             JsonObject entry = catalog.getAsJsonArray("entries").get(i).getAsJsonObject();
             assertEquals("additional", entry.get("origin").getAsString(), entry.get("id").getAsString());
             assertFalse(entry.has("contract_key"), entry.get("id").getAsString());

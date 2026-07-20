@@ -45,7 +45,8 @@ public final class UserContracts {
             new Contract("U19", "conductive_climbing_wire", "Conductive Climbing Wire", "power"),                // wall-climbing long-distance wire
             new Contract("U20", "oxidation_copper_spikes", "Oxidation Copper Spikes", "combat"),                 // oxidation-scaling copper spikes
             new Contract("U21", "weather_manipulator", "Weather Manipulator", "utility"),                        // powered weather manipulator
-            new Contract("U22", "dynamic_handbook", "Dynamic Handbook", "meta"));                                // complete dynamic in-game handbook
+            new Contract("U22", "dynamic_handbook", "Dynamic Handbook", "meta"),                                 // complete dynamic in-game handbook
+            new Contract("U23", "holosphere_dreamscape_projector", "Holosphere Dreamscape Projector", "shield")); // CP0C: holosphere dreamscape projector (global sequence 273)
 
     /** Ordered U id → full contract (insertion order = binding request order). */
     public static final Map<String, Contract> BY_ID = buildIndex();

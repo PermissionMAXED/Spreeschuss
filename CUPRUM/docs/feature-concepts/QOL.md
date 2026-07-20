@@ -2,7 +2,7 @@
 
 Global sequence 261–272 · 12 features (12 core / 0 stretch) · core wave W13 · catalog family string: `quality_of_life`
 
-Interface, accessibility and diagnostic features that make a 272-feature mod playable. Per the INDEX retiering note, QOL-11 and QOL-12 are core (genuinely useful team/monitoring utilities are not stretch for arithmetic's sake); the compensating spectacle entries moved to stretch in WEA/TES.
+Interface, accessibility and diagnostic features that make a 300-feature mod playable. Per the INDEX retiering note, QOL-11 and QOL-12 are core (genuinely useful team/monitoring utilities are not stretch for arithmetic's sake); the compensating spectacle entries moved to stretch in WEA/TES.
 
 **Security contract (read/write split):** QOL-01/02/04/05/06/07/08/09/12 are **read-only** client conveniences — their only C2S surface is standard GUI actions; QOL-09 shows only networks with at least 1 node owned by the viewer or their team; QOL-10 diagnostics are read-only but **gated** to permission level ≥2 (or `cuprum.diagnostics`). The two **mutating** entries are QOL-03 (wrench: requires owner/team block permission, executes one atomic block-entity-plus-inventory transaction, rolls back if the item cannot be spawned/inserted) and QOL-11 (flare launch: rate-limited to 1 per player per 100 ticks).
 **Performance budget:** all QOL HUD widgets combined ≤0.2 ms/frame; sync payloads ≤1 packet/s per widget and ≤1 KiB each; QOL-11 flare payload ≤128 bytes sent once per tracking client plus 1 keep-alive per 5 s; QOL-12 samples at 1 Hz with a 24,000-tick ring buffer (≤32 KiB memory).

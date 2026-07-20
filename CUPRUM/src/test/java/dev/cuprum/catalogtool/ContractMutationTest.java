@@ -67,13 +67,14 @@ class ContractMutationTest {
     @Test
     void droppedContractReplacedByInventedOneFails() throws Exception {
         JsonObject catalog = repoCatalog();
-        // Replace the weather manipulator with an invented U23 feature (keeps count at 22).
+        // Replace the weather manipulator with an invented U24 feature (keeps count at
+        // 23). CP0C made U23 a real contract, so the invented id must now be U24.
         JsonObject u21 = entry(catalog, "U21");
-        u21.addProperty("id", "U23");
+        u21.addProperty("id", "U24");
         u21.addProperty("contract_key", "invented_feature");
         List<String> errors = CatalogValidator.validate(catalog, schema(), repoCounts());
         assertTrue(errors.stream().anyMatch(e -> e.contains("missing binding user contract 'U21'")), errors.toString());
-        assertTrue(errors.stream().anyMatch(e -> e.contains("'U23'") && e.contains("not a known user contract id")),
+        assertTrue(errors.stream().anyMatch(e -> e.contains("'U24'") && e.contains("not a known user contract id")),
                 errors.toString());
     }
 
@@ -114,15 +115,18 @@ class ContractMutationTest {
 
     @Test
     void contractTableItselfIsComplete() {
-        assertEquals(22, UserContracts.ALL.size());
-        assertEquals(22, UserContracts.BY_ID.size());
-        assertEquals(22, UserContracts.CONTRACTS.size());
+        assertEquals(23, UserContracts.ALL.size());
+        assertEquals(23, UserContracts.BY_ID.size());
+        assertEquals(23, UserContracts.CONTRACTS.size());
         assertEquals("storm_shield_core", UserContracts.CONTRACTS.get("U01"));
         assertEquals("dynamic_handbook", UserContracts.CONTRACTS.get("U22"));
+        assertEquals("holosphere_dreamscape_projector", UserContracts.CONTRACTS.get("U23"));
         assertEquals("Storm Shield Core", UserContracts.BY_ID.get("U01").name());
         assertEquals("meta", UserContracts.BY_ID.get("U22").family());
+        assertEquals("Holosphere Dreamscape Projector", UserContracts.BY_ID.get("U23").name());
+        assertEquals("shield", UserContracts.BY_ID.get("U23").family());
         // One-to-one: no duplicate contract keys or names in the table itself.
-        assertEquals(22, UserContracts.ALL.stream().map(UserContracts.Contract::contractKey).distinct().count());
-        assertEquals(22, UserContracts.ALL.stream().map(UserContracts.Contract::name).distinct().count());
+        assertEquals(23, UserContracts.ALL.stream().map(UserContracts.Contract::contractKey).distinct().count());
+        assertEquals(23, UserContracts.ALL.stream().map(UserContracts.Contract::name).distinct().count());
     }
 }

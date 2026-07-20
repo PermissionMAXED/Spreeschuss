@@ -11,9 +11,10 @@ import static dev.cuprum.catalogtool.CatalogValidatorTest.schema;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Mutation tests against the real repository catalog proving the CP0B-scale
+ * Mutation tests against the real repository catalog proving the CP0B/CP0C-scale
  * semantic rules bite: duplicate additional names, broken per-family numbering,
- * forward dependencies and core→stretch dependencies must each fail validation.
+ * forward dependencies (additional and user targets alike) and core→stretch
+ * dependencies must each fail validation — including inside the CP0C VFX family.
  */
 class AdditionalMutationTest {
     private static JsonObject entry(JsonObject catalog, String id) {
@@ -57,6 +58,60 @@ class AdditionalMutationTest {
         assertTrue(errors.stream().anyMatch(e ->
                         e.contains("'PWR-01'") && e.contains("forward dependency") && e.contains("'OXI-01'")),
                 errors.toString());
+    }
+
+    @Test
+    void forwardUserDependencyFails() throws Exception {
+        JsonObject catalog = repoCatalog();
+        // PWR-01 (sequence 23) must not reference the U23 user contract (sequence 273):
+        // user deps are not exempt from the backward-only rule.
+        entry(catalog, "PWR-01").getAsJsonArray("deps").add("U23");
+        List<String> errors = CatalogValidator.validate(catalog, schema(), repoCounts());
+        assertTrue(errors.stream().anyMatch(e ->
+                        e.contains("'PWR-01'") && e.contains("forward dependency") && e.contains("'U23'")),
+                errors.toString());
+    }
+
+    @Test
+    void backwardUserDependencyOnU23FromVfxRowsPasses() throws Exception {
+        // The repo VFX rows (274..300) depend on U23 (273) — backward and legal.
+        List<String> errors = CatalogValidator.validate(repoCatalog(), schema(), repoCounts());
+        assertTrue(errors.isEmpty(), errors.toString());
+    }
+
+    @Test
+    void duplicateVfxNameFails() throws Exception {
+        JsonObject catalog = repoCatalog();
+        // VFX-02 quietly takes VFX-01's canonical name.
+        entry(catalog, "VFX-02").addProperty("name", "Prismatic Interference Lens");
+        List<String> errors = CatalogValidator.validate(catalog, schema(), repoCounts());
+        assertTrue(errors.stream().anyMatch(e ->
+                        e.contains("duplicate entry name") && e.contains("Prismatic Interference Lens")
+                                && e.contains("VFX-01") && e.contains("VFX-02")),
+                errors.toString());
+    }
+
+    @Test
+    void brokenVfxFamilySequenceFails() throws Exception {
+        JsonObject catalog = repoCatalog();
+        // Renumbering the last VFX entry leaves a hole at VFX-27.
+        entry(catalog, "VFX-27").addProperty("id", "VFX-28");
+        List<String> errors = CatalogValidator.validate(catalog, schema(), repoCounts());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("'VFX'") && e.contains("contiguous from 01")),
+                errors.toString());
+    }
+
+    @Test
+    void vfxCoreDependingOnVfxStretchFails() throws Exception {
+        JsonObject catalog = repoCatalog();
+        // VFX-22 (core, seq 295) gains a backward dep on VFX-09 (stretch, seq 282):
+        // the core/stretch independence rule must fire inside the new family too.
+        entry(catalog, "VFX-22").getAsJsonArray("deps").add("VFX-09");
+        List<String> errors = CatalogValidator.validate(catalog, schema(), repoCounts());
+        assertTrue(errors.stream().anyMatch(e ->
+                        e.contains("core entry 'VFX-22'") && e.contains("stretch entry 'VFX-09'")),
+                errors.toString());
+        assertTrue(errors.stream().noneMatch(e -> e.contains("forward dependency")), errors.toString());
     }
 
     @Test

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Cuprum content catalog",
-  "description": "Strict schema for catalog/catalog.json. Entries with ids U01..U22 are the binding user-requested contracts (origin=user, required contract_key enforced one-to-one against dev.cuprum.catalogtool.UserContracts). Additional agent-proposed entries use family ids such as PWR-01 (origin=additional, contract_key forbidden). Semantic rules a schema cannot express (contract mapping, contiguous sequence, numeric/family-aware id numbering, dependency DAG, origin/tier counts) are enforced by CatalogValidator.",
+  "description": "Strict schema for catalog/catalog.json. Entries with ids U01..U23 are the binding user-requested contracts (origin=user, required contract_key enforced one-to-one against dev.cuprum.catalogtool.UserContracts; U23 holds global sequence 273 per the CP0C expansion). Additional agent-proposed entries use family ids such as PWR-01 or VFX-01 (origin=additional, contract_key forbidden). Semantic rules a schema cannot express (contract mapping, contiguous sequence, numeric/family-aware id numbering, dependency DAG, origin/tier counts) are enforced by CatalogValidator.",
   "type": "object",
   "additionalProperties": false,
   "required": ["catalog_version", "entries"],

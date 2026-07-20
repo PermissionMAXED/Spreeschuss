@@ -2,11 +2,14 @@
 
 Copper-centric technology, diagnostics and defense for **Minecraft 1.21.9 (Fabric)**.
 All content is planned in a build-time validated catalog (`catalog/catalog.json`)
-holding **272 entries**: the **22 binding user-requested features U01–U22** (Storm
-Shield stack, lightning power network, oxidation gear, logistics, mobility, utility
-and the dynamic handbook) plus the **250 additional CP0B concept features**
-(sequences 23–272, 202 core + 48 stretch across 16 families, PWR → QOL) translated
-1:1 from `docs/feature-concepts/`. The additional entries are **planned catalog data
+holding **300 entries**: the **23 binding user-requested features U01–U23** (Storm
+Shield stack, lightning power network, oxidation gear, logistics, mobility, utility,
+the dynamic handbook, and — per the CP0C expansion
+`docs/expansions/CP0C_HOLOSPHERE.md` — the U23 Holosphere Dreamscape Projector at
+global sequence 273) plus the **277 additional concept features** (the 250 CP0B
+features at sequences 23–272 across 16 families PWR → QOL, and the 27 CP0C VFX
+features at sequences 274–300; 222 core + 55 stretch total) translated 1:1 from
+`docs/feature-concepts/`. The additional entries are **planned catalog data
 only — none of them is implemented yet**; broad content implementation stays blocked
 until CP3 per the master plan. Wave W0 ships the project skeleton plus one diagnostic
 block, the **Charge Probe** (`cuprum:charge_probe`) — CP0 infrastructure, deliberately
@@ -39,7 +42,7 @@ override or edited pin fails loudly (try `-Ploader_version=0.19.2`).
 | --- | --- |
 | `./gradlew toolchainVerify` | Assert every pin matches the immutable expected literals |
 | `./gradlew check build` | Lint gate (`-Xlint -Werror`, all source sets incl. datagen), unit + mutation tests, catalog validation + concept parity, headless **server GameTests**, jar build |
-| `./gradlew verifyConceptParity` | Prove `catalog/catalog.json` matches `docs/feature-concepts/` row-for-row (digest + all 250 additional entries) |
+| `./gradlew verifyConceptParity` | Prove `catalog/catalog.json` matches `docs/feature-concepts/` row-for-row (digest + all 277 additional entries) |
 | `./gradlew lint` | Compile main/client/datagen/gametest/catalogTool/test with `-Xlint:all,-classfile,-processing -Werror` |
 | `./gradlew runDatagen` | Regenerate `src/main/generated` (committed) |
 | `./scripts/datagen_determinism.sh` | Datagen twice + byte-for-byte tree-hash comparison |
@@ -58,38 +61,45 @@ CI lives at the repository root: `.github/workflows/cuprum-ci.yml` (path-filtere
 - Every entry: `id`, `sequence`, `origin` (`user`/`additional`), `family`, `name`,
   `type`, `tier` (`core`/`stretch`), `progression_tier` (0–3), `deps`,
   `vanilla_overlap`, `summary`, `planned_wave`; strict schema (no extra fields).
-- **User contracts:** ids `U01`–`U22` must map one-to-one onto the binding contract
+- **User contracts:** ids `U01`–`U23` must map one-to-one onto the binding contract
   table in `UserContracts.java`, which pins the exact `contract_key`, canonical
   `name` **and** `family` per id (e.g. `U01 → storm_shield_core / "Storm Shield
-  Core" / shield`). Renaming, swapping, re-familying or replacing a user contract
+  Core" / shield`; CP0C adds `U23 → holosphere_dreamscape_projector` at global
+  sequence 273). Renaming, swapping, re-familying or replacing a user contract
   fails validation — mutation tests in `src/test` prove it. The `summary` and
   `vanilla_overlap` fields are prose and are deliberately not NLP-validated;
   reviewers must check them against the bound contract when a catalog diff touches
   them.
-- **Additional entries** (CP0B) use family ids such as `PWR-01`: numeric-aware,
-  per-family contiguous numbering, family-name ↔ id-prefix bijection, and no
-  `contract_key` allowed. All 250 CP0B additional entries (16 families, sequences
-  23–272) are present; they are catalog/planning data only — **no additional
-  gameplay is implemented yet** (blocked until CP3).
+- **Additional entries** (CP0B + CP0C) use family ids such as `PWR-01` or `VFX-01`:
+  numeric-aware, per-family contiguous numbering, family-name ↔ id-prefix bijection,
+  and no `contract_key` allowed. All 277 additional entries (17 families; CP0B
+  sequences 23–272 plus the CP0C VFX family at 274–300) are present; they are
+  catalog/planning data only — **no additional gameplay is implemented yet**
+  (blocked until CP3).
 - Global `sequence` must be contiguous 1..N in file order; names must be unique;
-  deps must form a DAG over known ids, additional entries may only depend on user
-  entries or lower-sequence additional entries (no forward references), and core
-  entries never depend on stretch entries (cutting all 48 stretch features leaves
-  the 202-core catalog closed under deps); `catalog/expected_counts.json` pins the
-  origin/tier counts (currently `user=22`, `additional_core=202`,
-  `additional_stretch=48` — total 272).
+  deps must form a DAG over known ids, additional entries may only depend on
+  entries with a lower global sequence — user contracts included, so no
+  pre-273 row may reference U23 (no forward references) — and core entries never
+  depend on stretch entries (cutting all 55 stretch features leaves the 222-core
+  catalog closed under deps); `catalog/expected_counts.json` pins the origin/tier
+  counts (currently `user=23`, `additional_core=222`, `additional_stretch=55` —
+  total 300).
 - **Concept parity** (`verifyConceptParity`, wired into `check`): the additional
   entries were translated 1:1 from `docs/feature-concepts/` (INDEX.md checklist +
-  16 family files). `ConceptParity`/`ConceptIndex` in `src/catalogTool` re-parse the
+  17 family files). `ConceptParity`/`ConceptIndex` in `src/catalogTool` re-parse the
   docs and enforce, with clean `CatalogValidationException` messages:
-  - the **full-row digest**: SHA-256 over the compact-JSON encoding of all 250×12
+  - the **full-row digest**: SHA-256 over the compact-JSON encoding of all 277×12
     family-table cells (documented formula in INDEX.md) must equal the single
     authoritative 64-hex literal
-    (`c6b8a308f39c6c9e35223f13464af607de7d99881e5ca1fb12cc80fc109075b7`, also pinned
+    (`85e42dc1e4a5fb3b6a6f815e5ac12bdd5fc22c342842c3284984fdb30f5e1dd1`, also pinned
     in `ConceptParityTest`), sealing Visual/Acceptance/Test cells that never reach
     the catalog;
   - full cross-agreement: checklist ↔ family files ↔ catalog on every
-    id/sequence/name/family/type/tier/prog/wave/deps/overlap/summary value;
+    id/sequence/name/family/type/tier/prog/wave/deps/overlap/summary value —
+    family ranges and checklist rows consume their explicit declared sequences, and
+    a coverage hole is legal only when every skipped sequence is occupied by a
+    catalog user entry (the sole such hole is U23 at 273, between QOL's 272 and
+    VFX's 274; an unoccupied or additional-occupied hole fails);
   - row quality: all 12 cells nonblank; unique test ids with a
     `server_gametest:`/`client_gametest:`/`unit_test:` prefix; **every** Visual
     cell carries an **ordered** pair of structured `T2:` then `T3:` clauses whose
@@ -165,10 +175,10 @@ weighted pressure plates, etc.).
 - `src/gametest` — server + client GameTests (`cuprum-gametest`).
 - `src/catalogTool` + `src/test` — plain-Java catalog validator/codegen/concept-parity
   tooling and its JUnit tests.
-- `catalog/` — `schema.json` (strict), `catalog.json` (U01–U22 + PWR-01..QOL-12),
-  `expected_counts.json`.
-- `docs/feature-concepts/` — authoritative CP0B concept data (INDEX.md + 16 family
-  files) that the 250 additional catalog entries are validated against.
+- `catalog/` — `schema.json` (strict), `catalog.json` (U01–U22 + PWR-01..QOL-12 +
+  U23 + VFX-01..27), `expected_counts.json`.
+- `docs/feature-concepts/` — authoritative CP0B+CP0C concept data (INDEX.md + 17
+  family files) that the 277 additional catalog entries are validated against.
 - `docs/API_PROBES.md` — verified 1.21.9 FQNs/signatures; `docs/RENDERING_NOTES.md` —
   1.21.9 extract/submit rendering rules (old `WorldRenderEvents` are gone).
 - `scripts/gen_probe_texture.py` — deterministic generator for the committed probe texture.

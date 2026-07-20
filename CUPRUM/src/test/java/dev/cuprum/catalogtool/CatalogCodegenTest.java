@@ -32,9 +32,12 @@ class CatalogCodegenTest {
         assertTrue(first.contains("CATALOG_SHA256"));
         assertTrue(first.contains("\"U01\""));
         assertTrue(first.contains("\"U22\""));
+        assertTrue(first.contains("\"U23\""));
         assertTrue(first.contains("\"PWR-01\""));
         assertTrue(first.contains("\"QOL-12\""));
-        assertTrue(first.contains("ENTRY_COUNT = 272"));
+        assertTrue(first.contains("\"VFX-01\""));
+        assertTrue(first.contains("\"VFX-27\""));
+        assertTrue(first.contains("ENTRY_COUNT = 300"));
     }
 
     @Test

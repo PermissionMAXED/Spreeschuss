@@ -8,25 +8,31 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Proves that every {@code origin=additional} catalog entry agrees 1:1 with the
- * authoritative CP0B concept docs ({@code docs/feature-concepts}), and that the docs
- * themselves satisfy the binding CP0B quality contract, so neither the catalog nor the
- * docs can silently drift:
+ * authoritative CP0B/CP0C concept docs ({@code docs/feature-concepts}), and that the
+ * docs themselves satisfy the binding CP0B quality contract, so neither the catalog nor
+ * the docs can silently drift:
  *
  * <ul>
- *   <li><strong>Digest:</strong> the full-row SHA-256 over all 250 &times; 12 table cells
+ *   <li><strong>Digest:</strong> the full-row SHA-256 over all 277 &times; 12 table cells
  *       (documented formula in INDEX.md) recomputes to the single declared 64-hex
  *       literal &mdash; any edit to any cell of any family table is detected;</li>
  *   <li><strong>Structure:</strong> the families table is internally consistent
- *       (contiguous ranges, core+stretch=count) and consistent with the checklist
- *       (ids, sequences, waves, family strings); every family file row matches its
- *       checklist row on name/type/tier/prog/wave/deps;</li>
+ *       (core+stretch=count, ranges strictly ascending) and consistent with the
+ *       checklist (ids, explicit sequences, waves, family strings); every family file
+ *       row matches its checklist row on name/type/tier/prog/wave/deps. Family ranges
+ *       and checklist rows consume the <em>explicit</em> sequences they declare; a gap
+ *       in sequence coverage is legal <em>only</em> when every missing sequence is
+ *       occupied by a catalog {@code origin=user} entry (CP0C: U23 holds 273 between
+ *       QOL's 272 and VFX's 274) &mdash; any other hole is an error;</li>
  *   <li><strong>Row quality:</strong> all 12 cells of every family row are nonblank;
  *       test ids are unique and carry a supported prefix ({@code server_gametest:},
  *       {@code client_gametest:}, {@code unit_test:}); every Visual cell carries an
@@ -47,7 +53,10 @@ import java.util.regex.Pattern;
  *       Unicode dashes/spaces; encoded ids are impossible because all HTML entities are
  *       rejected at parse time) is a declared dependency with an earlier sequence (and
  *       core when the referencing row is core), so optional later integrations can
- *       never leak into base acceptance;</li>
+ *       never leak into base acceptance. The sequence and tier maps behind these
+ *       reference checks are built from <em>all</em> catalog entries including user
+ *       contracts, so references to U23 (sequence 273) resolve, forward user
+ *       references are rejected, and tier checks see user entries;</li>
  *   <li><strong>Catalog:</strong> every additional catalog entry matches its concept row
  *       on id, sequence, name, family string, type, tier, progression tier, wave, deps,
  *       vanilla-overlap disposition and summary (= player behavior) &mdash; with no extra
@@ -77,9 +86,14 @@ public final class ConceptParity {
             Map.entry(Pattern.compile("(?i)\\bper curve\\b"), "per curve"),
             Map.entry(Pattern.compile("\\bN\\b"), "unresolved standalone N"));
 
-    /** All 16 additional family prefixes, for feature-id reference parsing. */
+    /**
+     * All 17 additional family prefixes, for feature-id reference parsing. {@code VFX}
+     * cannot false-match the {@code FX} alternative: the pattern requires a word
+     * boundary before the prefix, and inside {@code VFX-01} there is no boundary
+     * between {@code V} and {@code F}, so only the {@code VFX} alternative can match.
+     */
     private static final String FAMILY_PREFIXES =
-            "PWR|OXI|SHD|TES|TUB|RAIL|GOL|WEA|TOOL|EXO|MOB|GEN|FX|ADV|DEC|QOL";
+            "PWR|OXI|SHD|TES|TUB|RAIL|GOL|WEA|TOOL|EXO|MOB|GEN|FX|ADV|DEC|QOL|VFX";
 
     /** A feature id reference in an acceptance cell: {@code Uxx} or {@code PREFIX-xx}. */
     private static final Pattern FEATURE_ID_REF =
@@ -217,14 +231,39 @@ public final class ConceptParity {
             return errors;
         }
 
+        // Sequence and tier maps over ALL catalog entries (user contracts included),
+        // plus the set of global sequences occupied by user entries — the only
+        // sequences an additional-checklist hole may legally skip (CP0C: U23 at 273).
+        Map<String, Integer> catalogSequenceById = new HashMap<>();
+        Map<String, String> catalogTierById = new HashMap<>();
+        Set<Integer> userOccupiedSequences = new HashSet<>();
+        for (JsonElement element : catalog.getAsJsonArray("entries")) {
+            JsonObject entry = element.getAsJsonObject();
+            String entryId = entry.get("id").getAsString();
+            int entrySequence = entry.get("sequence").getAsInt();
+            catalogSequenceById.put(entryId, entrySequence);
+            catalogTierById.put(entryId, entry.get("tier").getAsString());
+            if ("user".equals(entry.get("origin").getAsString())) {
+                userOccupiedSequences.add(entrySequence);
+            }
+        }
+
         // 1. Families table internal consistency, and consistency with the checklist.
+        // Ranges consume their explicit declared sequences: they must ascend strictly,
+        // and any skipped sequence must be occupied by a catalog user entry.
         List<ConceptIndex.ChecklistRow> checklist = index.checklist();
         int expectedSeq = -1;
         int totalFromRanges = 0;
         for (ConceptIndex.FamilyRange range : index.familyRanges().values()) {
             if (expectedSeq != -1 && range.seqLo() != expectedSeq) {
-                errors.add("concept parity: family " + range.prefix() + " range starts at " + range.seqLo()
-                        + " but previous family ends at " + (expectedSeq - 1));
+                if (range.seqLo() < expectedSeq) {
+                    errors.add("concept parity: family " + range.prefix() + " range starts at " + range.seqLo()
+                            + " but previous family ends at " + (expectedSeq - 1)
+                            + " (family ranges must ascend without overlap)");
+                } else {
+                    reportUnoccupiedHole(errors, "family " + range.prefix() + " range",
+                            expectedSeq, range.seqLo() - 1, userOccupiedSequences);
+                }
             }
             expectedSeq = range.seqHi() + 1;
             if (range.seqHi() - range.seqLo() + 1 != range.count()) {
@@ -243,13 +282,23 @@ public final class ConceptParity {
                     + " != checklist row count " + checklist.size());
         }
 
-        int firstSeq = index.familyRanges().values().iterator().next().seqLo();
+        // Checklist rows consume their explicit declared sequences: strictly increasing
+        // from the first family's low bound, with any skipped sequence occupied by a
+        // catalog user entry (an unoccupied or additional-occupied hole is an error).
+        int expectedRowSeq = index.familyRanges().values().iterator().next().seqLo();
         for (int i = 0; i < checklist.size(); i++) {
             ConceptIndex.ChecklistRow row = checklist.get(i);
-            if (row.seq() != firstSeq + i) {
-                errors.add("concept parity: checklist row " + row.id() + " has seq " + row.seq()
-                        + " but position requires " + (firstSeq + i));
+            if (row.seq() != expectedRowSeq) {
+                if (row.seq() < expectedRowSeq) {
+                    errors.add("concept parity: checklist row " + row.id() + " has seq " + row.seq()
+                            + " but position requires at least " + expectedRowSeq
+                            + " (checklist sequences must be strictly increasing)");
+                } else {
+                    reportUnoccupiedHole(errors, "checklist row " + row.id(),
+                            expectedRowSeq, row.seq() - 1, userOccupiedSequences);
+                }
             }
+            expectedRowSeq = Math.max(expectedRowSeq, row.seq() + 1);
             ConceptIndex.FamilyRange range = index.familyRanges().get(row.prefix());
             if (range == null) {
                 errors.add("concept parity: checklist row " + row.id() + " uses unknown family prefix '"
@@ -279,6 +328,7 @@ public final class ConceptParity {
         // 2. Family files: parse, cross-check against the checklist, enforce row quality.
         int checklistCursor = 0;
         List<ConceptIndex.FamilyRow> familyRowsInOrder = new ArrayList<>();
+        List<Integer> rowSequences = new ArrayList<>(); // explicit checklist sequences
         for (ConceptIndex.FamilyRange range : index.familyRanges().values()) {
             List<ConceptIndex.FamilyRow> familyRows;
             try {
@@ -307,12 +357,13 @@ public final class ConceptParity {
                 compare(errors, range.file(), row.id(), "wave", row.wave(), familyRow.wave());
                 compare(errors, range.file(), row.id(), "deps", row.depsCell(), familyRow.depsCell());
                 familyRowsInOrder.add(familyRow);
+                rowSequences.add(row.seq());
             }
         }
 
-        checkRowQuality(errors, familyRowsInOrder);
+        checkRowQuality(errors, familyRowsInOrder, rowSequences, catalogSequenceById, catalogTierById);
 
-        // 3. Digest: the 250 x 12 cells must hash to the single declared literal.
+        // 3. Digest: the 277 x 12 cells must hash to the single declared literal.
         if (familyRowsInOrder.size() == checklist.size()) {
             String computed = ConceptIndex.computeFullRowDigest(familyRowsInOrder);
             if (!computed.equals(index.declaredDigest())) {
@@ -372,28 +423,46 @@ public final class ConceptParity {
     }
 
     /**
-     * Per-row quality contract on the 12-cell family rows (rows arrive in global
-     * sequence order 23..272): nonblank cells; unique valid test ids; ordered
-     * {@code T2:} then {@code T3:} clauses with meaningful bodies in every Visual cell;
-     * concrete acceptance per the documented allowlist without banned vague tokens;
-     * lexical test-scope suitability with the dispatch/state-only escape hatch and
-     * own-name exemption; and acceptance id references (after Unicode normalization)
-     * restricted to declared, earlier (core-for-core) dependencies.
+     * A gap in additional sequence coverage (family ranges or checklist rows) is legal
+     * only when every skipped sequence is occupied by a catalog {@code origin=user}
+     * entry (CP0C: U23 at 273). A sequence occupied by nothing — or by an additional
+     * entry — reports an error per missing sequence.
      */
-    private static void checkRowQuality(List<String> errors, List<ConceptIndex.FamilyRow> rows) {
+    private static void reportUnoccupiedHole(List<String> errors, String context, int lo, int hi,
+                                             Set<Integer> userOccupiedSequences) {
+        for (int seq = lo; seq <= hi; seq++) {
+            if (!userOccupiedSequences.contains(seq)) {
+                errors.add("concept parity: " + context + " skips sequence " + seq
+                        + " which is not occupied by a catalog user entry (a checklist hole is"
+                        + " legal only when every missing sequence is a user contract's global"
+                        + " sequence)");
+            }
+        }
+    }
+
+    /**
+     * Per-row quality contract on the 12-cell family rows (rows arrive in global
+     * sequence order with their explicit checklist sequences, 23..272 then 274..300):
+     * nonblank cells; unique valid test ids; ordered {@code T2:} then {@code T3:}
+     * clauses with meaningful bodies in every Visual cell; concrete acceptance per the
+     * documented allowlist without banned vague tokens; lexical test-scope suitability
+     * with the dispatch/state-only escape hatch and own-name exemption; and acceptance
+     * id references (after Unicode normalization) restricted to declared, earlier
+     * (core-for-core) dependencies. Sequence/tier lookups use the maps built from all
+     * catalog entries, so user-contract references (e.g. U23) resolve and forward user
+     * references fail.
+     */
+    private static void checkRowQuality(List<String> errors, List<ConceptIndex.FamilyRow> rows,
+                                        List<Integer> rowSequences,
+                                        Map<String, Integer> sequenceById,
+                                        Map<String, String> tierById) {
         List<String> columnNames = List.of("ID", "Name", "Type", "Tier", "Prog", "Wave", "Deps",
                 "Vanilla overlap", "Player behavior", "Visual signature", "Acceptance", "Test");
         Map<String, String> testIdOwners = new HashMap<>();
-        Map<String, Integer> sequenceById = new HashMap<>();
-        Map<String, String> tierById = new HashMap<>();
-        for (int i = 0; i < rows.size(); i++) {
-            sequenceById.put(rows.get(i).id(), 23 + i);
-            tierById.put(rows.get(i).id(), rows.get(i).tier());
-        }
 
         for (int i = 0; i < rows.size(); i++) {
             ConceptIndex.FamilyRow row = rows.get(i);
-            int sequence = 23 + i;
+            int sequence = rowSequences.get(i);
             List<String> cells = row.cells();
             for (int c = 0; c < cells.size(); c++) {
                 if (cells.get(c).isBlank()) {

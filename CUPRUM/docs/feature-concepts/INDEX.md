@@ -1,10 +1,10 @@
-# CP0B Feature Concepts — INDEX
+# CP0B+CP0C Feature Concepts — INDEX
 
-250 additional player-facing features (global sequence 23–272) in 16 families, complementing the 22 user-requested features U01–U22 (sequence 1–22, already in `catalog/catalog.json`). Totals: **202 core / 48 stretch**. This index plus the 16 family files is the single CONCEPT source of truth for W0B catalog materialization.
+277 additional player-facing features (global sequences 23–272 and 274–300) in 17 families, complementing the 23 user-requested features U01–U23 (U01–U22 at sequences 1–22, U23 at sequence 273, all in `catalog/catalog.json`). Totals: **222 core / 55 stretch**. This index plus the 17 family files is the single CONCEPT source of truth for catalog materialization (the CP0B base plus the CP0C `VFX` expansion per `docs/expansions/CP0C_HOLOSPHERE.md`). U23 holds sequence 273 and is excluded from the additional checklist: the checklist hole at 273 is legal only because that sequence is occupied by the U23 catalog user entry (any other hole is an error).
 
-Content digest (full-row, authoritative): `c6b8a308f39c6c9e35223f13464af607de7d99881e5ca1fb12cc80fc109075b7`
+Content digest (full-row, authoritative): `85e42dc1e4a5fb3b6a6f815e5ac12bdd5fc22c342842c3284984fdb30f5e1dd1`
 
-**Canonical digest formula:** SHA-256 over the UTF-8 bytes of the compact JSON array (`separators=(",",":")`, `ensure_ascii=true`) of 250 arrays, one per feature in global sequence order 23→272, each containing the 12 normalized table cells in column order `[id, name, type, tier, prog, wave, deps, vanilla_overlap, player_behavior, visual_signature, acceptance, test]`, where each cell is the raw Markdown cell content trimmed of surrounding whitespace. Full 64-hex output. Any editor can recompute it from the family tables alone.
+**Canonical digest formula:** SHA-256 over the UTF-8 bytes of the compact JSON array (`separators=(",",":")`, `ensure_ascii=true`) of 277 arrays, one per feature in global sequence order 23→272 then 274→300, each containing the 12 normalized table cells in column order `[id, name, type, tier, prog, wave, deps, vanilla_overlap, player_behavior, visual_signature, acceptance, test]`, where each cell is the raw Markdown cell content trimmed of surrounding whitespace. Full 64-hex output. Any editor can recompute it from the family tables alone.
 
 ## Vocabulary (binding definitions)
 
@@ -12,8 +12,8 @@ Content digest (full-row, authoritative): `c6b8a308f39c6c9e35223f13464af607de7d9
 - **Canonical effects:** **U03 owns and registers Shock** (interrupt + Slowness IV, 40 ticks; repeat applications within 200 ticks last 20 then 10 ticks; 10-tick per-source re-application cooldown). **U06 owns and registers Corroded** (−10% armor effectiveness per level, cap II = −20%, 200 ticks; reapplication refreshes duration, never exceeds II). All earlier OXI/TES/MOB rows reference these registrations; FX-01 (Overload Shock) and FX-02 (Deep Corrosion) are additional W12 extensions, not re-registrations.
 - **progression_tier (Prog 0–3):** a complexity/acquisition band — 0 pre-charge, 1 early grid, 2 powered base, 3 post-boss/endgame. It is explicitly **not** a dependency ordering; a Prog-3 row may depend on a Prog-1 row. Formal ordering lives only in the Deps column (backward-only by sequence).
 - **Visual tiers:** **T1** = custom GpuDevice/RenderPipeline shader path; **T2** = vanilla-pipeline fallback (particles/animated textures/billboards); **T3** = minimal static fallback. Every Visual cell carries structured `T2:` and `T3:` clauses so tooling can enforce fallback coverage. Reduced-effects mode (QOL-04) forces T2/T3 globally and never changes gameplay outcomes.
-- **Test prefixes:** `server_gametest:` = headless Fabric server gametest (behavior/state; never asserts rendering/HUD/GUI output); `client_gametest:` = client gametest (rendering, HUD, audio, GUI — required for any visual/audio assertion); `unit_test:` = plain JUnit (codecs, math, data audits; never asserts world permissions or GUI rendering). Every target name is unique across the 250 rows.
-- **Waves:** cores land W5–W13 as listed per family; **W14 is reserved for integration/perf hardening** — cross-family interaction gametests, the client perf harness (frame-time budgets referenced by QOL-04), and budget regression gates; **W15 carries all 48 stretch features**.
+- **Test prefixes:** `server_gametest:` = headless Fabric server gametest (behavior/state; never asserts rendering/HUD/GUI output); `client_gametest:` = client gametest (rendering, HUD, audio, GUI — required for any visual/audio assertion); `unit_test:` = plain JUnit (codecs, math, data audits; never asserts world permissions or GUI rendering). Every target name is unique across the 277 rows.
+- **Waves:** cores land W5–W13 as listed per family; **W14 is reserved for integration/perf hardening** — cross-family interaction gametests, the client perf harness (frame-time budgets referenced by QOL-04), and budget regression gates; **W15 carries all 55 stretch features**.
 
 ## Binding cross-cutting contracts
 
@@ -27,7 +27,7 @@ Content digest (full-row, authoritative): `c6b8a308f39c6c9e35223f13464af607de7d9
 
 ## Retiering note (evaluator-driven, totals preserved)
 
-QOL-11 Copper Flare and QOL-12 Statistics Dashboard are **core** (useful team/monitoring utilities must not be stretch for arithmetic); compensating swaps to **stretch**: WEA-05 Storm Glass (forecast ambiance duplicating WEA-01 information) and TES-16 Conductor's Baton (QA/tuning aid). Family core/stretch splits below reflect the swap; totals remain 202/48.
+QOL-11 Copper Flare and QOL-12 Statistics Dashboard are **core** (useful team/monitoring utilities must not be stretch for arithmetic); compensating swaps to **stretch**: WEA-05 Storm Glass (forecast ambiance duplicating WEA-01 information) and TES-16 Conductor's Baton (QA/tuning aid). Family core/stretch splits below reflect the swap; the CP0B subtotal remains 202/48, and the CP0C VFX family adds 20/7 for the current totals of 222/55.
 
 ## Families
 
@@ -49,6 +49,7 @@ QOL-11 Copper Flare and QOL-12 Statistics Dashboard are **core** (useful team/mo
 | ADV | [ADV.md](ADV.md) | `progression` | 235–244 | 10 | 9 | 1 | W12 |
 | DEC | [DEC.md](DEC.md) | `decor_building` | 245–260 | 16 | 12 | 4 | W13 |
 | QOL | [QOL.md](QOL.md) | `quality_of_life` | 261–272 | 12 | 12 | 0 | W13 |
+| VFX | [VFX.md](VFX.md) | `holo_projection` | 274–300 | 27 | 20 | 7 | W13 |
 
 ## Dependency rationale (key fixes)
 
@@ -59,7 +60,7 @@ QOL-11 Copper Flare and QOL-12 Statistics Dashboard are **core** (useful team/mo
 - **Worldgen honesty:** GEN-03 viaduct fragments each fit within 96 blocks of their structure center (inside Minecraft's 128-block jigsaw cap); no custom infinite worldgen exists; GEN-14 is one bounded atomic crater transaction.
 - **De-duplication:** OXI-08 is the Patina Transfer Bath (distinct stage-crafting process); GOL-01 is the survival Brass Cortex conversion for the U12 system; TUB-12 is a functional network pressure-relief vent; DEC-06 is a functional warming radiator — both dispositioned against the vanilla 1.21 copper grate; PWR-22 is dispositioned against the redstone-toggleable, oxidation-dependent copper bulb; SHD-06 is a functional shape-coded shield status display.
 
-## Machine-auditable checklist (250 rows)
+## Machine-auditable checklist (277 rows)
 
 | Seq | ID | Name | Family | Type | Tier | Prog | Wave | Deps |
 |---|---|---|---|---|---|---|---|---|
@@ -313,3 +314,30 @@ QOL-11 Copper Flare and QOL-12 Statistics Dashboard are **core** (useful team/mo
 | 270 | QOL-10 | Diagnostics Overlay | `quality_of_life` | system | core | 2 | W13 | - |
 | 271 | QOL-11 | Copper Flare | `quality_of_life` | item | core | 1 | W13 | WEA-06 |
 | 272 | QOL-12 | Statistics Dashboard | `quality_of_life` | block | core | 2 | W13 | U05 |
+| 274 | VFX-01 | Prismatic Interference Lens | `holo_projection` | item | core | 2 | W13 | U23, OXI-15 |
+| 275 | VFX-02 | Plasma Veil Lens | `holo_projection` | item | core | 2 | W13 | U23, OXI-15, WEA-06 |
+| 276 | VFX-03 | Stained-Glass Cell Lens | `holo_projection` | item | core | 2 | W13 | U23, OXI-15, TOOL-16 |
+| 277 | VFX-04 | Caustic Tide Lens | `holo_projection` | item | core | 2 | W13 | U23, OXI-15 |
+| 278 | VFX-05 | Ember Storm Lens | `holo_projection` | item | core | 2 | W13 | U23, OXI-15 |
+| 279 | VFX-06 | Aurora Curtain Lens | `holo_projection` | item | core | 2 | W13 | U23, GEN-04 |
+| 280 | VFX-07 | Circuit Trace Lens | `holo_projection` | item | core | 2 | W13 | U23, OXI-15, OXI-16 |
+| 281 | VFX-08 | Kaleido Mandala Lens | `holo_projection` | item | core | 2 | W13 | U23, OXI-15, MOB-06 |
+| 282 | VFX-09 | Glitch Static Lens | `holo_projection` | item | stretch | 2 | W15 | U23, MOB-09 |
+| 283 | VFX-10 | Moiré Resonance Lens | `holo_projection` | item | stretch | 3 | W15 | U23, OXI-15, SHD-10 |
+| 284 | VFX-11 | Astronaut Drift Cartridge | `holo_projection` | item | core | 2 | W13 | U23 |
+| 285 | VFX-12 | Meteor Shower Cartridge | `holo_projection` | item | core | 2 | W13 | U23, MOB-04 |
+| 286 | VFX-13 | Shooting Star Cartridge | `holo_projection` | item | core | 2 | W13 | U23, ADV-02 |
+| 287 | VFX-14 | Taco Party Cartridge | `holo_projection` | item | core | 2 | W13 | U23 |
+| 288 | VFX-15 | Parallax Starfield Cartridge | `holo_projection` | item | core | 2 | W13 | U23, MOB-08 |
+| 289 | VFX-16 | Abyssal Reef Cartridge | `holo_projection` | item | core | 2 | W13 | U23 |
+| 290 | VFX-17 | Nebula Drift Cartridge | `holo_projection` | item | core | 2 | W13 | U23 |
+| 291 | VFX-18 | Firefly Meadow Cartridge | `holo_projection` | item | core | 1 | W13 | U23, MOB-01 |
+| 292 | VFX-19 | Snowglobe Cartridge | `holo_projection` | item | core | 1 | W13 | U23 |
+| 293 | VFX-20 | Koi Sky Cartridge | `holo_projection` | item | stretch | 2 | W15 | U23, GOL-09 |
+| 294 | VFX-21 | Clockwork Orrery Cartridge | `holo_projection` | item | stretch | 3 | W15 | U23, GOL-01 |
+| 295 | VFX-22 | Cartridge Deck | `holo_projection` | block | core | 2 | W13 | U23, VFX-11, OXI-02 |
+| 296 | VFX-23 | Dreamsmith Table | `holo_projection` | block | core | 2 | W13 | U23, VFX-11, OXI-15 |
+| 297 | VFX-24 | Chromatic Tuner | `holo_projection` | item | core | 1 | W13 | U23, OXI-01 |
+| 298 | VFX-25 | Dream Sync Beacon | `holo_projection` | block | stretch | 3 | W15 | U23, VFX-22, PWR-15, OXI-02 |
+| 299 | VFX-26 | Gallery Slate | `holo_projection` | item | stretch | 2 | W15 | U23, VFX-23, DEC-11 |
+| 300 | VFX-27 | Grand Finale Sequencer | `holo_projection` | block | stretch | 3 | W15 | U23, VFX-22, GOL-03, OXI-02 |

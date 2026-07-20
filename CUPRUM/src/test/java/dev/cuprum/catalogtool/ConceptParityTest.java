@@ -15,10 +15,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Durable concept/catalog parity: the 16 family tables plus the INDEX.md checklist in
- * {@code docs/feature-concepts} are the authoritative source for all 250 additional
- * entries, sealed by one full-row SHA-256 digest, and {@link ConceptParity} must prove
- * the catalog matches them row for row. The mutation tests prove that silent drift in
+ * Durable concept/catalog parity: the 17 family tables plus the INDEX.md checklist in
+ * {@code docs/feature-concepts} are the authoritative source for all 277 additional
+ * entries (explicit sequences 23–272 and 274–300; 273 is U23's user-contract hole),
+ * sealed by one full-row SHA-256 digest, and {@link ConceptParity} must prove the
+ * catalog matches them row for row. The mutation tests prove that silent drift in
  * either direction — and every known Markdown-level attack on the parser — fails loudly.
  */
 class ConceptParityTest {
@@ -27,10 +28,11 @@ class ConceptParityTest {
 
     /**
      * The full-row digest literal published in INDEX.md. Pinned here so that any change
-     * to the concept docs' 250x12 cells requires an explicit, reviewed test diff.
+     * to the concept docs' 277x12 cells requires an explicit, reviewed test diff (the
+     * CP0C rebaseline from the 250-row CP0B digest is that sanctioned two-file diff).
      */
     private static final String EXPECTED_DIGEST =
-            "c6b8a308f39c6c9e35223f13464af607de7d99881e5ca1fb12cc80fc109075b7";
+            "85e42dc1e4a5fb3b6a6f815e5ac12bdd5fc22c342842c3284984fdb30f5e1dd1";
 
     private static JsonObject entry(JsonObject catalog, String id) {
         for (var element : catalog.getAsJsonArray("entries")) {
@@ -71,20 +73,25 @@ class ConceptParityTest {
     // ------------------------------------------------------------------
 
     @Test
-    void conceptDocsParseToTwoHundredFiftyRowsWithDeclaredDigest() throws Exception {
+    void conceptDocsParseToTwoHundredSeventySevenRowsWithDeclaredDigest() throws Exception {
         ConceptIndex index = ConceptIndex.parse(DOCS_DIR);
-        assertEquals(250, index.checklist().size());
-        assertEquals(16, index.familyRanges().size());
+        assertEquals(277, index.checklist().size());
+        assertEquals(17, index.familyRanges().size());
         assertEquals(EXPECTED_DIGEST, index.declaredDigest(), "INDEX.md digest literal changed");
         assertEquals(23, index.checklist().get(0).seq());
         assertEquals(272, index.checklist().get(249).seq());
+        // The CP0C VFX rows follow the U23 hole at 273 with explicit sequences 274..300.
+        assertEquals(274, index.checklist().get(250).seq());
+        assertEquals("VFX-01", index.checklist().get(250).id());
+        assertEquals(300, index.checklist().get(276).seq());
+        assertEquals("VFX-27", index.checklist().get(276).id());
 
-        // Recompute the documented full-row formula over all 16 family files.
+        // Recompute the documented full-row formula over all 17 family files.
         List<ConceptIndex.FamilyRow> rows = new ArrayList<>();
         for (ConceptIndex.FamilyRange range : index.familyRanges().values()) {
             rows.addAll(ConceptIndex.parseFamilyFile(DOCS_DIR, range));
         }
-        assertEquals(250, rows.size());
+        assertEquals(277, rows.size());
         assertEquals(EXPECTED_DIGEST, ConceptIndex.computeFullRowDigest(rows),
                 "family-table rows no longer hash to the published full-row digest (docs drifted)");
     }
@@ -160,7 +167,84 @@ class ConceptParityTest {
         JsonObject catalog = repoCatalog();
         catalog.getAsJsonArray("entries").remove(271); // drop QOL-12
         List<String> errors = ConceptParity.validate(catalog, DOCS_DIR);
-        assertTrue(errors.stream().anyMatch(e -> e.contains("249") && e.contains("250")), errors.toString());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("276") && e.contains("277")), errors.toString());
+    }
+
+    // ------------------------------------------------------------------
+    // CP0C hole/forward-user-reference rules must bite.
+    // ------------------------------------------------------------------
+
+    @Test
+    void checklistHoleNotOccupiedByUserEntryFailsValidation() throws Exception {
+        // The hole at 273 is legal only because U23 occupies it. With U23 removed from
+        // the catalog, the same docs must fail: the missing sequence is unoccupied.
+        JsonObject catalog = repoCatalog();
+        JsonObject u23 = catalog.getAsJsonArray("entries").get(272).getAsJsonObject();
+        assertEquals("U23", u23.get("id").getAsString(), "entry at file position 273 must be U23");
+        catalog.getAsJsonArray("entries").remove(272);
+        List<String> errors = ConceptParity.validate(catalog, DOCS_DIR);
+        assertTrue(errors.stream().anyMatch(e ->
+                        e.contains("skips sequence 273")
+                                && e.contains("not occupied by a catalog user entry")),
+                errors.toString());
+    }
+
+    @Test
+    void checklistHoleOccupiedByAdditionalEntryFailsValidation(@TempDir Path tempDir) throws Exception {
+        // Deleting the QOL-12 checklist row leaves a hole at 272 — a sequence occupied
+        // by an additional (not user) catalog entry — which must stay an error.
+        Path docs = copyDocs(tempDir);
+        mutate(docs, "INDEX.md",
+                "| 272 | QOL-12 | Statistics Dashboard | `quality_of_life` | block | core | 2 | W13 | U05 |\n",
+                "");
+        List<String> errors = validateMutated(docs);
+        assertTrue(errors.stream().anyMatch(e ->
+                        e.contains("skips sequence 272")
+                                && e.contains("not occupied by a catalog user entry")),
+                errors.toString());
+    }
+
+    @Test
+    void duplicatedChecklistSequenceFailsValidation(@TempDir Path tempDir) throws Exception {
+        // Reusing an earlier sequence breaks the strictly-increasing rule.
+        Path docs = copyDocs(tempDir);
+        mutate(docs, "INDEX.md",
+                "| 274 | VFX-01 | Prismatic Interference Lens |",
+                "| 272 | VFX-01 | Prismatic Interference Lens |");
+        List<String> errors = validateMutated(docs);
+        assertTrue(errors.stream().anyMatch(e ->
+                        e.contains("VFX-01") && e.contains("strictly increasing")),
+                errors.toString());
+    }
+
+    @Test
+    void forwardUserReferenceInAcceptanceFails(@TempDir Path tempDir) throws Exception {
+        // PWR-01 (seq 23) declares and references U23 (seq 273): a forward user
+        // reference — the acceptance ordering rule must fire even though U23 is a
+        // user contract (sequence/tier maps cover all catalog entries).
+        Path docs = copyDocs(tempDir);
+        mutate(docs, "INDEX.md",
+                "| 23 | PWR-01 | Copper Bus Bar | `power_grid` | block | core | 1 | W5 | U05 |",
+                "| 23 | PWR-01 | Copper Bus Bar | `power_grid` | block | core | 1 | W5 | U05, U23 |");
+        mutate(docs, "PWR.md",
+                "| PWR-01 | Copper Bus Bar | block | core | 1 | W5 | U05 |",
+                "| PWR-01 | Copper Bus Bar | block | core | 1 | W5 | U05, U23 |");
+        mutate(docs, "PWR.md",
+                "A jar feeding a sink through 8 bus bars",
+                "A jar feeding a U23 sink through 8 bus bars");
+        List<String> errors = validateMutated(docs);
+        assertTrue(errors.stream().anyMatch(e ->
+                        e.contains("PWR-01") && e.contains("references U23")
+                                && e.contains("not earlier in the global sequence")),
+                errors.toString());
+    }
+
+    @Test
+    void backwardUserReferenceToU23FromVfxRowsPasses() throws Exception {
+        // Sanity: the repo VFX rows reference U23 (seq 273) from sequences 274..300 —
+        // backward, declared, core — and the repo state validates cleanly.
+        List<String> errors = ConceptParity.validate(repoCatalog(), DOCS_DIR);
+        assertEquals(List.of(), errors, errors.toString());
     }
 
     // ------------------------------------------------------------------

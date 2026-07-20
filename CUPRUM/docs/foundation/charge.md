@@ -9,8 +9,8 @@ U05 jar = 100,000 Cg, baseline B = 5 Cg/t, U19 wire 200 Cg/t, solver budget
 sub-islands freeze (no phantom transfer)".
 
 W1 ships infrastructure only: graph core, sided lookup, persistence, diagnostics and a
-gametest harness. No catalog gameplay blocks (U04/U05 teams build on this; the 250
-additional entries stay blocked until CP3).
+gametest harness. No catalog gameplay blocks (U04/U05 teams build on this; the 277
+additional entries of the 300-entry catalog stay blocked until CP3).
 
 ## 1. Verified API facts (1.21.9 Mojmap + Fabric API 0.134.1)
 

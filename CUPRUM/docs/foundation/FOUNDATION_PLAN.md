@@ -228,7 +228,9 @@ contracts); revisit at the wave named:
 - `s2c/handbook/unlock` payload → **REJECTED permanently**: the unlocks
   attachment is `syncWith(…, targetOnly())`; Fabric's verified attachment sync
   already mirrors grants to the owning client. One mechanism, not two.
-- Iris reflection query in `FxCompat` → W12. W1 `FxCompat` only logs
+- Iris reflection query in `FxCompat` → W12. **CP0C amendment: for U23 only,
+  the Iris active-pack soft-dependency/probe lands in W4 as a U23 gate; generic
+  W1D `FxCompat` unchanged.** W1 `FxCompat` only logs
   `isModLoaded("sodium"/"iris")`; misrender risk is cosmetic-only
   (outcome-neutral) and the capability probe still catches pipeline failures.
 - DE-language search client gametest → W4; W1 search test is EN; DE coverage
@@ -588,7 +590,7 @@ Eval-A** → **Fable Eval-B** → fix loop (re-run both evals after fixes) →
 
 1. `./gradlew toolchainVerify` green; pins unchanged.
 2. `./gradlew check build` green: lint `-Werror` all six source sets, catalog
-   validation + concept parity (digest byte-identical to CP0B), deterministic
+   validation + concept parity (digest byte-identical to CP0C), deterministic
    unit tests — **all 134 existing tests untouched and green; total ≥ 225**
    with the suites named in §4 present and seeded/deterministic.
 3. `./gradlew runGameTest` green: every §4 server GameTest listed above exists
@@ -609,7 +611,7 @@ Eval-A** → **Fable Eval-B** → fix loop (re-run both evals after fixes) →
    `w1_perf_baseline_handbook` ≤33.3 ms mean; `build/perf/*.json` uploaded.
 10. Handbook completeness: every `cuprum`-namespace block/item documented
     (4 ids, 3 pages), `exempt.json` size 0, EN/DE parity gates green.
-11. `verifyConceptParity` digest and `catalog/**` byte-identical to CP0B.
+11. `verifyConceptParity` digest and `catalog/**` byte-identical to CP0C.
 
 ---
 

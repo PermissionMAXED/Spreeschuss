@@ -17,10 +17,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Structural expectations for the CP0B repository catalog: 22 user contracts plus the
- * 250 additional concept features (202 core / 48 stretch) in the fixed family order,
- * with a dependency graph that is closed, backward-only for additional entries, and
- * whose core subset never depends on stretch.
+ * Structural expectations for the CP0B+CP0C repository catalog: 23 user contracts
+ * (U01–U22 at sequences 1–22, U23 at 273) plus the 277 additional concept features
+ * (222 core / 55 stretch) in the fixed family order, with a dependency graph that is
+ * closed, backward-only for additional entries, and whose core subset never depends on
+ * stretch.
  *
  * <p>The per-family expectations here are an independent restatement of the INDEX.md
  * family-ranges table; full per-row agreement with the docs is enforced separately by
@@ -48,12 +49,14 @@ class Cp0bCatalogTest {
             new Family("FX", "effects_enchants", 219, 234, 16, 13, 3, "W12"),
             new Family("ADV", "progression", 235, 244, 10, 9, 1, "W12"),
             new Family("DEC", "decor_building", 245, 260, 16, 12, 4, "W13"),
-            new Family("QOL", "quality_of_life", 261, 272, 12, 12, 0, "W13"));
+            new Family("QOL", "quality_of_life", 261, 272, 12, 12, 0, "W13"),
+            // CP0C: U23 occupies global sequence 273; VFX follows at 274–300.
+            new Family("VFX", "holo_projection", 274, 300, 27, 20, 7, "W13"));
 
     @Test
     void totalCountAndTierSplit() throws Exception {
         JsonArray entries = repoCatalog().getAsJsonArray("entries");
-        assertEquals(272, entries.size(), "catalog must hold 22 user + 250 additional entries");
+        assertEquals(300, entries.size(), "catalog must hold 23 user + 277 additional entries");
 
         int user = 0;
         int additionalCore = 0;
@@ -68,19 +71,21 @@ class Cp0bCatalogTest {
                 additionalStretch++;
             }
         }
-        assertEquals(22, user);
-        assertEquals(202, additionalCore);
-        assertEquals(48, additionalStretch);
+        assertEquals(23, user);
+        assertEquals(222, additionalCore);
+        assertEquals(55, additionalStretch);
     }
 
     @Test
-    void sequenceIsContiguousOneToTwoHundredSeventyTwo() throws Exception {
+    void sequenceIsContiguousOneToThreeHundred() throws Exception {
         JsonArray entries = repoCatalog().getAsJsonArray("entries");
         for (int i = 0; i < entries.size(); i++) {
             assertEquals(i + 1, entries.get(i).getAsJsonObject().get("sequence").getAsInt(),
                     "sequence at file position " + i);
         }
-        assertEquals(272, entries.get(entries.size() - 1).getAsJsonObject().get("sequence").getAsInt());
+        assertEquals(300, entries.get(entries.size() - 1).getAsJsonObject().get("sequence").getAsInt());
+        // U23 sits at file position 273 (sequence 273), directly before the VFX family.
+        assertEquals("U23", entries.get(272).getAsJsonObject().get("id").getAsString());
     }
 
     @Test
@@ -244,6 +249,6 @@ class Cp0bCatalogTest {
             String name = element.getAsJsonObject().get("name").getAsString();
             assertTrue(names.add(name), "duplicate entry name '" + name + "'");
         }
-        assertEquals(272, names.size());
+        assertEquals(300, names.size());
     }
 }

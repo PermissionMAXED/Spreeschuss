@@ -15,9 +15,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Proves the schema/tooling already supports the CP0B shape: family ids such as
- * PWR-01, numeric-aware contiguity past two digits, and expected counts of
- * 202 additional core + 48 additional stretch entries.
+ * Proves the schema/tooling already supports the CP0B/CP0C shape: family ids such as
+ * PWR-01 and VFX-01, numeric-aware contiguity past two digits, and expected counts of
+ * 222 additional core + 55 additional stretch entries.
  */
 class FamilyIdScalingTest {
 
@@ -34,24 +34,32 @@ class FamilyIdScalingTest {
     }
 
     @Test
-    void cp0bScaleTwoHundredTwoCoreAndFortyEightStretchValidate() throws Exception {
+    void cp0cScaleTwoHundredTwentyTwoCoreAndFiftyFiveStretchValidate() throws Exception {
         JsonObject catalog = JsonParser.parseString("{\"catalog_version\": 2, \"entries\": []}").getAsJsonObject();
         JsonArray entries = catalog.getAsJsonArray("entries");
         int sequence = 1;
-        // 202 additional core across two families (including >99 numeric-aware ids)...
+        // 222 additional core across three families (including >99 numeric-aware ids
+        // and the CP0C VFX prefix)...
         for (int i = 1; i <= 150; i++) {
             entries.add(additionalEntry(String.format("PWR-%02d", i), sequence++, "power_extra", "core"));
         }
         for (int i = 1; i <= 52; i++) {
             entries.add(additionalEntry(String.format("LOG-%02d", i), sequence++, "logistics_extra", "core"));
         }
-        // ...and 48 additional stretch in a third family.
+        for (int i = 1; i <= 20; i++) {
+            entries.add(additionalEntry(String.format("VFX-%02d", i), sequence++, "holo_extra", "core"));
+        }
+        // ...and 55 additional stretch split between a fourth family and VFX numbers
+        // continuing contiguously past the core block (VFX-21..27).
         for (int i = 1; i <= 48; i++) {
             entries.add(additionalEntry(String.format("STR-%02d", i), sequence++, "stretch_extra", "stretch"));
         }
-        List<String> errors = CatalogValidator.validate(catalog, schema(), counts(0, 202, 48));
-        assertEquals(List.of(), errors, "CP0B-scale catalog (202 core + 48 stretch additional) must validate");
-        assertEquals(250, entries.size());
+        for (int i = 21; i <= 27; i++) {
+            entries.add(additionalEntry(String.format("VFX-%02d", i), sequence++, "holo_extra", "stretch"));
+        }
+        List<String> errors = CatalogValidator.validate(catalog, schema(), counts(0, 222, 55));
+        assertEquals(List.of(), errors, "CP0C-scale catalog (222 core + 55 stretch additional) must validate");
+        assertEquals(277, entries.size());
     }
 
     @Test

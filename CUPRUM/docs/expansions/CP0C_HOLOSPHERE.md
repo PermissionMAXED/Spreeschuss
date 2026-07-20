@@ -549,6 +549,12 @@ with committed evidence:
    Cg/t upkeep adders).
 7. `README.md`/`AGENTS.md`: count references refreshed (272/250/202/48 →
    300/277/222/55) and the CP0B-state paragraph amended to name CP0C.
+   Also sanctioned, count-prose only: the one-line `build.gradle`
+   `verifyConceptParity` comment refresh (250x12 → 277x12 table cells) and
+   the `docs/foundation/charge.md` count-prose refresh ("250 additional
+   entries" → "277 additional entries of the 300-entry catalog"). Both are
+   documentation-comment edits; W1B charge logic and all other W1 runtime
+   code remain untouched.
 8. `docs/foundation/FOUNDATION_PLAN.md` — exactly two U23-scoped line
    amendments: (a) the D10 line "Iris reflection query in `FxCompat` →
    W12." gains "**CP0C amendment: for U23 only, the Iris active-pack

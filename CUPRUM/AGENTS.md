@@ -51,24 +51,27 @@ this directory (`CUPRUM/`).
 - `CuprumCatalog.java` is **generated** into `build/generated/sources/catalog` by the
   `generateCatalog` task from `catalog/catalog.json` — never edit or commit it; edit the
   catalog JSON instead (schema + semantic checks run in `validateCatalog`/`check`).
-- **Catalog contracts are binding**: ids U01–U22 must match the contract table in
+- **Catalog contracts are binding**: ids U01–U23 must match the contract table in
   `src/catalogTool/.../UserContracts.java` one-to-one — exact `contract_key`,
   canonical `name` and `family` per id are all validator-enforced (mutation tests in
   `src/test` prove renames/swaps/re-familying fail). `summary`/`vanilla_overlap` are
   prose and not machine-checked for U-entries: reviewers own their semantic accuracy.
-  Additional content gets family ids (`PWR-01`, …) with `origin: additional` and
-  tier `core`/`stretch`; update `catalog/expected_counts.json` when counts change.
-  The diagnostic Charge Probe is CP0 infrastructure and intentionally has **no**
-  catalog entry.
-- **CP0B catalog state**: `catalog/catalog.json` holds all 272 entries — 22 user
-  contracts plus the 250 additional concept features (202 core + 48 stretch,
-  sequences 23–272, families PWR/OXI/SHD/TES/TUB/RAIL/GOL/WEA/TOOL/EXO/MOB/GEN/FX/
-  ADV/DEC/QOL). These are **planning data only: no additional gameplay is
-  implemented** — broad content implementation stays blocked until CP3 (playable
-  vertical slice). `docs/feature-concepts/` is the authoritative concept source; the
+  Additional content gets family ids (`PWR-01`, `VFX-01`, …) with `origin:
+  additional` and tier `core`/`stretch`; update `catalog/expected_counts.json` when
+  counts change. The diagnostic Charge Probe is CP0 infrastructure and intentionally
+  has **no** catalog entry.
+- **CP0B+CP0C catalog state**: `catalog/catalog.json` holds all 300 entries — 23 user
+  contracts (U01–U22 at sequences 1–22; the CP0C U23 Holosphere Dreamscape Projector
+  at sequence 273 per `docs/expansions/CP0C_HOLOSPHERE.md`) plus the 277 additional
+  concept features (222 core + 55 stretch: the 250 CP0B features at sequences
+  23–272, families PWR/OXI/SHD/TES/TUB/RAIL/GOL/WEA/TOOL/EXO/MOB/GEN/FX/
+  ADV/DEC/QOL, and the 27 CP0C VFX features at 274–300). These are **planning data
+  only: no additional gameplay is implemented** — broad content implementation stays
+  blocked until CP3 (playable vertical slice). `docs/feature-concepts/` is the
+  authoritative concept source; the
   `verifyConceptParity` task (wired into `check`, plus `ConceptParityTest`) re-parses
   those docs, recomputes the INDEX.md **full-row digest** (SHA-256 over the
-  compact-JSON encoding of all 250×12 family-table cells — the exact formula is
+  compact-JSON encoding of all 277×12 family-table cells — the exact formula is
   documented in INDEX.md; the current 64-hex literal is also pinned in
   `ConceptParityTest`, so digest changes require a reviewed test diff) and compares
   every additional entry field
@@ -103,9 +106,15 @@ this directory (`CUPRUM/`).
   budget, bootstrap/sink-route/authority/dependency rules, GEN-08's vanilla
   copper-bulb lamp, DEC display bands and the QOL-07 REI scope) as named
   regression tests independent of the generic parity path.
-  Additional-entry rules the validator also
+  Parity consumes the explicit sequences declared by the INDEX family ranges and
+  checklist rows; a sequence-coverage hole is legal only when every skipped
+  sequence is occupied by a catalog user entry (the sole such hole is U23 at 273
+  between QOL's 272 and VFX's 274 — unoccupied or additional-occupied holes fail),
+  and its sequence/tier maps span all catalog entries, so U23 references resolve
+  and forward user references fail. Additional-entry rules the validator also
   enforces: unique names, no forward deps (additional entries may only reference
-  user entries or lower-sequence additional ids), and no core→stretch deps.
+  lower-sequence entries — user contracts included, so no pre-273 row may
+  reference U23), and no core→stretch deps.
 - The probe block texture is generated deterministically by
   `python3 scripts/gen_probe_texture.py`; rerun it instead of editing the PNG.
 - No mixins are used so far (no mixin descriptor exists — add one only when needed).

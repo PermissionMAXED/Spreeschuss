@@ -14,10 +14,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Deterministic, attack-hardened parser for the CP0B concept deliverable in
+ * Deterministic, attack-hardened parser for the CP0B/CP0C concept deliverable in
  * {@code docs/feature-concepts}: the family-ranges and machine-auditable checklist
- * tables of {@code INDEX.md} plus the 12-column feature tables of the 16 family files
- * ({@code PWR.md} .. {@code QOL.md}).
+ * tables of {@code INDEX.md} plus the 12-column feature tables of the 17 family files
+ * ({@code PWR.md} .. {@code QOL.md} plus the CP0C {@code VFX.md}).
  *
  * <p>The concept docs are the authoritative source for all {@code origin=additional}
  * catalog entries. This parser makes them machine-comparable so {@link ConceptParity}
@@ -26,7 +26,8 @@ import java.util.regex.Pattern;
  * <p><strong>Digest.</strong> INDEX.md publishes one authoritative full-row content
  * digest: the SHA-256 (full 64 hex chars) over the UTF-8 bytes of the compact JSON
  * array (Python {@code json.dumps(..., separators=(",", ":"), ensure_ascii=True)}) of
- * 250 arrays, one per feature in global sequence order 23&rarr;272, each holding the 12
+ * 277 arrays, one per feature in global sequence order 23&rarr;272 then 274&rarr;300
+ * (273 is U23's user-contract sequence, not a concept row), each holding the 12
  * normalized (whitespace-trimmed raw Markdown) table cells in column order
  * {@code [id, name, type, tier, prog, wave, deps, vanilla_overlap, player_behavior,
  * visual_signature, acceptance, test]}. {@link #computeFullRowDigest(List)} reproduces
@@ -69,7 +70,10 @@ import java.util.regex.Pattern;
  * </ul>
  */
 public final class ConceptIndex {
-    /** One row of the INDEX.md machine-auditable checklist (250 rows, seq 23..272). */
+    /**
+     * One row of the INDEX.md machine-auditable checklist (277 rows over the explicit
+     * sequences 23..272 and 274..300; 273 is U23's user-contract sequence).
+     */
     public record ChecklistRow(int seq, String id, String name, String family, String type,
                                String tier, int progressionTier, String wave, String depsCell) {
         public String prefix() {
@@ -78,7 +82,7 @@ public final class ConceptIndex {
         }
     }
 
-    /** One row of the INDEX.md families table (16 rows, PWR..QOL). */
+    /** One row of the INDEX.md families table (17 rows, PWR..VFX). */
     public record FamilyRange(String prefix, String file, String family, int seqLo, int seqHi,
                               int count, int core, int stretch, String coreWave) {
     }
@@ -148,7 +152,7 @@ public final class ConceptIndex {
     }
 
     /**
-     * Recomputes the documented full-row SHA-256 digest from the 250 family rows in
+     * Recomputes the documented full-row SHA-256 digest from the 277 family rows in
      * global sequence order (see class javadoc for the exact formula).
      */
     public static String computeFullRowDigest(List<FamilyRow> rowsInSequenceOrder) {

@@ -36,8 +36,9 @@ import java.util.regex.Pattern;
  *       additional ids contiguous from 01, family name ↔ id prefix bijection);</li>
  *   <li>unique ids and unique names, dependency closure, dependency DAG (no cycles,
  *       no self-deps);</li>
- *   <li>additional entries may only depend on user entries or on additional entries
- *       with a lower global sequence (no forward references);</li>
+ *   <li>additional entries may only depend on entries with a lower global sequence
+ *       (no forward references — user deps included, so an additional row can never
+ *       reference a later user contract such as U23 at sequence 273);</li>
  *   <li>core entries must never depend on stretch entries (cutting all stretch
  *       features must leave the core catalog closed under deps);</li>
  *   <li>expected origin/tier counts (user, additional core, additional stretch);</li>
@@ -303,15 +304,16 @@ public final class CatalogValidator {
                     errors.add("entry '" + id + "' depends on unknown id '" + depId + "'");
                     continue;
                 }
-                // Additional entries may only reference user contracts or additional
-                // entries that come earlier in the global sequence (no forward deps).
+                // Additional entries may only reference entries that come earlier in
+                // the global sequence (no forward deps). User deps are included: with
+                // U23 at sequence 273, an additional row before it must not reference
+                // it — only the later VFX rows (274..300) may.
                 if ("additional".equals(entry.get("origin").getAsString())
-                        && "additional".equals(depEntry.get("origin").getAsString())
                         && depEntry.get("sequence").getAsInt() >= entry.get("sequence").getAsInt()) {
                     errors.add("additional entry '" + id + "' (sequence " + entry.get("sequence").getAsInt()
                             + ") has forward dependency on '" + depId + "' (sequence "
                             + depEntry.get("sequence").getAsInt()
-                            + "); additional deps must reference user entries or lower-sequence additional entries");
+                            + "); additional deps must reference lower-sequence entries (user contracts included)");
                 }
                 // Core scope must stay closed under deps when all stretch entries are cut.
                 if ("core".equals(entry.get("tier").getAsString())

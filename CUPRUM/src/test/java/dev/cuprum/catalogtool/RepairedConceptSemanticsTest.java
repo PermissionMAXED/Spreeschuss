@@ -366,6 +366,34 @@ class RepairedConceptSemanticsTest {
     }
 
     @Test
+    void vfxHolosphereBudgetIsNumericAndFrozen() throws Exception {
+        // CP0C VFX family budget pins: frozen shader inventory of exactly 2
+        // RenderTypes, per-projector vert/callback caps, the HOLO particle carve-out
+        // inside the existing FX totals, the 3 Hz flash cap, the W14 frame gate and
+        // the exact +2/+4 Cg/t upkeep adders.
+        String vfx = Files.readString(DOCS_DIR.resolve("VFX.md"));
+        assertTrue(vfx.contains("exactly 2 RenderTypes family-wide"),
+                "VFX budget freezes the shader inventory at 2 RenderTypes");
+        assertTrue(vfx.contains("`cuprum:holo_surface`") && vfx.contains("`cuprum:holo_interior`"),
+                "VFX budget names both RenderTypes");
+        assertTrue(vfx.contains("one no-cull additive surface geometry callback \u22644,096 verts"
+                        + " + one interior geometry callback \u22648,192 verts,"
+                        + " \u22642 geometry callbacks total per frame"),
+                "VFX budget pins the per-projector 4,096/8,192 vert and \u22642 callback caps");
+        assertTrue(vfx.contains("HOLO particle sub-pool \u226432 spawn/tick and \u2264128 live,"
+                        + " carved from the existing 64/256 family totals"),
+                "VFX budget pins the HOLO 32/128 carve-out of the 64/256 totals");
+        assertTrue(vfx.contains("flash rate \u22643 Hz everywhere"),
+                "VFX budget pins the 3 Hz flash cap");
+        assertTrue(vfx.contains("\u22641.5 ms/frame") && vfx.contains("`w14_holo_frame_budget`"),
+                "VFX budget names the 1.5 ms W14 frame gate");
+        assertTrue(vfx.contains("lens +2 Cg/t, cartridge +4 Cg/t on U23 upkeep"),
+                "VFX balance constants pin the +2/+4 Cg/t upkeep adders");
+        assertTrue(vfx.contains("the 6 support systems (VFX-22..27) add zero pipelines"),
+                "VFX budget keeps the support systems pipeline-free");
+    }
+
+    @Test
     void tesFxStackingNeverReplacesTheBaseShock() {
         // TES-03 applies the base canonical U03 Shock; FX-01 is a separate stackable
         // W12 layer on top — the base effect is never replaced or re-registered.
@@ -508,6 +536,6 @@ class RepairedConceptSemanticsTest {
                                 + row.acceptance());
             }
         }
-        assertEquals(250, rowsById.size());
+        assertEquals(277, rowsById.size());
     }
 }

@@ -145,7 +145,7 @@ def generateCatalog = tasks.register('generateCatalog', JavaExec) {
 sourceSets.main.java.srcDir(generateCatalog)
 
 // Proves every origin=additional catalog entry agrees 1:1 with the authoritative
-// concept docs (docs/feature-concepts): full-row SHA-256 digest over all 250x12
+// concept docs (docs/feature-concepts): full-row SHA-256 digest over all 277x12
 // table cells, family ranges, row-quality contract (nonblank cells, unique
 // scope-suitable test ids, allowlist-concrete acceptance, ordered meaningful
 // T2:/T3: visual clauses, dependency-closed acceptance id references) and every
