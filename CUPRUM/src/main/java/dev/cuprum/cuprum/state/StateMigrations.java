@@ -11,7 +11,7 @@ import java.util.function.UnaryOperator;
  * Per-domain registry of append-only, strictly n → n+1 {@code Dynamic} migration steps
  * (plan D5): applied inside codecs via {@link Versioned}, never through DataFixers. Steps must be
  * pure and total — no step may throw on any version-n output (property-tested by the wave that
- * adds the first step). W1 ships the skeleton: no domain has migrations yet.
+ * adds the first step). Version 0 is reserved for explicitly identified pre-versioned data.
  */
 public final class StateMigrations {
     private static final Map<String, Map<Integer, UnaryOperator<Dynamic<?>>>> STEPS = new HashMap<>();
@@ -27,8 +27,8 @@ public final class StateMigrations {
     public static synchronized void register(String domain, int fromVersion, UnaryOperator<Dynamic<?>> step) {
         Objects.requireNonNull(domain, "domain");
         Objects.requireNonNull(step, "step");
-        if (fromVersion < 1) {
-            throw new IllegalArgumentException("fromVersion must be >= 1: " + fromVersion);
+        if (fromVersion < 0) {
+            throw new IllegalArgumentException("fromVersion must be >= 0: " + fromVersion);
         }
         Map<Integer, UnaryOperator<Dynamic<?>>> domainSteps =
                 STEPS.computeIfAbsent(domain, key -> new HashMap<>());

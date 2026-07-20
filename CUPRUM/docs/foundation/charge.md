@@ -33,9 +33,8 @@ and the remapped Fabric module sources in `.gradle/loom-cache/remapped_mods/`
   Function<SavedData.Context,Codec<T>> codec, DataFixTypes dataFixType)` with a
   convenience ctor `(String, Supplier<T>, Codec<T>, DataFixTypes)`;
   `ServerLevel.getDataStorage().computeIfAbsent(SavedDataType)`.
-  `DimensionDataStorage.readTagFromDisk` calls `type.dataFixType().update(...)`
-  unconditionally when a file exists → a `null` DataFixTypes NPEs on the first
-  post-restart read. See PROBE-3.
+  Fabric's SavedData object-builder mixin passes mod data through when
+  `dataFixType == null`, so Cuprum uses no unrelated vanilla fixer. See PROBE-3.
 - `BlockApiLookup.get(ResourceLocation, Class<A>, Class<C>)`, `registerSelf`,
   `registerForBlockEntity(BiFunction<T,C,A>, BlockEntityType<T>)`, `registerForBlocks`,
   `registerFallback`; `BlockApiCache.create(lookup, ServerLevel, BlockPos)`.
@@ -89,10 +88,16 @@ public final class ChargeMath {
 
 public final class Roles {                                 // bitmask
     public static final int PRODUCER = 1, STORAGE = 2, CONSUMER = 4, RELAY = 8, SURGE_ABSORBER = 16;
+    public static final int ALL = PRODUCER | STORAGE | CONSUMER | RELAY | SURGE_ABSORBER;
+    public static boolean has(int mask, int role);
 }
-public enum ChargePriority { DEFENSE, LOGISTICS, MISC }    // PWR-18 tiers; ordinal = allocation order
+public enum ChargePriority {                               // PWR-18 tiers; ordinal = allocation order
+    DEFENSE, LOGISTICS, MISC;
+    public static ChargePriority fromOrdinal(int ordinal); // invalid ordinal -> MISC
+}
 
 public final class ChargeGraphCore {                       // topology + solver over dense int ids
+    public ChargeGraphCore();
     public int  addNode(long posKey, int roleMask, int priority, long capacity, long maxInsert, long maxExtract);
     public void removeNode(int nodeId);                    // marks component dirty (lazy split)
     public void addEdge(int a, int b);
@@ -102,13 +107,42 @@ public final class ChargeGraphCore {                       // topology + solver 
     public RebuildStats runRebuild(int maxVisits);         // budgeted; returns carry-over depth
     public TickReport tick(NodeAccess access);             // deterministic allocator (section 3)
     public long depositSurge(int nodeId, long amountCg, NodeAccess access); // returns accepted
+    public GraphDiagnosticsSnapshot diagnostics();         // deliberate read-only diagnostics
+    public long ticksRun();                                // deliberate exact-pass counter
+    // Deliberate internal read-only bridge: public only because ChargeGraphManager is in
+    // the sibling charge package. Every node-id query rejects unknown/dead ids.
+    public boolean isActive(int nodeId);                    // chunk/BE active flag; dirty is separate
+    public int roleMaskOf(int nodeId);                      // exact registered Roles mask
+    public int priorityOrdinalOf(int nodeId);               // registered ChargePriority ordinal
+    public long capacityOf(int nodeId);                     // registered non-negative capacity
+    public int[] aliveNodeIds();                            // canonical-order defensive copy
+    public int[] loadedIslandMembers(int nodeId);           // canonical-order defensive copy;
+                                                            // empty when frozen or rebuild-pending
 }
 
-public interface NodeAccess {                              // solver pulls state, pushes deltas — the ONLY mutation path
+public final class ChargeBuffer {                          // storage-implementor authority
+    public ChargeBuffer(long capacity, long maxInsertPerTick, long maxExtractPerTick);
+    public long stored();
+    public long capacity();
+    public long maxInsertPerTick();
+    public long maxExtractPerTick();
+    public void beginGameTick(long gameTick);              // lazy; same tick never resets usage
+    public long insert(long amountCg, boolean simulate);   // normal shared budget; returns actual
+    public long extract(long amountCg, boolean simulate);  // normal shared budget; returns actual
+    public long depositSurge(long amountCg);               // capacity only; does not touch normal budget
+    public long setStored(long value);                     // clamped load/setup path
+}
+
+public interface NodeAccess {                              // solver's phase-specific node bridge
     long offer(int nodeId);                                // producers: Cg offered this tick
     long demand(int nodeId);                               // consumers: Cg wanted this tick
     long stored(int nodeId);
-    void applyDelta(int nodeId, long deltaCg);             // storage +/-, consumer feed (+), producer drain (-)
+    long drain(int nodeId, long amountCg);                 // each mutator returns ACTUAL applied Cg
+    long accept(int nodeId, long amountCg);
+    long insertStorage(int nodeId, long amountCg);         // normal shared insert budget
+    long extractStorage(int nodeId, long amountCg);        // normal shared extract budget
+    long insertSurgeStorage(int nodeId, long amountCg);    // explicit capacity-only surge path
+    long absorb(int nodeId, long amountCg);
 }
 
 public record TickReport(long moved, long vented, int networksTicked, long nanos) {}
@@ -117,6 +151,11 @@ public record GraphDiagnosticsSnapshot(int nodes, int edges, int networks, int f
         long topologyVersion, long tickNanosLast, long tickNanosEma, long ventedLastTick,
         long ventedTotal, long movedLastTick, int rebuildQueueDepth) {}
 ```
+
+`ChargeGraphCore` deliberately exposes no public position-to-id lookup: callers retain the dense
+id returned by `addNode`. The six query methods above are frozen, read-only manager/diagnostic
+bridges, not general extension points; scalar results are snapshots and array results are defensive
+copies, so none can mutate topology or node state.
 
 ### 2b. `dev.cuprum.cuprum.charge` — Minecraft-facing, server-side only
 
@@ -135,26 +174,38 @@ public interface ChargeNode {
 }
 // Role interfaces; a node may implement several (e.g. PWR-16 later). The solver honors
 // exactly the interfaces implemented (instanceof), phase by phase.
-public interface ChargeProducer extends ChargeNode { long offerPerTick(); void drain(long acceptedCg); }
+public interface ChargeProducer extends ChargeNode {
+    long offerPerTick();
+    long drain(long requestedCg);                          // returns actual drained
+}
 public interface ChargeStorage  extends ChargeNode {
     long stored(); long capacity(); long maxInsertPerTick(); long maxExtractPerTick();
-    long insert(long amountCg, boolean simulate);          // returns accepted; clamped; never negative
-    long extract(long amountCg, boolean simulate);         // returns extracted
+    long insert(long amountCg, boolean simulate);          // normal budget; returns actual accepted
+    long extract(long amountCg, boolean simulate);         // normal budget; returns actual extracted
+    long insertSurge(long amountCg);                       // capacity-only; returns actual accepted
 }
-public interface ChargeConsumer extends ChargeNode { long demandPerTick(); void accept(long amountCg); }
+public interface ChargeConsumer extends ChargeNode {
+    long demandPerTick();
+    long accept(long requestedCg);                         // returns actual accepted
+}
 public interface ChargeRelay    extends ChargeNode { long throughputPerTick(); }  // W1: harness only; U19/PWR-01 later
-public interface SurgeAbsorber  extends ChargeNode { long absorbSurge(long amountCg); } // reserved: PWR-13/21
+public interface SurgeAbsorber  extends ChargeNode {
+    long absorbSurge(long requestedCg);                    // returns actual absorbed
+}
 
 public final class ChargeGraphManager {                    // one instance per ServerLevel
     public static void init();      // once from Cuprum.onInitialize(): registers END_WORLD_TICK,
                                     // chunk + BE events, /cuprum cg command
     public static ChargeGraphManager of(ServerLevel level);
     public void notifyNodeAdded(BlockPos pos);             // BE load / onPlace
-    public void notifyNodeRemoved(BlockPos pos);           // preRemoveSideEffects (removal, not unload)
-    public void notifyNodeChanged(BlockPos pos);           // priority / side shape changed
+    public void notifyNodeRemoved(BlockPos pos);           // non-BE provider removal
+    public void notifyNodeRemoved(BlockEntity source);     // identity-safe BE removal
+    public void notifyNodeChanged(BlockPos pos);           // non-venting shape refresh
     public long depositSurge(BlockPos origin, long amountCg); // U04 entry point; returns accepted
     public GraphDiagnosticsSnapshot diagnostics();
     public Optional<NodeReport> nodeReport(BlockPos pos);  // diagnostics read (charge_probe, /cuprum cg node)
+    public Map<Integer, List<NodeReport>> networkReports();// diagnostics command read
+    public long allocatorTicks();                          // exact-pass diagnostic counter
 }
 public record NodeReport(BlockPos pos, int roleMask, ChargePriority priority, long stored, long capacity,
         int networkId, boolean frozen, long networkStored, long networkCapacity, long topologyVersion) {}
@@ -162,15 +213,67 @@ public record NodeReport(BlockPos pos, int roleMask, ChargePriority priority, lo
 
 // dev.cuprum.cuprum.charge.blockentity
 public abstract class AbstractChargeStorageBlockEntity extends BlockEntity implements ChargeStorage {
-    protected long stored;
+    public static final String STATE_KEY, CHARGE_KEY;
+    protected final ChargeBuffer buffer;
+    protected AbstractChargeStorageBlockEntity(BlockEntityType<?> type, BlockPos pos, BlockState state,
+            long capacityCg, long maxInsertPerTickCg, long maxExtractPerTickCg);
+    @Override public long stored();
+    @Override public long capacity();
+    @Override public long maxInsertPerTick();
+    @Override public long maxExtractPerTick();
+    @Override public long insert(long amountCg, boolean simulate);
+    @Override public long extract(long amountCg, boolean simulate);
+    @Override public long insertSurge(long amountCg);
     @Override protected void saveAdditional(ValueOutput output);   // section 5
     @Override protected void loadAdditional(ValueInput input);
-    @Override public void preRemoveSideEffects(BlockPos pos, BlockState state); // -> notifyNodeRemoved
+    @Override public void preRemoveSideEffects(BlockPos pos, BlockState state); // identity-safe removal
 }
 
-// dev.cuprum.cuprum.charge.persist  — ChargeGraphSavedData (section 5)
-// dev.cuprum.cuprum.charge.diag    — ChargeCommand, ChargeProbeReport (sections 6, 7)
+// Config-owned values exposed to charge consumers.
+public final class ChargeBalance {
+    public static long passiveBaselineCgPerTick();
+    public static long leydenJarCapacityCg();
+    public static long strikeDepositCg();
+    public static int wireLossPpTenthsPerSpanBare();
+    public static int wireLossPpTenthsPerSpanHv();
+}
+public final class ChargeModule { public static void init(); }
+
+// dev.cuprum.cuprum.charge.persist — normalized snapshot/shadow state (section 5)
+public final class ChargeGraphSavedData extends CuprumSavedData {
+    public static final String ID;
+    public static final Codec<ChargeGraphSavedData> CODEC;
+    public static final SavedDataType<ChargeGraphSavedData> TYPE;
+    public record NodeRecord(long posKey, int roleMask, int priority, long lastKnownStored) {}
+    public ChargeGraphSavedData();
+    public List<NodeRecord> nodes();                       // immutable, signed-pos sorted snapshot
+    public long ventedTotal();                             // non-negative persisted total
+    public void replaceSnapshot(List<NodeRecord> nodes, long ventedTotal); // normalizes + setDirty
+}
+
+// dev.cuprum.cuprum.charge.diag — read-only command/report surface (sections 6, 7)
+public final class ChargeCommand { public static void register(); }
+public final class ChargeProbeReport {
+    public static String format(NodeReport report);
+    public static String format(int x, int y, int z, long stored, long capacity, int networkId,
+            boolean frozen, int roleMask, ChargePriority priority, long topologyVersion);
+    public static String summarizeNetwork(int networkId, List<NodeReport> reports);
+    public static String summarizeNetwork(int networkId, long[] storedByNode, long[] capacityByNode,
+            boolean[] frozenByNode);
+}
 ```
+
+The role mutators' **actual-return signatures are the frozen contract**: conservation,
+relay/absorber budgets and diagnostics use only the amount the receiver reports as applied.
+The deliberate additive public surface is limited to the explicit `insertSurge` path, the
+identity-safe BE-removal overload, the read-only diagnostics and the six internal core query
+bridges listed above. Test-only reset, raw graph-delta, position-to-id and warning-latch entrypoints
+are not public API.
+
+The declarations above are exhaustive for W1B-authored public/protected members (record-generated
+canonical constructors, accessors and `equals`/`hashCode`/`toString`, enum-generated
+`values`/`valueOf`, and inherited vanilla members are implicit). The primitive diagnostic overloads
+exist to keep their formatting/accumulation cores MC-free and directly unit-testable.
 
 Node registration pattern per BE type:
 `ChargeApi.NODE.registerForBlockEntity((be, side) -> be.canConnect(side) ? be : null, TYPE);`
@@ -183,6 +286,13 @@ Runs in `ServerTickEvents.END_WORLD_TICK`, after all BE tickers. Per-tick order:
 (3) allocator. BE tickers may only mutate their OWN node's internal state; every
 cross-node transfer happens exclusively in the allocator.
 
+Each storage owns one lazy game-tick normal-flow window keyed by
+`Level.getGameTime()`. External `insert`/`extract` and allocator P2/P3 call the same
+methods, so they consume the same insert/extract budgets in either call order. A
+different game tick replenishes the window on first normal access; simulation does
+not consume it. `insertSurge` is a separate capacity-only mutation and never consumes
+or resets the normal counter.
+
 Canonical node order (the only iteration order the solver ever uses):
 ascending `(priority.ordinal(), Long.compare(posKey))` where `posKey = BlockPos.asLong()`.
 Cached as a sorted array keyed by `topologyVersion`; hash maps are never iterated directly.
@@ -192,16 +302,22 @@ Allocator phases, per network, active (loaded) nodes only:
 1. **P1 direct:** producer offers → consumer demands. Consumers served fully-greedy in
    canonical order (DEFENSE first). PWR-18 brownout semantics: at 50% supply the
    defense-tier consumer receives 100% of its request, misc receives 0.
-2. **P2 charge:** residual offers → storages in canonical order, respecting `maxInsertPerTick`.
-3. **P3 discharge:** unmet demand → storage `extract` in canonical order, respecting
-   `maxExtractPerTick` (consumers are storage-fed burst loads by design).
+2. **P2 charge:** residual offers → storage `insert`; the storage enforces the one shared
+   graph+external `maxInsertPerTick` window.
+3. **P3 discharge:** unmet demand → storage `extract`; the storage enforces the one shared
+   graph+external `maxExtractPerTick` window.
 4. **P4 overflow/surge:** residual offers and `depositSurge` excess → `SurgeAbsorber`s in
    canonical order; the remainder is **vented**: added to `ventedLastTick`/`ventedTotal`,
    debug-logged, never negative, never wraps.
 
 Surge rule (binding W1 choice, revisited by PWR-13 fuse / PWR-21 ground vent):
-`depositSurge` (e.g. a 270,000 Cg strike) bypasses per-tick insert caps but always
-respects `capacity`.
+`depositSurge` (e.g. a 270,000 Cg strike) calls the explicit storage-surge path,
+bypassing normal insert caps while respecting storage capacity, relay throughput and
+absorber caps.
+
+Every `drain`, `accept`, normal storage, surge-storage and absorber mutation returns
+the actual applied amount in `[0, requested]`; only that amount leaves pools or charges
+budgets. Rejected remainder continues to another eligible target or vents exactly.
 
 No proportional splitting in W1: greedy-in-canonical-order is exact for chain/tree
 topologies (all W1–W5 catalog acceptance layouts are chains) and fully deterministic on
@@ -226,7 +342,13 @@ a PWR-era acceptance requires it.
   when a member chunk's tick state flips, and cached otherwise. This is the "unloaded
   sub-islands freeze, no phantom transfer" contract by construction.
 - **BE discovery:** `ServerBlockEntityEvents.BLOCK_ENTITY_LOAD` adds/reactivates nodes;
-  `BLOCK_ENTITY_UNLOAD` freezes (unload ≠ removal); `preRemoveSideEffects` removes. [PROBE-2]
+  `BLOCK_ENTITY_UNLOAD` freezes and snapshots the storage shadow without venting;
+  chunk unload does the same. `preRemoveSideEffects` is intentional removal: it vents
+  the live stored value (or frozen shadow) exactly once, removes the persisted record,
+  and the later unload callback no-ops. Source-BE identity is retained while frozen so
+  unload→remove, remove→unload and stale replacement callbacks are all idempotent.
+  `CHUNK_LEVEL_TYPE_CHANGE` refreshes activity from `shouldTickBlocksAt`; a node cannot
+  reactivate until its BE load callback restores the live node reference. [PROBE-2]
 
 ## 5. Persistence and the no-duplication rule
 
@@ -237,7 +359,8 @@ for topology-level state (and later breaker/fuse settings) plus a read-only
 `lastKnownStored` shadow used for diagnostics of frozen regions. SavedData NEVER writes
 charge back into a loaded BE: on BE load the BE value wins unconditionally and the shadow
 is refreshed from it. Charge mutates only on the server thread, only on active nodes,
-only inside the allocator / `depositSurge`. Conservation
+through own-node normal API calls, the allocator, `depositSurge`, or intentional-removal
+venting. Unload/freeze never vents. Conservation
 (`Σafter = Σbefore + produced − consumed − vented`) is property-tested, so duplication is
 structurally impossible. The player-visible PWR contract ("node charge survives unload/
 reload/restart") is satisfied via BE NBT; topology/settings survive via SavedData.
@@ -247,14 +370,16 @@ BE layer (versioned, actual 1.21.9 interfaces):
 ```java
 @Override protected void saveAdditional(ValueOutput output) {
     super.saveAdditional(output);
-    output.putInt("cg_version", 1);
-    output.putLong("cg_stored", stored);
+    ValueOutput state = output.child("cuprum_state");
+    state.putInt("cuprum_schema", 1);
+    state.putLong("charge", buffer.stored());
 }
 @Override protected void loadAdditional(ValueInput input) {
     super.loadAdditional(input);
-    int v = input.getIntOr("cg_version", 0);          // 0 = pre-Cg data -> stored 0
-    if (v > 1) Cuprum.LOGGER.warn("cg_version {} from newer Cuprum; best-effort read", v);
-    stored = ChargeMath.clamp(input.getLongOr("cg_stored", 0L), 0L, capacity());
+    ValueInput state = input.childOrEmpty("cuprum_state");
+    int v = state.getIntOr("cuprum_schema", 0);
+    if (v > 1) Cuprum.LOGGER.warn("cuprum_schema {} from newer Cuprum; best-effort read", v);
+    buffer.setStored(ChargeMath.clamp(state.getLongOr("charge", 0L), 0L, capacity()));
 }
 ```
 
@@ -264,24 +389,34 @@ Forward-compat rule: unknown keys written by newer versions are lost on next sav
 SavedData layer:
 
 ```java
-public final class ChargeGraphSavedData extends SavedData {
-    public static final int SCHEMA_VERSION = 1;
-    record NodeRecord(long posKey, int roleMask, int priority, long lastKnownStored) {
-        static final Codec<NodeRecord> CODEC = RecordCodecBuilder.create(...);
+public final class ChargeGraphSavedData extends CuprumSavedData {
+    public record NodeRecord(long posKey, int roleMask, int priority, long lastKnownStored) {
+        public NodeRecord {
+            roleMask &= Roles.ALL;
+            priority = ChargePriority.fromOrdinal(priority).ordinal();
+            lastKnownStored = Math.max(0L, lastKnownStored);
+        }
     }
-    public static final Codec<ChargeGraphSavedData> CODEC = RecordCodecBuilder.create(i -> i.group(
-            Codec.INT.optionalFieldOf("schema_version", 1).forGetter(d -> d.schemaVersion),
+    private static final Codec<ChargeGraphSavedData> BODY_CODEC = RecordCodecBuilder.create(i -> i.group(
             NodeRecord.CODEC.listOf().fieldOf("nodes").forGetter(d -> d.nodes),
             Codec.LONG.optionalFieldOf("vented_total", 0L).forGetter(d -> d.ventedTotal)
         ).apply(i, ChargeGraphSavedData::new));
+    public static final Codec<ChargeGraphSavedData> CODEC =
+        versionedCodec("cuprum_charge_graph", 1, BODY_CODEC);
     public static final SavedDataType<ChargeGraphSavedData> TYPE =
         new SavedDataType<>("cuprum_charge_graph", ChargeGraphSavedData::new, CODEC,
-            DataFixTypes.SAVED_DATA_RANDOM_SEQUENCES);   // [PROBE-3]
+            null);                                      // Fabric passthrough; [PROBE-3]
 }
 // access: level.getDataStorage().computeIfAbsent(ChargeGraphSavedData.TYPE)
 ```
 
-Schema migration happens inside the codec (dispatch on `schema_version`), not via DFU.
+Schema migration happens inside the codec, not via DFU. Explicit schema 0 is the
+field-compatible pre-validation format and migrates to 1 before canonical repair.
+Decoded and manager-produced records are normalized identically: unknown role bits
+are masked off, invalid priority defaults to `MISC`, stored shadows and
+`vented_total` floor at 0, records sort by signed `posKey`, and the last occurrence
+of a duplicate position wins. Future versions warn once and decode best-effort
+through the same normalization; syntactically invalid payloads return a codec error.
 
 ## 6. Threading, diagnostics, budgets
 
@@ -339,29 +474,36 @@ Imports `charge.core` only. Seeded `@ParameterizedTest` over `new Random(seed)`
   stored unchanged.
 - `IncrementalRebuildEquivalenceTest`: random add/remove sequences — incremental
   component partition equals from-scratch flood fill; budgeted rebuild converges.
+- `SharedStorageBudgetTest`: API→graph and graph→API for normal insert/extract,
+  game-tick boundary reset (including long wrap) and surge isolation.
+- `RelayEpochRolloverTest`: relay routing at `Integer.MAX_VALUE` and after wrapped
+  negative epoch recovery.
 
-### Fabric server GameTests — `src/gametest/.../gametest/charge/CgFoundationGameTest.java`
+### Fabric server GameTests — `src/gametest/.../gametest/charge/{ChargeGraphGameTest,ChargeLifecycleGameTest,ChargeSavedDataGameTest}.java`
 
 `@GameTest(maxTicks = 200)` where needed; state-only assertions (no HUD/GUI vocabulary):
 
 - `cgSourceFillsCell`: source 50 Cg/t + cell; after exactly 20 ticks the cell holds
   exactly 1,000 Cg (`assertValueEqual`).
 - `cgPriorityBrownout`: source + DEFENSE sink + MISC sink at 50% supply → 100% / 0.
-- `cgSplitOnBreak`: source–cell–cell chain; `destroyBlock` the middle → two network ids,
-  topology version bumped, ΣCg conserved.
+- `cgSplitOnBreak`: source–cell–cell chain; `destroyBlock` the middle → its stored Cg
+  vents once, two network ids, topology version bumped, survivor conserved.
 - `cgSurgeOverflow`: `depositSurge(270_000)` into a 20,000-cap cell → stored == 20,000,
   vented == 250,000 recorded, never negative.
 - `cgPersistenceRoundtrip`: set cell to 12,345 Cg; round-trip via
   `new ProblemReporter.ScopedCollector(...)` + `TagValueOutput.createWithContext(collector,
   helper.getLevel().registryAccess())` → fresh BE
-  `loadWithComponents(TagValueInput.create(...))` → 12,345 survives and `cg_version == 1`.
+  `loadCustomOnly(TagValueInput.create(...))` → 12,345 survives and
+  `cuprum_state.cuprum_schema == 1`.
 - `cgProbeReportsNode`: probe adjacent to a cell; `ChargeProbeReport.format(...)` contains
   the stored value and network id; `useBlock` must not throw.
-- `cgSolverBudget1000Nodes`: 1,000-node grid, 100 ticks; assert avg ≤1.0 ms (CI-soft) and
-  log actual vs the 0.15 ms target.
-- Chunk-freeze realism is covered by restart persistence in `./scripts/server_smoke.sh`
-  (gametest structures cannot unload chunks); the freeze path itself is covered by
-  `FreezeIsolationTest` via `setActive`.
+- `ChargeLifecycleGameTest`: invokes the registered BE/chunk listener invokers for
+  remove→unload and unload→remove, stale callbacks, level-type change,
+  freeze/reactivate, stored shadow, persisted removal vent and no phantom transfer.
+- `ChargeSavedDataGameTest`: non-empty codec round-trip, malformed values/types,
+  future schema, schema 0 and duplicate-position policy.
+- `SolverBudgetTest` (JUnit, D8): 1,000 synthetic nodes, 100 ticks; assert avg ≤1.0 ms
+  and log actual vs the 0.15 ms target.
 
 ### Client GameTest (optional, keeps client_smoke green)
 
@@ -376,8 +518,9 @@ One screenshot test placing cell + probe via
 | `src/main/java/dev/cuprum/cuprum/charge/**` (new) | owns |
 | `src/gametest/.../gametest/charge/**` + harness entrypoint (new) | owns |
 | `src/test/java/dev/cuprum/cuprum/charge/**` (new) | owns |
-| `ChargeProbeBlock.java` (append report), `Cuprum.java` (one `ChargeGraphManager.init()` line), `src/gametest/resources/fabric.mod.json` (add `"main"` entrypoint) | owns, minimal diffs |
-| `catalog/**`, `docs/feature-concepts/**` (digest-sealed), `CuprumBlocks/Items/CreativeTabs`, `UserContracts`, `build.gradle`, datagen outputs | must NOT touch |
+| `ChargeProbeBlock.java` (append report), `Cuprum.java` (one `ChargeModule.init()` line), `src/gametest/resources/fabric.mod.json` (add `"main"` entrypoint) | owns, minimal diffs |
+| `build.gradle` (hermetic `runGameTest` world cleanup plus explicit preserve opt-in only, as authorized by `FOUNDATION_PLAN.md` §4-W1B) | owns, minimal reviewed diff |
+| `catalog/**`, `docs/feature-concepts/**` (digest-sealed), `CuprumBlocks/Items/CreativeTabs`, `UserContracts`, datagen outputs | must NOT touch |
 
 Team dependencies:
 
@@ -390,20 +533,20 @@ Team dependencies:
   `registerForBlocks` delegation).
 - **U04:** consumes `depositSurge`; extends `LightningRodBlock` for scripted strikes;
   natural-strike attraction needs POI insertion (PROBE-4, U04-owned).
-- **Config:** constants ship as `ChargeBalance` static defaults in W1; `cuprum-common.json5`
-  wiring via Cloth Config is a separate task (PROBE-5). Gametests read the same constants.
+- **Config:** `ChargeBalance` is the thin typed accessor over the W1A-owned
+  `CuprumCommonConfig.charge` section; its field initializers hold the INDEX defaults and
+  GameTests read that same config object (PROBE-5).
 
 ## 10. Compile/runtime probes (must be verified during implementation)
 
 1. **PROBE-1** `BlockApiLookup<ChargeNode, @Nullable Direction>` typing — trivial compile
    check (pattern proven by the Fabric energy API).
 2. **PROBE-2** `ServerBlockEntityEvents.BLOCK_ENTITY_LOAD/UNLOAD` ordering relative to
-   `ServerChunkEvents` — runtime gametest assertion.
-3. **PROBE-3** `DataFixTypes` for the modded `SavedDataType`: `null` NPEs on the first
-   post-restart read (verified in `DimensionDataStorage.readTagFromDisk`). Recommended:
-   `DataFixTypes.SAVED_DATA_RANDOM_SEQUENCES` (vanilla fixers pass foreign keys through);
-   versioning lives in our codec. Verify by running `./scripts/server_smoke.sh` twice
-   against the same world dir — the second boot must re-read `cuprum_charge_graph`.
+   `ServerChunkEvents` — production-listener GameTests cover both removal/unload
+   orderings, chunk unload/load and level-type changes.
+3. **PROBE-3** `DataFixTypes` for the modded `SavedDataType`: pass `null`; Fabric's
+   object-builder mixin bypasses vanilla DFU for mod data and versioning lives in our
+   codec. `scripts/server_restart_probe.sh` proves a fresh-JVM disk re-read.
 4. **PROBE-4** (U04-owned) POI attraction for natural strikes: `PoiTypes.registerBlockStates`
    is private → access widener or mixin required for capture rods to attract like vanilla
    rods; scripted-strike gametests do not need it.
@@ -416,7 +559,8 @@ Team dependencies:
 ./gradlew lint                                            # -Xlint -Werror across all six source sets
 ./gradlew test --tests "dev.cuprum.cuprum.charge.*"       # JUnit property suite
 ./gradlew check build                                     # catalog validation + parity + unit tests + server GameTests + jar
-./gradlew runGameTest                                     # headless server GameTests alone
-./scripts/server_smoke.sh && ./scripts/server_smoke.sh    # PROBE-3: second boot re-reads cuprum_charge_graph SavedData
+./gradlew runGameTest                                     # hermetic: deletes build/run/gameTest/world first
+./gradlew runGameTest -Pcuprum.preserveGameTestWorld=true # explicit restart/preservation mode
+./scripts/server_restart_probe.sh                         # PROBE-3: fresh-JVM non-empty disk re-read
 ./scripts/client_smoke.sh                                 # client GameTest + screenshots + log error scan
 ```

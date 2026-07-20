@@ -310,3 +310,112 @@ void submitModelPart(ModelPart modelPart, PoseStack poseStack, RenderType render
   `computeOnServer(...)`; network packets are synchronized per tick (a `waitTicks(1)` is enough
   for a C2S/S2C leg each way). `/op` is a dedicated-server-only command — op the singleplayer
   gametest player via `runOnServer(server -> server.getPlayerList().op(player.nameAndId()))`.
+
+## Charge graph (W1B; compile-pinned by `charge/**`, runtime-pinned by `ChargeGraphGameTest` + `scripts/server_restart_probe.sh`)
+
+### Block API lookup (fabric-api-lookup-api-v1 1.6.106+d17682157d)
+
+- `BlockApiLookup.get(ResourceLocation, Class<A>, Class<C>)` returns the singleton lookup for
+  `(id, apiClass, contextClass)` (re-`get` with different classes throws). Registration:
+  `registerForBlockEntity(BiFunction<? super T, C, @Nullable A>, BlockEntityType<T>)` (also
+  `registerForBlocks`, `registerSelf(BlockEntityType<?>...)` — the latter requires the BE to
+  implement the API and bypasses the side gate, so Cuprum uses the BiFunction form to honor
+  `canConnect(side)`). Query: `@Nullable A find(Level, BlockPos, C context)`.
+- **`find` CAN load chunks** (correction of the earlier claim): the pinned
+  `BlockApiLookupImpl.find(Level, BlockPos, @Nullable BlockState, @Nullable BlockEntity, C)`
+  fills a null state via `Level.getBlockState(pos)` → `Level.getChunk(secX, secZ)` and a null
+  BE (when `state.hasBlockEntity()`) via `Level.getBlockEntity(pos)` →
+  `Level.getChunkAt(pos).getBlockEntity(...)` — both are chunk-REQUIRED paths that load (or
+  generate) an absent chunk. When state AND BE are passed in, `find` performs **no world
+  query** at all. The manager therefore (a) guards `notifyNodeAdded(BlockPos)` with
+  `Level.isLoaded(pos)` — which only asks `getChunkSource().hasChunk(...)`, never loading —
+  and (b) uses the 5-arg overload with the state/BE already delivered by the lifecycle event
+  (`registerNode`); `cgLookupNeverLoadsChunks` proves the far-unloaded-position no-op at
+  runtime. `ChargeApi.NODE` context is `Direction` (nullable = any side).
+- Lookups are thread-agnostic containers, but Cuprum documents `ChargeApi.NODE` as
+  **server-thread-only** and every `ChargeGraphManager` entrypoint asserts
+  `MinecraftServer.isSameThread()` (throws `IllegalStateException("Cg: off-thread access")`).
+
+### Server lifecycle events used by the graph (fabric-lifecycle-events-v1 2.6.9+33df5e6e7d)
+
+- `ServerBlockEntityEvents.BLOCK_ENTITY_LOAD` / `BLOCK_ENTITY_UNLOAD`: callbacks
+  `onLoad/onUnload(BlockEntity, ServerLevel)`. **Disk-path ordering (correction of the earlier
+  claim)**: in the pinned sources the disk path loads BE data BEFORE the event —
+  `LevelChunk.promotePendingBlockEntity` → `BlockEntity.loadStatic` calls
+  `blockEntity.loadWithComponents(...)` first and only then `addAndRegisterBlockEntity` →
+  `setBlockEntity`, whose `Map.put` is where Fabric's `WorldChunkMixin` fires LOAD. The
+  earlier text wrongly attributed a pre-data registration to `promotePendingBlockEntity`.
+  HOWEVER, Fabric's public javadoc still warns "its data might not be loaded yet, so don't
+  rely on it" without pinning callers or ordering (LOAD also fires from every other
+  `setBlockEntity` caller, e.g. placement), so the conservative behavior stands: only topology
+  is registered on LOAD — stored Cg is pulled lazily by the allocator once the BE is live.
+  **UNLOAD also fires after explicit removal** (`LevelChunk.removeBlockEntity` →
+  `onBlockEntityRemove`), i.e. after `preRemoveSideEffects` already reported the removal — the
+  manager's unload handler must be (and is) an idempotent no-op then. Explicit removal vents
+  the live stored value or frozen shadow exactly once; unload only snapshots/freezes. The
+  manager retains the source-BE identity token while frozen and refuses to act
+  when the unloading BE instance is not the tracked SOURCE BlockEntity of the node (identity
+  captured at registration, independent of the lookup/API object) — so a stale unload of ANY
+  replaced BE at the position, charge node or not, is a no-op.
+- `ServerChunkEvents.CHUNK_LOAD` (`(ServerLevel, LevelChunk)`), `CHUNK_UNLOAD`, and
+  `CHUNK_LEVEL_TYPE_CHANGE` (`(ServerLevel, LevelChunk, FullChunkStatus oldLevelType,
+  FullChunkStatus newLevelType)` — fires on promotion/demotion across `ENTITY_TICKING`): the
+  ONLY places the manager queries `ServerLevel.shouldTickBlocksAt(long chunkPosKey)` (no
+  per-tick polling). `ChunkPos.asLong(BlockPos)` maps node positions to chunk keys.
+- `ServerTickEvents.END_WORLD_TICK` (`(ServerLevel)`) drives the per-level pipeline: budgeted
+  rebuild (max 1024 visits) → allocator pass → SavedData snapshot if meaningfully changed.
+  `ServerWorldEvents.LOAD/UNLOAD` + `ServerLifecycleEvents.SERVER_STOPPED` create/drop per-level
+  managers (no state outlives its server).
+
+### Block entity persistence & removal (1.21.9 Mojmap)
+
+- BE disk I/O is `ValueInput`/`ValueOutput` only: `protected void saveAdditional(ValueOutput)`,
+  `protected void loadAdditional(ValueInput)`; public test/tooling wrappers `saveCustomOnly
+  (ValueOutput)` / `loadCustomOnly(ValueInput)`. `ValueOutput.child(String)` creates the
+  `cuprum_state` envelope child; `ValueInput.childOrEmpty(String)`, `getIntOr`, `getLongOr`
+  read it back with defaults (hostile values clamped by the BE, plan D5).
+- `BlockEntity.preRemoveSideEffects(BlockPos, BlockState)` is the 1.21.9 explicit-removal hook
+  (called from `Block.affectNeighborsAfterRemoval` paths before the BE leaves the chunk);
+  override it (call `super`) to report `notifyNodeRemoved` — the following UNLOAD event is the
+  idempotent-no-op case above. `BlockEntityType.getKey(BlockEntityType<?>)` (static) yields the
+  registry id for warn-once logging.
+- Real-tag round-trips in tests: `new ProblemReporter.ScopedCollector(Logger)` (AutoCloseable) +
+  `TagValueOutput.createWithContext(ProblemReporter, HolderLookup.Provider)` →
+  `CompoundTag buildResult()`, and `TagValueInput.create(ProblemReporter, HolderLookup.Provider,
+  CompoundTag)`; `CompoundTag.getCompoundOrEmpty/getIntOr/getLongOr` for envelope assertions.
+- Harness BE registration uses
+  `FabricBlockEntityTypeBuilder.create(Factory<T>, Block...).build()` (fabric-object-builder);
+  one `BlockEntityType` may span several blocks (DEFENSE/MISC sink variants of one type).
+
+### Commands (`/cuprum cg`, permission level 2)
+
+- `CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> ...)`
+  (fabric-command-api-v2); build with `Commands.literal(...)` / `Commands.argument(...)`,
+  gate with `.requires(source -> source.hasPermission(2))`.
+- `BlockPosArgument.blockPos()` + `BlockPosArgument.getBlockPos(context, "pos")` — the plain
+  getter does **not** throw `CommandSyntaxException` (only `getLoadedBlockPos` adds the
+  loaded/in-bounds checks, which would contradict the "never loads chunks" contract; the
+  manager's in-memory `nodeReport` lookup is used instead so unknown/unloaded positions just
+  report "no node").
+
+### GameTest facts (charge)
+
+- `GameTestHelper.getBlockEntity(BlockPos, Class<T>)` is the 1.21.9 typed accessor (throws on
+  wrong type — no manual casting); `onEachTick(Runnable)` runs every tick until success —
+  combined with `succeedWhen(Runnable)` it pins exact-tick invariants. All exact-tick charge
+  assertions are anchored to `ChargeGraphManager.allocatorTicks()` (allocator passes), never to
+  GameTest tick offsets: the counter and the allocation mutate together in END_WORLD_TICK, so
+  every observation sees a consistent (passes, stored) pair regardless of when in the tick the
+  test's own tick callback runs.
+- Event invokers let `ChargeLifecycleGameTest` drive the real registered BE and chunk listeners
+  deterministically: both removal/unload orders, stale replacement callbacks, chunk
+  unload/load, `CHUNK_LEVEL_TYPE_CHANGE`, shadow retention, reactivation and no phantom transfer.
+- `SavedDataType` DataFixTypes stays `null` for `cuprum_charge_graph` (plan D1; see the W1A
+  persistence section — Fabric's `PersistentStateManagerMixin` passes the NBT through). The
+  restart probe extends to the charge graph: boot 1 must log the anchored
+  `[charge] cuprum_charge_graph created dim=... nodes=... vented_total=...` line and leave
+  `world/data/cuprum_charge_graph.dat` on disk; the probe replaces that empty initial snapshot
+  with a valid one-node/678-Cg fixture. Boot 2 (preserved world) must log exactly
+  `nodes=1 vented_total=678` in the `re-read` variant (only ever logged when
+  `DimensionDataStorage.get` parsed a non-null instance from disk) and no `created` line;
+  fresh boot 3 must be back to `created`.

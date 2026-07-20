@@ -36,11 +36,6 @@ public final class Versioned {
         return new VersionedCodec<>(domain, currentVersion, currentCodec, steps);
     }
 
-    /** Test hook: forgets the WARN-once bookkeeping for a domain. */
-    public static void resetForwardVersionWarningsForTesting(String domain) {
-        FORWARD_VERSION_WARNED.remove(domain);
-    }
-
     private static final class VersionedCodec<T> implements Codec<T> {
         private final String domain;
         private final int currentVersion;
@@ -58,7 +53,8 @@ public final class Versioned {
         @Override
         public <U> DataResult<Pair<T, U>> decode(DynamicOps<U> ops, U input) {
             Dynamic<U> dynamic = new Dynamic<>(ops, input);
-            int stored = dynamic.get(CuprumSchema.SAVED_DATA_VERSION_KEY).asInt(1);
+            int stored = Math.max(0,
+                    dynamic.get(CuprumSchema.SAVED_DATA_VERSION_KEY).asInt(1));
             if (stored > currentVersion) {
                 if (FORWARD_VERSION_WARNED.add(domain)) {
                     Cuprum.LOGGER.warn(
@@ -67,9 +63,15 @@ public final class Versioned {
                 }
                 stored = currentVersion;
             }
+            int migrationStart = stored;
             Dynamic<?> migrated = dynamic;
-            for (int version = stored; version < currentVersion; version++) {
-                migrated = steps.apply(version).apply(migrated);
+            try {
+                for (int version = stored; version < currentVersion; version++) {
+                    migrated = steps.apply(version).apply(migrated);
+                }
+            } catch (RuntimeException exception) {
+                return DataResult.error(() -> "Failed to migrate " + domain + " schema "
+                        + migrationStart + " to " + currentVersion + ": " + exception.getMessage());
             }
             // Steps keep the DynamicOps they were handed (pure value rewrites), so the value is
             // still a U; Dynamic erases that link, hence the localized cast.

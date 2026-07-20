@@ -4,10 +4,13 @@ Status: **BINDING**. This plan reconciles the five W1 concept briefs
 (`charge.md`, `multiblock-machine.md`, `net-state.md`, `client-fx.md`,
 `handbook-config.md`) against the committed CP0B tree and the pinned 1.21.9
 sources in `.gradle/loom-cache/`. Where a brief conflicts, **this plan wins**;
-the briefs remain concept records and are not edited. No catalog or concept-doc
-change happens in W1 (`verifyConceptParity` digest untouched). All W1 blocks are
-diagnostics infrastructure with **no catalog entries** (Charge Probe precedent)
-— diagnostics are infrastructure, not features.
+however, a reviewed implementation/evaluation fix loop may explicitly re-baseline
+the affected foundation brief to the accepted repair. That reviewed re-baseline
+governs the repaired point alongside this plan; unresolved conflicts still defer
+to this plan. This exception never authorizes catalog or `docs/feature-concepts/**`
+edits: no catalog/concept-doc change happens in W1 (`verifyConceptParity` digest
+untouched). All W1 blocks are diagnostics infrastructure with **no catalog
+entries** (Charge Probe precedent) — diagnostics are infrastructure, not features.
 
 Verification evidence below was read from the decompiled Mojmap sources and the
 remapped Fabric API 0.134.1 module sources (the `docs/API_PROBES.md` discipline).
@@ -29,7 +32,8 @@ remapped Fabric API 0.134.1 module sources (the `docs/API_PROBES.md` discipline)
 - Verified that Fabric itself relies on this: data-attachment-api-v1
   `ServerWorldMixin` constructs its own `SavedDataType<>(…, null)` with the
   comment "Object builder API 12.1.0 and later makes this a no-op".
-- `DataFixTypes.SAVED_DATA_RANDOM_SEQUENCES` (charge.md §5) is **REJECTED**: it
+- The original proposal to use `DataFixTypes.SAVED_DATA_RANDOM_SEQUENCES` is
+  **REJECTED**: it
   runs `fixer.update(References.SAVED_DATA_RANDOM_SEQUENCES, …)` over foreign
   Cuprum NBT on every load whose stamped DataVersion differs from current —
   unverifiable against future vanilla fixers and semantically wrong. Never apply
@@ -59,8 +63,8 @@ remapped Fabric API 0.134.1 module sources (the `docs/API_PROBES.md` discipline)
   client-fx.md §8's Gson `config/cuprum-client.json` is **REJECTED**; FX's
   `TierCap`/`flashScale`/`colorblindMode` become fields of the config-module
   `CuprumClientConfig` (§3.3), read through `FxTierPolicy`.
-- charge.md §9 "`ChargeBalance` static defaults, config wiring later" is
-  superseded: `ChargeBalance` is a thin typed accessor over
+- The original "`ChargeBalance` static defaults, config wiring later" proposal
+  is superseded: `ChargeBalance` is a thin typed accessor over
   `CuprumCommonConfig.charge`; code defaults are the INDEX literals. GameTests
   read the same config object (INDEX vocabulary contract).
 - FX **budget literals** (`FxBudgets`: 16 ripples, 128 verts/ripple, particle
@@ -167,6 +171,15 @@ remapped Fabric API 0.134.1 module sources (the `docs/API_PROBES.md` discipline)
   no-duplication authority rule are adopted exactly as charge.md §3–§5 (BE NBT
   authoritative for stored Cg; SavedData holds topology + read-only shadow,
   never writes charge back into a loaded BE).
+- The frozen role-mutation contract returns the **actual applied amount** from
+  producer drain, consumer accept, storage insert/extract/surge and absorber
+  accept; conservation and every throughput counter use only those returns.
+  Normal graph and external storage calls share one lazy game-tick insert/extract
+  budget in either order. Surge storage is an explicit capacity-only path and
+  remains subject to relay/absorber limits.
+- Intentional removal vents the removed node's live stored value or frozen shadow
+  exactly once and persists the delta. BE/chunk unload only freezes and snapshots;
+  source identity makes both event orderings and stale callbacks idempotent.
 
 ### D8 — Solver budget test placement
 `cgSolverBudget1000Nodes` as a GameTest is **REJECTED** (1,000 placed blocks
@@ -295,6 +308,10 @@ widget state), recorded in the phase commit message.
   (W1B: `schema_version`, `nodes` list of `NodeRecord(posKey, roleMask,
   priority, lastKnownStored)`, `vented_total` long). Authority rule: SavedData
   never writes charge into a loaded BE; BE value wins, shadow refreshed from it.
+  Charge records mask unknown role bits, default invalid priority to `MISC`, floor
+  stored shadows/vent totals at 0, sort by signed position and use last-record-wins
+  for duplicate positions. Explicit schema 0 migrates to 1; future schemas are
+  best-effort normalized and syntactic codec errors remain errors.
 - **Attachments:** all constants in `CuprumAttachments`. W1E:
   `HANDBOOK_UNLOCKS` = sorted `Set<ResourceLocation>` codec, `persistent`,
   `copyOnDeath`, `initializer`, `syncWith(streamCodec, targetOnly())`. Synced
@@ -422,18 +439,25 @@ Eval-A** → **Fable Eval-B** → fix loop (re-run both evals after fixes) →
   `NodeReport` via pure `ChargeProbeReport.format`), `Cuprum.java` +1 line,
   `gametest/resources/fabric.mod.json` `"main"` entrypoint + harness package
   `gametest/.../harness/**`, `gametest/.../gametest/charge/**`,
-  `test/.../charge/**`, `scripts/server_restart_probe.sh` (+ require
-  `cuprum_charge_graph` re-read log), `docs/API_PROBES.md` append.
+  `test/.../charge/**`, `build.gradle` (hermetic `runGameTest` world cleanup;
+  explicit `-Pcuprum.preserveGameTestWorld=true` restart mode),
+  `scripts/server_restart_probe.sh` (+ require a non-empty
+  `cuprum_charge_graph` re-read), `docs/API_PROBES.md` append.
 - **Config:** reads `CuprumCommonConfig.charge` via `ChargeBalance` accessor.
 - **Unit tests (≥30, seeded):** `ChargeMathTest` (incl. PWR-14 pins 84%/96%),
   `ChargeBufferTest`, `AllocationConservationTest`, `AllocationDeterminismTest`
   (insertion-order permutations), `PriorityBrownoutTest`, `FreezeIsolationTest`,
-  `IncrementalRebuildEquivalenceTest`, `SolverBudgetTest` (D8).
+  `IncrementalRebuildEquivalenceTest`, `SharedStorageBudgetTest` (both call
+  orders, tick boundary, surge isolation), `RelayEpochRolloverTest`,
+  `SolverBudgetTest` (D8).
 - **Server GameTests (≥6):** `cgSourceFillsCell` (20 ticks ⇒ exactly 1,000 Cg),
-  `cgPriorityBrownout` (100%/0 at 50% supply), `cgSplitOnBreak` (two network
-  ids, ΣCg conserved), `cgSurgeOverflow` (270,000 into 20,000 cap ⇒ vented
+  `cgPriorityBrownout` (100%/0 at 50% supply), `cgSplitOnBreak` (removed stored
+  Cg vents once; two network ids; survivor conserved),
+  `cgSurgeOverflow` (270,000 into 20,000 cap ⇒ vented
   250,000), `cgPersistenceRoundtrip` (`TagValueOutput/TagValueInput`, envelope
-  keys per §3.1), `cgProbeReportsNode`.
+  keys per §3.1), `cgProbeReportsNode`; plus production-listener lifecycle
+  order/freeze/reactivation/no-phantom-transfer coverage and non-empty,
+  malformed/schema-0/future/duplicate SavedData codec coverage.
 - **Runtime probes:** PROBE-2 (BE load/unload vs chunk events ordering,
   gametest-asserted). PROBE-4 (POI widener) is U04-owned, not W1.
 - **Commit:** `feat(cuprum): W1B charge graph foundation`

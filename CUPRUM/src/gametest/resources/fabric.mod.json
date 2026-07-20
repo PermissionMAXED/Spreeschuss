@@ -7,10 +7,14 @@
   "environment": "*",
   "entrypoints": {
     "main": [
-      "dev.cuprum.cuprum.gametest.CuprumGametestInit"
+      "dev.cuprum.cuprum.gametest.CuprumGametestInit",
+      "dev.cuprum.cuprum.gametest.harness.ChargeHarnessInit"
     ],
     "fabric-gametest": [
       "dev.cuprum.cuprum.gametest.ChargeProbeGameTest",
+      "dev.cuprum.cuprum.gametest.charge.ChargeGraphGameTest",
+      "dev.cuprum.cuprum.gametest.charge.ChargeLifecycleGameTest",
+      "dev.cuprum.cuprum.gametest.charge.ChargeSavedDataGameTest",
       "dev.cuprum.cuprum.gametest.config.ConfigGameTest",
       "dev.cuprum.cuprum.gametest.net.DiagEchoCodecFuzzGameTest",
       "dev.cuprum.cuprum.gametest.net.GuardLazinessGameTest",

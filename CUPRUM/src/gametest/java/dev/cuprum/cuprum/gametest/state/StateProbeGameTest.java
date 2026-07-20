@@ -3,7 +3,6 @@ package dev.cuprum.cuprum.gametest.state;
 import dev.cuprum.cuprum.state.CuprumSchema;
 import dev.cuprum.cuprum.state.StateProbe;
 import dev.cuprum.cuprum.state.StateProbeSavedData;
-import dev.cuprum.cuprum.state.Versioned;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -119,15 +118,11 @@ public class StateProbeGameTest {
                 .encodeStart(NbtOps.INSTANCE, data)
                 .getOrThrow();
         encoded.putInt(CuprumSchema.SAVED_DATA_VERSION_KEY, CuprumSchema.WORLD + 99);
-        try {
-            StateProbeSavedData decoded = StateProbeSavedData.CODEC
-                    .parse(NbtOps.INSTANCE, encoded)
-                    .getOrThrow();
-            helper.assertValueEqual(data.boots(), decoded.boots(),
-                    Component.literal("boots read best-effort from a forward version"));
-        } finally {
-            Versioned.resetForwardVersionWarningsForTesting(StateProbeSavedData.ID);
-        }
+        StateProbeSavedData decoded = StateProbeSavedData.CODEC
+                .parse(NbtOps.INSTANCE, encoded)
+                .getOrThrow();
+        helper.assertValueEqual(data.boots(), decoded.boots(),
+                Component.literal("boots read best-effort from a forward version"));
         helper.succeed();
     }
 }

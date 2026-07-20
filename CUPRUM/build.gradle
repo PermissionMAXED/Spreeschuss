@@ -60,6 +60,23 @@ fabricApi {
     }
 }
 
+// GameTests are hermetic by default: stale structures/SavedData from an earlier run must not
+// change discovery counts or listener behavior. The explicit preserve property exists only for
+// restart/persistence probes that intentionally need the same world across JVMs.
+def preserveGameTestWorld = providers.gradleProperty('cuprum.preserveGameTestWorld')
+        .map { it.toBoolean() }
+        .orElse(false)
+def cleanGameTestWorld = tasks.register('cleanGameTestWorld', Delete) {
+    delete layout.buildDirectory.dir('run/gameTest/world')
+    onlyIf { !preserveGameTestWorld.get() }
+}
+tasks.named('runGameTest') {
+    dependsOn cleanGameTestWorld
+}
+tasks.named('deleteGameTestRunDir') {
+    onlyIf { !preserveGameTestWorld.get() }
+}
+
 // Plain-Java tool that validates the content catalog and generates CuprumCatalog.java.
 // Kept inside the project (no included build / buildSrc) for reliability; it has no
 // Minecraft dependencies.

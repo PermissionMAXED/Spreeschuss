@@ -13,6 +13,9 @@ this directory (`CUPRUM/`).
   (`src/test`), catalog validation and **headless server GameTests** (`runGameTest`
   is wired into `check`), then builds the remapped jar. `.cache` is excluded from
   both `jar` and `sourcesJar`.
+- Standalone `./gradlew runGameTest` is hermetic and deletes
+  `build/run/gameTest/world` before each normal run. Only restart probes should opt
+  into `-Pcuprum.preserveGameTestWorld=true`.
 - `./gradlew runDatagen` — regenerates `src/main/generated` (those files are committed;
   keep them in sync). `./scripts/datagen_determinism.sh` runs it twice and compares.
 - `./scripts/server_smoke.sh` — dedicated-server boot to `Done` + clean console stop
