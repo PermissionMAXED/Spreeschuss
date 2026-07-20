@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "orientation_mode": "any_horizontal",
+  "allow_mirror": false,
+  "layers": [
+    [
+      "CABBB"
+    ]
+  ],
+  "key": {
+    "C": { "block": "minecraft:iron_block" },
+    "A": { "block": "minecraft:polished_andesite" },
+    "B": { "block": "minecraft:stone_bricks" }
+  },
+  "controller": "C"
+}

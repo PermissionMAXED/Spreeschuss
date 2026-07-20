@@ -172,6 +172,7 @@ test {
     useJUnitPlatform()
     systemProperty 'cuprum.catalogDir', file('catalog').absolutePath
     systemProperty 'cuprum.conceptDocsDir', file('docs/feature-concepts').absolutePath
+    systemProperty 'cuprum.mainResourcesDir', file('src/main/resources').absolutePath
 }
 
 java {

@@ -1,4 +1,11 @@
 {
   "block.cuprum.charge_probe": "Charge Probe",
+  "block.cuprum.diagnostic_coil_core": "Diagnostic Coil Core",
+  "block.cuprum.diagnostic_coil_frame": "Diagnostic Coil Frame",
+  "container.cuprum.charge_machine": "Charge Machine",
+  "cuprum.charge.readout": "%s / %s Cg",
+  "cuprum.formation.fault": "Fault",
+  "cuprum.formation.formed": "Formed",
+  "cuprum.formation.unformed": "Unformed",
   "itemGroup.cuprum": "Cuprum"
 }

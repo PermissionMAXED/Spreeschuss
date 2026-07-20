@@ -1,4 +1,11 @@
 {
   "block.cuprum.charge_probe": "Ladungssonde",
+  "block.cuprum.diagnostic_coil_core": "Diagnosespulenkern",
+  "block.cuprum.diagnostic_coil_frame": "Diagnosespulenrahmen",
+  "container.cuprum.charge_machine": "Lademaschine",
+  "cuprum.charge.readout": "%s / %s Cg",
+  "cuprum.formation.fault": "Störung",
+  "cuprum.formation.formed": "Geformt",
+  "cuprum.formation.unformed": "Ungeformt",
   "itemGroup.cuprum": "Cuprum"
 }

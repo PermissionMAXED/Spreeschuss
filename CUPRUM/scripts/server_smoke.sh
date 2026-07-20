@@ -42,6 +42,8 @@ echo 'eula=true' > "$RUN_DIR/eula.txt"
     echo "server-port=$SMOKE_PORT"
     echo 'online-mode=false'
     echo 'sync-chunk-writes=false'
+    # Keep restart/lifecycle probes ticking on 1.21.9 even with no connected players.
+    echo 'pause-when-empty-seconds=-1'
 } > "$RUN_DIR/server.properties"
 
 # FIFO for the server console; created inside a private mktemp -d (no mktemp -u).
@@ -176,4 +178,6 @@ grep -q 'Stopping server' "$LOG" || fail "server did not log a clean shutdown"
 # pinned by NetShutdownClearGameTest; this proves the production event wiring end to end).
 grep -Fq '[net] per-connection state cleared (server stopped)' "$LOG" \
     || fail "SERVER_STOPPED per-connection state sweep did not run at shutdown"
+grep -Eq '\[multiblock\] cleared [0-9]+ transient level index\(es\) \(server stopped\)' "$LOG" \
+    || fail "SERVER_STOPPED multiblock index sweep did not run at shutdown"
 echo "OK: dedicated server booted to Done and stopped cleanly via console (log: $LOG)"

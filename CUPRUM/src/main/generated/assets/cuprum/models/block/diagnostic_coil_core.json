@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "cuprum:block/diagnostic_coil_core"
+  }
+}

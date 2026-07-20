@@ -1,6 +1,7 @@
 package dev.cuprum.cuprum.datagen;
 
 import dev.cuprum.cuprum.CuprumBlocks;
+import dev.cuprum.cuprum.machine.MachineContent;
 import net.fabricmc.fabric.api.datagen.v1.FabricDataOutput;
 import net.fabricmc.fabric.api.datagen.v1.provider.FabricTagProvider;
 import net.minecraft.core.HolderLookup;
@@ -15,6 +16,9 @@ public final class CuprumBlockTagProvider extends FabricTagProvider.BlockTagProv
 
     @Override
     protected void addTags(HolderLookup.Provider wrapperLookup) {
-        valueLookupBuilder(BlockTags.MINEABLE_WITH_PICKAXE).add(CuprumBlocks.CHARGE_PROBE);
+        valueLookupBuilder(BlockTags.MINEABLE_WITH_PICKAXE)
+                .add(CuprumBlocks.CHARGE_PROBE)
+                .add(MachineContent.DIAGNOSTIC_COIL_CORE)
+                .add(MachineContent.DIAGNOSTIC_COIL_FRAME);
     }
 }

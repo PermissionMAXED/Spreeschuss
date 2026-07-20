@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "orientation_mode": "controller_facing",
+  "allow_mirror": false,
+  "layers": [
+    [
+      "B",
+      "C"
+    ]
+  ],
+  "key": {
+    "C": { "block": "minecraft:furnace" },
+    "B": { "block": "minecraft:stone_bricks" }
+  },
+  "controller": "C"
+}

@@ -419,3 +419,118 @@ void submitModelPart(ModelPart modelPart, PoseStack poseStack, RenderType render
   `nodes=1 vented_total=678` in the `re-read` variant (only ever logged when
   `DimensionDataStorage.get` parsed a non-null instance from disk) and no `created` line;
   fresh boot 3 must be back to `created`.
+
+## Multiblock & charge machine (W1C; compile-pinned by `MachineApiProbe` + `MachineClientApiProbe`, runtime-pinned by `MultiblockGameTest`/`ChargeMachineGameTest`/`ChargeMachineClientGameTest`)
+
+### Resource reload (fabric-resource-loader-v1 1.6.7+0af9a1bc7d)
+
+- `SimpleJsonResourceReloadListener<T>` protected ctor `(Codec<T>, FileToIdConverter)` works
+  for mod subclasses (multiblock.md §12.1 — the `scanDirectory` fallback stays unused);
+  `apply(Map<ResourceLocation,T>, ResourceManager, ProfilerFiller)` receives only entries
+  whose codec parse SUCCEEDED — failures are logged per file and dropped, so `Codec.validate`
+  chains double as load-time schema gates. Parsing is off-thread (vanilla prepare/apply
+  split); `apply` runs on the reload thread → publish via one `volatile Map.copyOf` swap.
+- `ResourceLoader.get(PackType.SERVER_DATA).registerReloader(ResourceLocation,
+  PreparableReloadListener)` is the v1 registration (v0 `ResourceManagerHelper` is
+  `@Deprecated`); SERVER_DATA reloaders run at server start AND `/reload` — a static
+  generation counter (`MultiblockPatterns.reloadGeneration()`) lets controllers revalidate
+  after `/reload` without holding pattern references.
+- `FileToIdConverter.json("cuprum_multiblock")` lists `data/<ns>/cuprum_multiblock/*.json`
+  (bare custom dir — no `Registries.elementsDirPath` needed for non-registry data).
+
+### Pattern codecs & geometry (1.21.9 Mojmap)
+
+- `Codec.validate(Function<T, DataResult<T>>)` exists on the shipped DFU (probe 4; vanilla
+  precedent `Direction.VERTICAL_CODEC`) — every §3.1 shape rule (rectangularity, caps,
+  controller-exactly-once, undefined/unused key chars) reports through `DataResult.error`
+  with the offending char/coordinate in the message.
+- Registry-ops-free matcher codecs: `BuiltInRegistries.BLOCK.byNameCodec()` (unknown id fails
+  parse), `TagKey.codec(Registries.BLOCK)`, `Direction.CODEC`; state properties matched
+  textually against `Property.getName(value)`. Advancement `BlockPredicate.CODEC` needs
+  `RegistryOps` (HolderSet) and is deliberately NOT used → the plain-JsonOps reloader ctor
+  works.
+- Vanilla transform order is mirror FIRST, then rotate (pinned by
+  `StructureTemplate.transform(BlockPos, Mirror, Rotation, BlockPos)`); `BlockPos.rotate
+  (Rotation)` rotates around (0,0,0); `Mirror.LEFT_RIGHT.mirror(Direction)`/`Rotation.rotate
+  (Direction)` transform facings. The MC-free `PatternGeometry` mirrors these exactly —
+  `patternGeometryMatchesVanillaRotation` asserts parity at runtime, `PatternGeometryTest`
+  pins the 8-orientation literal table in JUnit. Only `Mirror.NONE`/`LEFT_RIGHT` are used
+  (LEFT_RIGHT negates local z); `Rotation.CODEC`/`Mirror.CODEC` persist orientation.
+- `Level.isLoaded(BlockPos)` guards EVERY member read (matching is anchored at the controller
+  — never a volume scan; vanilla `BlockPattern` rejected per multiblock.md §3.4: volume
+  scanning, no fault reporting, `BlockInWorld` may load chunks).
+
+### Menus, open data & screens (fabric-screen-handler-api-v1 1.3.150)
+
+- `new ExtendedScreenHandlerType<>(ChargeMachineMenu::new, ChargeMachineOpenData.STREAM_CODEC)`
+  infers the `(syncId, inventory, data)` client factory (probe 3);
+  `Registry.register(BuiltInRegistries.MENU, id, type)` accepts it (`super(null,
+  FeatureFlags.VANILLA_SET)` — no feature-flag gating). Open data:
+  `StreamCodec.composite(BlockPos.STREAM_CODEC, …, ByteBufCodecs.VAR_LONG, …, ::new)`.
+- Server side: the BE implements `ExtendedScreenHandlerFactory<D>` (`extends MenuProvider`)
+  with `D getScreenOpeningData(ServerPlayer)`; `Player.openMenu(MenuProvider) → OptionalInt`
+  sends the S2C open packet with the encoded data. Menu ctor rule: `addDataSlots
+  (ContainerData)` MUST run in the ctor (vanilla contract) — javac 21 `this-escape` +
+  `-Werror` requires `@SuppressWarnings("this-escape")` on the public ctors.
+- `ClientboundContainerSetDataPacket` writes each data-slot value as a 16-bit short
+  (`writeShort`) — hence `ShortSplit` 3×16-bit charge lanes (48-bit cap) + 1 status slot;
+  vanilla `AbstractContainerMenu.broadcastChanges` sends per-slot deltas only.
+  `stillValid(ContainerLevelAccess, Player, Block)` (protected static) enforces the vanilla
+  8-block range; `ContainerLevelAccess.NULL` is the client-ctor stand-in.
+- Client: `MenuScreens.register(MenuType<? extends M>, ScreenConstructor<M,U>)` is
+  mod-accessible via Fabric's transitive access widener (probe: `MachineClientApiProbe`);
+  duplicate registration throws `IllegalStateException` at first screen open. Texture-free
+  screens draw with `GuiGraphics.fill(x1,y1,x2,y2,argb)` + `drawString(Font, Component, x, y,
+  color, shadow)` inside `renderBg`/`renderLabels`.
+
+### Machine BE envelope & sync (extends the frozen W1B storage BE)
+
+- **`TagValueOutput.child(String)` REPLACES an existing child** (it `put`s a fresh
+  `CompoundTag`) — a subclass that needs to extend the frozen parent's `cuprum_state`
+  envelope must run `super.saveAdditional(output)` first, then rewrite the child with
+  identical schema/charge values plus its extension (`ChargeMachineBlockEntity` javadoc;
+  bytes for non-machine storages unchanged). `ValueInput.childOrEmpty`, `getByteOr`,
+  `getIntArray` (returns `Optional<int[]>`) read it back.
+- Wire vs disk (plan §3.1): `getUpdateTag(HolderLookup.Provider)` = `saveCustomOnly
+  (registries)` + transient client extras (Beacon precedent); `getUpdatePacket()` =
+  `ClientboundBlockEntityDataPacket.create(this)`; **client applies the update tag through
+  `loadAdditional`** (`loadWithComponents` path) — transient keys (`formation_state`,
+  `fault_code`, `fault_pos`) must therefore be namespaced OUTSIDE `cuprum_state` and never
+  written to disk. Sync throttle: `level.sendBlockUpdated(pos, state, state,
+  Block.UPDATE_CLIENTS)` gated by `level.getGameTime()` deltas (≥10 ticks except
+  transitions).
+- Removal/invalidations: `Block.onRemove` is GONE — member fast path overrides `onPlace` +
+  `affectNeighborsAfterRemoval(BlockState, ServerLevel, BlockPos, boolean)`; the controller
+  BE overrides `preRemoveSideEffects(BlockPos, BlockState)` (server-side, before the BE
+  leaves the chunk) to release claims. `neighborChanged(BlockState, Level, BlockPos, Block,
+  @Nullable redstone.Orientation, boolean)` exists but stays unused in W1.
+- Index lifecycle wiring (fabric-lifecycle-events-v1): `ServerChunkEvents.CHUNK_LOAD/
+  CHUNK_UNLOAD`, `ServerWorldEvents.UNLOAD`, `ServerBlockEntityEvents.BLOCK_ENTITY_UNLOAD` —
+  all registered once in `MachineModule.init()`; creative-tab append via
+  `ItemGroupEvents.modifyEntriesEvent(CuprumCreativeTabs.CUPRUM_TAB_KEY)` (plan D4 — the
+  frozen `CuprumCreativeTabs` is never edited). `BaseEntityBlock` needs `simpleCodec` +
+  `codec()` override; server-only ticker via `createTickerHelper(type, expected, ticker)`
+  returning `null` on the client.
+
+### GameTest facts (multiblock/machine)
+
+- `TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess())` /
+  `TagValueInput.create(...)` classload fine in the gametest source set (probe 5) — the
+  persistence round-trip drives `saveAdditional`/`loadAdditional` on a detached BE without
+  touching the world copy.
+- `GameTestSequence.thenWaitUntil(Runnable)` (assertion-until-pass) is the robust wait;
+  the `(long expectedDelay, Runnable)` overload demands an EXACT tick and fails when the
+  condition lands earlier — tick budgets are asserted separately via `getLevel().getGameTime()`
+  deltas captured around the wait.
+- `GameTestHelper.getTestRotation()` feeds the vanilla-parity assertions;
+  `helper.absolutePos`/`setBlock` compose with pattern `displayState(char)` to build
+  orientation variants; `destroyBlock` exercises the fast removal path, `setBlock` to a
+  vanilla block the ≤40-tick poll path.
+- Client gametest (fabric-client-gametest-api-v1 4.2.13): `context.worldBuilder().create()`
+  (try-with-resources closes the world), `getClientWorld().waitForChunksRender()`,
+  `getServer().runCommand("setblock …")` for deterministic structure builds,
+  `getInput().holdKeyFor(options -> options.keyUse, 2)` right-clicks reliably under Xvfb
+  (multiblock.md §12.8 fallback chosen over `pressMouse` aiming),
+  `waitForScreen(ChargeMachineScreen.class)`, `takeScreenshot(name)`. New client tests append
+  AFTER `CuprumClientGameTest` in `fabric-client-gametest` entrypoints so the W1A screenshot
+  numbering expected by `scripts/client_smoke.sh` is unchanged.

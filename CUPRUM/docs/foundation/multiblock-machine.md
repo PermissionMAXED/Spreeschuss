@@ -139,8 +139,10 @@ Frozen rules (enforced by `PatternShape` + `Codec.validate`, precise error messa
 - Matcher: exactly one of `block` (`BuiltInRegistries.BLOCK.byNameCodec()` — unknown id
   fails parse) or `tag` (`TagKey.codec(Registries.BLOCK)`); optional `state` map of
   property-name → value-string (textual match vs `Property.getName(value)`; unknown
-  prop/value = no match); optional `facing` (`Direction.CODEC`) — the ONLY
-  rotation/mirror-aware check (expected value transformed by orientation first).
+  prop/value = no match). `state` values are literal world-state requirements and are
+  never transformed when the pattern rotates or mirrors. Optional `facing`
+  (`Direction.CODEC`) is the ONLY rotation/mirror-aware matcher value: its expected
+  pattern-local direction is transformed by the candidate orientation first.
   No RegistryOps-dependent codecs → plain-`JsonOps` reloader ctor works.
 - Caps: each dimension ≤ 16; non-`.` cells ≤ 512; key ≤ 64; `format_version` == 1.
 - `orientation_mode`: `any_horizontal` (search 4 rotations × mirrors) or
@@ -181,10 +183,12 @@ Only `Mirror.NONE` and `Mirror.LEFT_RIGHT` are supported (LEFT_RIGHT negates loc
 ### 3.3 Matching contract
 
 Anchored at the controller position — never a volume scan. Per orientation: at most
-`memberCount` reads, each guarded by `level.isLoaded(pos)`; an unloaded member
-short-circuits that orientation with `UNLOADED`. On failure `bestFault` = fault from
-the orientation with the most matched cells (tie → earlier canonical order), so faults
-name a concrete world coordinate (shape needed later by PWR-07 slot diagnostics).
+`memberCount` reads, each guarded by `level.isLoaded(pos)`. Mismatches retain the first
+mismatch but continue scoring safely loaded cells. The first unloaded member replaces
+that orientation's fault with `UNLOADED` and immediately ends its scan: no later cell is
+read or scored. On failure `bestFault` = fault from the orientation with the most cells
+matched before completion/short-circuit (tie → earlier canonical order), so faults name
+a deterministic concrete world coordinate (shape needed later by PWR-07 slot diagnostics).
 
 ### 3.4 Vanilla `BlockPattern` disposition
 
@@ -240,9 +244,14 @@ Ownership rules (frozen):
    removal/unload. Never persisted; on load a formed controller re-registers
    *provisional claims* recomputed from persisted orientation + pattern before its
    first verification tick (enables chunk-load invalidation).
-3. Stale-claim eviction: on conflict, verify the recorded owner still holds a formed
-   controller BE (loaded-chunk check first); if not, evict and retry once.
-   Deterministic tie-break: lower `BlockPos.asLong()` wins.
+3. Every transient claim stores orthogonal origin (`PERSISTED`/`FRESH`) and `verified`
+   state. `markVerified` changes only the bit and never erases origin. On conflict:
+   `PERSISTED` beats `FRESH`; two persisted claims always use lower signed
+   `BlockPos.asLong()` regardless of verification/tick order; for two fresh claims a
+   verified owner beats a provisional challenger, otherwise the same signed-position
+   order decides.
+4. Stale-claim eviction first checks the already-loaded controller chunk and exact
+   registered BE identity via `getChunkNow`; stale owners are evicted and retried once.
 
 ### 5.2 `MultiblockControllerBehavior` (composition, NOT a BE base class)
 
@@ -285,10 +294,15 @@ State machine (server-only transitions):
   Vanilla members (waxed/oxidized copper — unhookable): the 20-tick poll catches
   changes; frozen fault-detection bound ≤ 40 ticks.
 - Chunk events mark all controllers with members in that chunk dirty (per-chunk
-  grouping); an unloaded member yields `FAULT(UNLOADED)` WITHOUT reading the chunk.
+  grouping). `CHUNK_UNLOAD` additionally transitions every affected controller whose
+  exact BE identity is already loaded to `FAULT(UNLOADED)` synchronously, even when its
+  chunk is loaded but non-ticking; claims remain retained. `CHUNK_LOAD` marks those
+  controllers for safe revalidation and later reformation.
 - No-chunkloading invariants: every world read preceded by `level.isLoaded(pos)`; no
-  `getChunk(x,z,true)`, no ticket/force-load APIs anywhere; controller logic runs only
-  from the vanilla BE ticker (only ticking chunks, `Level.shouldTickBlocksAt`).
+  `getChunk(x,z,true)`, no ticket/force-load APIs anywhere. The unload callback consults
+  only registered host identity plus the controller chunk's `getChunkNow`/local BE map;
+  it never recursively queries the unloading member chunk. Full matching/reformation
+  still runs only from the vanilla BE ticker (ticking chunks).
 
 ## 6. Charge-machine BE / menu / screen sync layer
 
@@ -445,6 +459,14 @@ Server GameTests (`MultiblockGameTest`, `ChargeMachineGameTest`):
 - `diagnosticCoilPersistenceRoundTrip` — `saveAdditional` →
   `TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess())`
   → fresh BE `loadAdditional` via `TagValueInput.create` → charge/version/orientation.
+- `MultiblockPatternReloadGameTest` positively pins tag matching, literal `state`,
+  transformed `facing`, and `controller_facing` resources through the strict reloader;
+  its boundary probe pins mixed unloaded/mismatch ranking and exact per-orientation read
+  counts after the first unloaded cell.
+- `MultiblockLifecycleRegressionGameTest` staggers persisted controller load/tick order
+  both ways, pins persisted-vs-fresh-verified and broken persisted FAULT retention, and
+  proves member `CHUNK_UNLOAD` immediately faults a loaded non-ticking controller without
+  loading the member chunk, retains claims, then reforms after safe reload.
 - `chargeMachineChargesWhileFormed` / `StopsAtCapacity` / `HaltsOnFault` — exact
   5 Cg/t between two reads; clamp at 1,000; frozen on fault.
 - `chargeMachineMenuLanesEncodeCharge` — server menu lanes recombine to buffer value;

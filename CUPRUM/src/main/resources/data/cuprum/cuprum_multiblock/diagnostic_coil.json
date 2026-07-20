@@ -1,0 +1,19 @@
+{
+  "format_version": 1,
+  "orientation_mode": "any_horizontal",
+  "allow_mirror": true,
+  "layers": [
+    [
+      "WOF",
+      "FCF",
+      "FFF"
+    ]
+  ],
+  "key": {
+    "W": { "block": "minecraft:waxed_copper_block" },
+    "O": { "block": "minecraft:oxidized_copper" },
+    "F": { "block": "cuprum:diagnostic_coil_frame" },
+    "C": { "block": "cuprum:diagnostic_coil_core" }
+  },
+  "controller": "C"
+}

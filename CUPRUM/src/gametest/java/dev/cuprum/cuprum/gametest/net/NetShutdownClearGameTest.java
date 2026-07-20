@@ -23,7 +23,7 @@ import net.minecraft.network.chat.Component;
  * sweeping live state, idempotency across repeated lifecycles, fresh JOINs working after a
  * sweep, and no state resurrection by post-sweep traffic.
  *
- * <p>Runs in the dedicated {@code cuprum-gametest:isolated} environment (its own sequential
+ * <p>Runs in the dedicated {@code cuprum-gametest:net_shutdown} environment (its own sequential
  * batch): the sweep clears <b>all</b> per-connection state, which must never interleave with
  * default-batch tests that hold live sessions across ticks.
  */
@@ -31,7 +31,7 @@ public class NetShutdownClearGameTest {
     /** Raw length 40 (passes the codec bound) but 80 after NFC — a semantic VALUE violation. */
     private static final String NFC_GROWING_NOTE = "\u0958".repeat(40);
 
-    @GameTest(environment = "cuprum-gametest:isolated")
+    @GameTest(environment = "cuprum-gametest:net_shutdown")
     public void serverStoppedSweepClearsAllPerConnectionState(GameTestHelper helper) {
         // Lifecycle 1: two live connections with both kinds of per-connection state.
         MockServerPlayers.Mock mock1 = MockServerPlayers.connect(helper, "cuprum_stop_a");

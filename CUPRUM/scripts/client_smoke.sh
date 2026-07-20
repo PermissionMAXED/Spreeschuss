@@ -13,7 +13,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 LOG=build/clientSmoke-console.log
+SCREENSHOT_DIR=build/run/clientGameTest/screenshots
 mkdir -p build
+rm -rf "$SCREENSHOT_DIR"
 rm -f "$LOG"
 
 GRADLE_EXIT=0
@@ -59,15 +61,27 @@ if [[ -n "$PROBLEMS" ]]; then
     exit 1
 fi
 
-# Both named screenshots from CuprumClientGameTest must exist (any-PNG is not enough:
-# the counter prefix and names are deterministic for the test's screenshot order).
-SCREENSHOT_DIR=build/run/clientGameTest/screenshots
-for expected in 0000_cuprum_title_screen.png 0001_cuprum_charge_probe_in_world.png; do
+# The exact W1A + W1C screenshot set must come from THIS launch. The directory was deleted
+# above, so stale files can neither satisfy a missing capture nor hide a numbering regression.
+EXPECTED_SCREENSHOTS=(
+    0000_cuprum_title_screen.png
+    0001_cuprum_charge_probe_in_world.png
+    0002_cuprum_diagnostic_coil_formed.png
+    0003_cuprum_charge_machine_screen.png
+)
+for expected in "${EXPECTED_SCREENSHOTS[@]}"; do
     if [[ ! -s "$SCREENSHOT_DIR/$expected" ]]; then
         echo "FAIL: expected screenshot $SCREENSHOT_DIR/$expected is missing or empty" >&2
         ls -la "$SCREENSHOT_DIR" >&2 2>/dev/null || true
         exit 1
     fi
 done
+shopt -s nullglob
+ACTUAL_SCREENSHOTS=("$SCREENSHOT_DIR"/*.png)
+if [[ "${#ACTUAL_SCREENSHOTS[@]}" -ne "${#EXPECTED_SCREENSHOTS[@]}" ]]; then
+    echo "FAIL: expected exactly ${#EXPECTED_SCREENSHOTS[@]} screenshots, found ${#ACTUAL_SCREENSHOTS[@]}" >&2
+    ls -la "$SCREENSHOT_DIR" >&2
+    exit 1
+fi
 echo "OK: client gametest passed; logs clean; screenshots:"
 ls -la "$SCREENSHOT_DIR"
