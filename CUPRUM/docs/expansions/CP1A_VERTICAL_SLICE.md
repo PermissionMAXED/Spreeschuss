@@ -1,14 +1,15 @@
-# CP1A — The Playable Vertical Slice (binding amendment, revision 3)
+# CP1A — The Playable Vertical Slice (binding amendment, revision 4)
 
 Status: **BINDING**. This document is the authoritative sequencing and contract
 amendment for Cuprum's first post-foundation implementation work, issued at/after
-the W1E foundation commit `7b1d9fe`. Revision 3 supersedes revision 2 after the
-review round recorded in §14 (round 3) identified binding gaps; §14 records every
-finding of all three review rounds and how each was reconciled against repository
-truth. Where this document is silent, `docs/foundation/FOUNDATION_PLAN.md` (as
-amended by `docs/expansions/CP0C_HOLOSPHERE.md`) and the sealed concept docs
-govern; where a rejected plan or an earlier revision disagrees with this
-document, this document wins.
+the W1E foundation commit `7b1d9fe`. Revision 4 supersedes revision 3 after the
+review round recorded in §14 (round 4) identified falsifiable runtime details;
+§14 records every finding of all four review rounds and how each was reconciled
+against repository truth. Where this document is silent,
+`docs/foundation/FOUNDATION_PLAN.md` (as amended by
+`docs/expansions/CP0C_HOLOSPHERE.md`) and the sealed concept docs govern; where a
+rejected plan or an earlier revision disagrees with this document, this document
+wins.
 
 **Hard scope rule:** CP1A touches **no** file under `catalog/**` and **no** file
 under `docs/feature-concepts/**`. The catalog stays at exactly **300 entries**, and
@@ -129,13 +130,13 @@ asserted by tests:
 | Constant | Value | Meaning |
 |---|---|---|
 | `MAX_PENDING_SURGES_PER_NODE` | 4 | pending-surge queue bound per rod position (§6) |
-| `SURGE_DRAIN_INSPECTIONS_PER_TICK` | 8 | per-level drain-point **inspection** budget — every looked-at entry counts, including dormant/dirty skips (§6) |
+| `SURGE_DRAIN_INSPECTIONS_PER_TICK` | 8 | per-level drain-point **inspection** budget — every looked-at entry counts, including dormant/dirty skips; at most ONE queued amount deposits per inspected position, so ≤8 `depositSurge` calls/tick (§6) |
 | `JAR_EXTRACT_CG_PER_TICK` | 1,000 | jar `maxExtractPerTick()` (base-slice, non-catalog; W5 PWR transmission rows own player-facing rates) |
 | `DOME_RADIUS` | 8 | SHD-01 baseline "no coil ⇒ radius 8" |
 | `DOME_UPKEEP_CG_PER_TICK` | 32 | `ceil(0.5·R²)` at R = 8 (SHD header formula) |
 | `INTERCEPT_BASE_CG` / `INTERCEPT_CG_PER_SPEED` / `INTERCEPT_SPEED_CAP_Q8` | 200 / 40 / 2,560 | §8 exact cost formula |
 | `ESCROW_CAPACITY_CG` | 1,280 | dome escrow buffer: upkeep (32) + two worst-case intercepts (2 × 600) + headroom (§8) |
-| `ESCROW_UPKEEP_RESERVE_CG` | 32 | escrow floor intercepts may not spend below (§8 order-independence rule) |
+| `ESCROW_UPKEEP_RESERVE_CG` | 32 | escrow floor intercepts may not spend below **while this game tick's upkeep is still unpaid** (§8 upkeep-preservation rule) |
 
 The jar's `maxInsertPerTick()` is **not** a separate constant: it returns
 `capacity()` by contract (§7 explains why, tied to the audited shared-column
@@ -415,13 +416,26 @@ machinery as designed.
   while full is dropped-before-deposit (WARN + `droppedSurgeCg`). The queue only
   grows past 1 while a node is frozen/dirty across multiple strikes — a rare,
   bounded window.
-- **Durability (`queueDirty`):** the manager keeps a `queueDirty` flag set on
-  **every** queue mutation — append (`queueSurge`), drain removal, drop, and
-  every cursor advance. `maybeSnapshot()`'s early-return condition gains
-  `&& !queueDirty`, and the flag is cleared **only after** the snapshot is
-  written. Without this, an enqueue onto an already-snapshotted, otherwise-idle
-  state would never persist; `u04_queue_dirty_snapshot` (§13) pins exactly that
-  scenario across a restart.
+- **Durability (two-tier dirtiness):** the manager keeps two flags.
+  **`queueDirty`** is set by every queue **content/accounting** mutation —
+  append (`queueSurge`), drain removal, drop — joins `maybeSnapshot()`'s
+  early-return condition (`&& !queueDirty`) and is cleared **only after** the
+  snapshot is written; without it, an enqueue onto an already-snapshotted,
+  otherwise-idle state would never persist (`u04_queue_dirty_snapshot`, §13,
+  pins exactly that scenario across a restart). **`cursorDirty`** is a
+  runtime-only flag set by cursor advances; it does **not** enter the
+  early-return condition — a cursor-only rotation over dirty/dormant entries
+  (which can recur every tick while a frozen rod pends) must never force
+  full-graph snapshots. The cursor is persisted **opportunistically**: whenever
+  a snapshot is written for any qualifying reason (queue content, shadows,
+  topology, vent total), the current cursor value rides along and `cursorDirty`
+  clears. **Accepted, documented crash rewind:** a hard crash after cursor-only
+  motion reloads an older cursor; that rewinds only the fairness rotation
+  start, never correctness (drains are idempotent removals; a rewound cursor
+  merely re-inspects positions sooner). Fairness reconciliation: the
+  `ceil(K/8)` inspection bound (below) holds within any crash-free run; content
+  mutations — the only thing that creates work — trigger snapshots that carry
+  the cursor, so steady-state traffic keeps the persisted cursor fresh.
 - Persistence: the queue and cursor are the §3 `pending_surges` /
   `pending_surge_cursor` fields of `cuprum_charge_graph` (schema
   `CuprumSchema.WORLD` 1 → 2 with migration). **Hostile decode is field-local:**
@@ -457,25 +471,42 @@ while inspected < SURGE_DRAIN_INSPECTIONS_PER_TICK and pending entries remain un
     else if !core.isActive(entry.coreId) or core.networkOf(entry.coreId) == -1:
         (keep; frozen or rebuild-pending: retry)             // dirty-node retry, budget still consumed
     else:
-        for each amount (FIFO):
-            accepted = core.depositSurge(entry.coreId, amount, access)  // final; remainder vented exactly
-            remove amount; queueDirty = true; storedShadowChanged = true
+        amount = head of this position's FIFO                // exactly ONE amount per position per tick
+        accepted = core.depositSurge(entry.coreId, amount, access)  // final; remainder vented exactly
+        remove amount; queueDirty = true; storedShadowChanged = true
     key = next pending posKey after key (ring order)
-cursor = key; queueDirty = true                              // persisted rotation point
+cursor = key; cursorDirty = true                             // runtime flag; persisted opportunistically
 ```
 
 - **Dirty-node retry** is exactly fact 2: the manager checks stability *before*
   depositing, so the ambiguous "0 accepted" case (all vented vs. not attempted)
   never arises; a deposit, once made, is final and its vented remainder is the
   core's exact, already-counted vent.
-- **Perf budget and fairness:** ≤ `SURGE_DRAIN_INSPECTIONS_PER_TICK` (8)
-  inspections per level per tick; an empty queue costs one emptiness check.
-  Starvation bound (pinned by tests): with `K` pending positions, every
-  position is inspected at least once every `ceil(K / 8)` ticks regardless of
-  where traffic concentrates — `u04_queue_no_starvation` (§13) proves it with
-  >1024 dormant/dirty entries plus sustained low-position strike traffic. No
-  `nodeReport`, no island scans, no per-rod per-tick work anywhere in the
-  route. Budget-window semantics are the documented core rule: a post-`tick()`
+- **One amount per inspected position per tick** ⇒ at most
+  `SURGE_DRAIN_INSPECTIONS_PER_TICK` = **8 `depositSurge` calls per level per
+  tick**. A rod hit by multiple queued strikes drains them across consecutive
+  ticks, one per tick — same-tick multi-strike drain at a single rod is
+  explicitly **not** a property of this design.
+- **Perf budget and fairness (honest costs):** ≤ 8 inspections per level per
+  tick; an empty queue costs one emptiness check. **Each `depositSurge` call
+  does scan the origin's loaded sub-island** — that is the frozen core's own
+  documented behavior (canonical/island cache refresh plus a members pass
+  feeding absorbers) and cannot be avoided without new core API. The honest
+  bound is therefore **O(8 × N) node visits per level per tick worst case**,
+  where N is the loaded island size — the same order as the allocator's own
+  per-tick pass over the same island, and bounded in practice by the W1B
+  solver posture (≤0.15 ms/tick at 1,000 nodes). CP1A pins **no wall-clock CI
+  gate** for the drain (the "counter now, milliseconds later" rule); the
+  CI-checkable counter is the ≤8 deposits/tick bound
+  (`u04_drain_budget_inspections_bounded`). What rev 2 wrongly claimed
+  ("no island scans anywhere") is withdrawn; what IS true and enforced: no
+  `nodeReport` calls, no scans for *skipped* (dormant/frozen/dirty) entries,
+  and zero steady-state cost with an empty queue. Starvation bound: with `K`
+  pending positions, every position is inspected at least once every
+  `ceil(K / 8)` ticks regardless of where traffic concentrates — proven
+  MC-free at scale (>1024 entries) in `PendingSurgeQueueTest` and
+  integration-checked at small K in `u04_queue_no_starvation` (§13).
+  Budget-window semantics are the documented core rule: a post-`tick()`
   deposit draws on the current window's remaining absorber budgets,
   cumulatively.
 
@@ -573,15 +604,26 @@ ring tangent to the dome surface. The sanctioned extension names **every**
 touched class and its freeze status explicitly — and it does **not** claim the
 pool is untouched, because it is not:
 
-- **`FxRippleRing` (`fx.core`, MC-free, amended):** the structure-of-arrays
-  slots gain two `int` columns — the 16-bit octahedral **outward unit normal**
-  code and the 8-bit **event nonce** — and the **wire identity widens from
-  (posKey, startTick) to (posKey, startTick, nonce)** in `addIfAbsent`, with
-  the `Visitor` interface extended to carry both new columns. The 16-slot
+- **`FxRippleRing` (`fx.core`, MC-free, amended source-compatibly):** the
+  structure-of-arrays slots gain two `int` columns — the 16-bit octahedral
+  **outward unit normal** code and the 8-bit **event nonce** — and the pool
+  identity becomes the triple (posKey, startTick, nonce) internally.
+  **Existing signatures are retained, not replaced:** the current
+  `addIfAbsent(long, long, int, int)` overload stays and delegates with
+  `normalOct = OCT_UP, nonce = 0` (`OCT_UP` = the pinned octahedral code for
+  +Y, a new `fx.core` constant); the existing `Visitor` interface and
+  `visitAt`/`visitAll` stay byte-for-byte compatible (they simply do not
+  surface the new columns). The oriented path is **additive**: a new
+  `addIfAbsent(long, long, int, int, int normalOct, int nonce)` overload, a
+  new `OrientedVisitor` (six columns) and new `visitAtOriented(long,
+  OrientedVisitor)` extraction. Legacy identity (posKey, startTick, 0)
+  therefore coalesces exactly as (posKey, startTick) did. The 16-slot
   capacity, oldest-evicted overflow, `expire` clock-skew rule, compaction and
-  zero-steady-state-allocation properties are preserved unchanged in policy,
-  but the class itself changes and its unit tests extend accordingly
-  (`fx.core` is not in `FROZEN_PACKAGES`, so this is not a lock diff — §12(1)).
+  zero-steady-state-allocation properties are unchanged. **The existing
+  `FxRippleRing` unit tests must pass unmodified** — that is the pinned
+  compatibility gate — with `FxRippleRingIdentityTest` added for the oriented
+  path (`fx.core` is not in `FROZEN_PACKAGES`, so this is not a lock diff —
+  §12(1)).
 - **`FxRippleSnapshot` + `FxDispatcher` (`client.fx` top level — LOCK-FROZEN,
   reviewed lock diff):** the snapshot record gains the decoded unit normal
   (three floats) and the nonce; a **backwards-compatible secondary constructor
@@ -589,8 +631,10 @@ pool is untouched, because it is not:
   `FxRipplePayload` path compiles unchanged and renders bit-identically (the
   +Y basis reproduces today's XZ ring exactly, and legacy identity
   (posKey, startTick, 0) coalesces exactly as (posKey, startTick) did).
-  `FxDispatcher.enqueueRipple*`/`extractRipplesAt` thread the new columns
-  through enqueue and extraction.
+  `FxDispatcher` keeps `enqueueRipple*` and `extractRipplesAt` signatures
+  untouched (legacy behavior preserved) and adds the oriented extraction
+  entry point (`extractOrientedRipplesAt`) over `visitAtOriented` for the
+  render path that needs normals.
 - **`FxProbeRenderState` + `FxRippleGeometry` (`client.fx.render` — internals,
   NOT lock-frozen):** the extracted per-frame state carries per-ripple normal
   components and the **exact impact center** — computed deterministically at
@@ -602,12 +646,18 @@ pool is untouched, because it is not:
 - **`FxRippleBroadcaster` + `FxPayloads` (main `fx` — NOT lock-frozen):** gain
   the shield-impact broadcast entry point and payload registration; no lock
   impact (§12(1)).
-- **Event identity (nonce, rigorously):** the server keeps an 8-bit wrapping
-  per-dome impact counter (a transient controller-BE field — not persisted;
-  the dedupe window is one ripple lifetime, far shorter than a session). Two
-  same-tick impacts on one dome carry distinct nonces and therefore occupy two
-  pool slots; an exact network duplicate of one payload still coalesces to a
-  no-op via `addIfAbsent`. Visual radius rides the existing `radiusQ8` field.
+- **Event identity (nonce, executable flow):** the **controller BE owns** an
+  8-bit wrapping impact counter (transient `int` field — not persisted; the
+  dedupe window is one ripple lifetime, far shorter than a session). Its
+  lifecycle is synchronized with the payload: the controller increments it
+  exactly once per accepted intercept, at payload-build time —
+  `nonce = (nonce + 1) & 0xFF` — and passes that value **explicitly** to the
+  broadcaster through the `int nonce` parameter of `broadcastShieldImpact`
+  (below); the broadcaster never generates or mutates nonces, it only encodes
+  the given value into the payload's nonce byte. Two same-tick impacts on one
+  dome carry distinct nonces and therefore occupy two pool slots; an exact
+  network duplicate of one payload still coalesces to a no-op via
+  `addIfAbsent`. Visual radius rides the existing `radiusQ8` field.
 - Eviction policy, 16-slot cap, tier ladder, particle budgets, colorblind
   remap-at-snapshot and disconnect-clear semantics are inherited — shield
   impacts share the **same** ring pool and eviction, which is exactly the SHD
@@ -626,8 +676,11 @@ pool is untouched, because it is not:
 per client (16/s, JOIN/DISCONNECT/STOP hardened). The sanctioned extension adds a
 **second window to the same session** — `SHIELD_IMPACT_SENDS_PER_SECOND = 8` per
 client over the same `SEND_WINDOW_TICKS` — and a
-`broadcastShieldImpact(level, center, impactDir, radiusQ8, colorArgb)` entry
-point that sends the §3 payload to tracking players through that window.
+`broadcastShieldImpact(ServerLevel level, BlockPos center, Vec3 outwardNormal,
+int radiusQ8, int colorArgb, int nonce)` entry point that sends the §3 payload
+to tracking players through that window; `nonce` is the controller-supplied
+event identity (already wrapped to 0..255 by the owner; the broadcaster masks
+`& 0xFF` defensively on encode).
 Overflow is dropped silently (idempotent, loss-tolerant cosmetic events; the
 client pool would evict anyway). Reusing the session object avoids duplicating
 the JOIN/DISCONNECT race hardening.
@@ -674,21 +727,68 @@ P3 adds only the intercept spend path on top.
   nothing changes in the allocator. With one adjacent jar (extract cap
   1,000 Cg/t) a worst-case two-intercept tick refills within two ticks; with
   two or more jars, within one.
+- **Tick-window discipline (every path):** every controller escrow path —
+  the consumer `accept` insert **and** every `extractExact` spend — calls
+  `ChargeBuffer.beginGameTick(level.getGameTime())` **before observing any
+  stored/budget state**, so no path ever reads a stale budget window from a
+  previous tick. (`beginGameTick` is idempotent within a tick: repeated calls
+  with the same game time leave the open window untouched.)
 - **Atomic spend (`extractExact`):** all dome spending goes through one
-  private controller helper — `extractExact(cost)`: `if (escrow.stored() >=
-  cost + reserve) { escrow.extract(cost, false); return true; } return false;`
-  — all-or-nothing by construction (the escrow's extract budget equals its
-  capacity, so a permitted extract always yields exactly `cost`), and atomic
-  under the same server-thread confinement every charge entrypoint already
-  asserts. This is new `shield`-package content built solely on the existing
-  `ChargeBuffer` API — no new graph API, no new `ChargeBuffer` method.
-- **Same-tick upkeep-vs-intercept order (order-independent by rule):** rather
-  than depending on the engine's entity-vs-block-entity tick ordering, the
-  reserve makes the outcome order-free: **intercepts** use
-  `reserve = ESCROW_UPKEEP_RESERVE_CG` (32) — they may never spend the escrow
-  below one tick of upkeep; the **upkeep** payment itself uses `reserve = 0`
-  and may consume the floor. A tick's upkeep therefore can never be starved by
-  that tick's intercepts, whichever runs first.
+  helper — a package-private static
+  `extractExact(ChargeBuffer escrow, long cost, long reserve, long gameTime)`
+  in the `shield` package (package-private ⇒ invisible to the `javap
+  -protected` lock listing; static over `ChargeBuffer` ⇒ MC-free
+  unit-testable by `EscrowExtractExactTest`):
+  `beginGameTick(gameTime)`; if
+  `escrow.stored() < cost + reserve` return `false`; else
+  `long got = escrow.extract(cost, false)`; **if `got != cost` throw
+  `IllegalStateException`** — fail loudly, never continue on a silent partial;
+  else return `true`. **Proof that the precheck makes `got == cost` an
+  invariant:** `extract` returns `min(request, stored, remaining extract
+  budget)`; the precheck guarantees `stored ≥ cost`; and the extract budget
+  cannot bind before `stored` does, because within one game tick **all escrow
+  extracts precede all escrow inserts** (spends run in the entity/BE tick
+  phase; the only insert path is the allocator's `accept`, which runs at
+  `END_WORLD_TICK`, after them), so the sum of extracts inside one window is
+  ≤ the window-start `stored` ≤ `ESCROW_CAPACITY_CG` = the extract budget.
+  The throw is therefore unreachable as designed; it exists so that a future
+  refactor breaking the phase-ordering precondition crashes the tick instead
+  of corrupting accounting — and since it aborts before any compensating
+  bookkeeping, no partial spend is ever *acted on* (`EscrowExtractExactTest`,
+  §13, drives the helper against a deliberately mis-budgeted buffer to pin
+  the loud failure). This is new `shield`-package content built solely on the
+  existing `ChargeBuffer` API — no new graph API, no new `ChargeBuffer`
+  method.
+- **Upkeep-payment marker (`upkeepPaidGameTime`):** a transient `long` field
+  on the controller BE, initialized `Long.MIN_VALUE`, set to the current game
+  time when (and only when) that tick's 32 Cg upkeep extraction succeeds.
+  **Deliberately not persisted, justified:** the marker pairs intercepts with
+  the *same game tick's* upkeep; comparison against `level.getGameTime()`
+  self-expires it, so no reset code exists. After chunk reload/restart it
+  reverts to "not paid", which errs strictly conservative (at worst one
+  intercept that tick reserves 32 unnecessarily); persisting it would risk the
+  opposite error — a stale-equal marker after a reload granting reserve 0
+  while the resumed tick's upkeep is still unpaid.
+- **Same-tick upkeep-vs-intercept order (guarantee = upkeep preservation
+  ONLY):** intercepts use
+  `reserve = (upkeepPaidGameTime == gameTime) ? 0 : ESCROW_UPKEEP_RESERVE_CG` —
+  32 while this tick's upkeep is still owed, 0 once it has been paid; the
+  upkeep payment itself always uses `reserve = 0`. The **only** guarantee this
+  rule makes is that a tick's upkeep can never be starved by that tick's
+  intercepts, whichever runs first. No broader order-independence is claimed:
+  intercept-vs-intercept outcomes still follow entity tick order (next
+  bullet). **Pinned boundaries** (`u02_upkeep_reserve_boundaries`, §13; one
+  max-cost 600 Cg intercept + one 32 Cg upkeep in the same tick, both engine
+  orders driven explicitly):
+
+  | escrow at tick start | intercept first, then upkeep | upkeep first, then intercept |
+  |---|---|---|
+  | 631 | intercept **denied** (631 < 600+32); upkeep pays 32 → **599** | upkeep pays 32 → 599, marker set; intercept **denied** (599 < 600+0) → **599** |
+  | 632 | intercept **pays** (632 ≥ 632) → 32; upkeep pays → **0** | upkeep pays → 600, marker set; intercept **pays** (600 ≥ 600) → **0** |
+  | 633 | intercept **pays** → 33; upkeep pays → **1** | upkeep pays → 601, marker set; intercept **pays** → **1** |
+
+  At these boundaries the observable outcomes coincide across both orders —
+  the test asserts the table cells, not a general order-independence theorem.
 - **Simultaneous impacts:** each projectile pays (or passes) at its own
   boundary-crossing moment, in the server's entity tick order; with escrow for
   only one intercept, the first-ticked projectile intercepts and the second
@@ -701,8 +801,8 @@ P3 adds only the intercept spend path on top.
   state envelope (clamped through `setStored` on load) beside the formation
   and claim state; `u02_escrow_persistence_restart` pins the round-trip.
 - **Tests:** `u02_escrow_replenishes_partial` (multi-call partial `accept`
-  fills observed), `u02_upkeep_reserve_holds` (intercept denied at
-  `stored < cost + 32` while upkeep still paid same tick),
+  fills observed), `u02_upkeep_reserve_boundaries` (the 631/632/633 table in
+  both engine orders), `EscrowExtractExactTest` (loud-failure guard),
   `u02_two_impacts_one_budget_deterministic`, `u02_brownout_defense_priority`,
   `u02_escrow_persistence_restart`, plus the §13 P3 table.
 
@@ -845,9 +945,11 @@ its established review mechanism:
      `ChargeGraphManager.queueSurge(BlockPos, long)` and
      `droppedSurgeCgTotal()` (§6, exact signatures pinned there); `charge.core`
      — the new `PendingSurgeQueue` class; `client.fx` (top level) — the
-     `FxRippleSnapshot` normal/nonce extension and the `FxDispatcher`
-     threading of the new columns. The `charge.persist` schema change rides
-     the `charge`-adjacent review in the same diff.
+     `FxRippleSnapshot` normal/nonce extension (additive secondary
+     constructor) and the `FxDispatcher` **additive** oriented extraction
+     entry point (`extractOrientedRipplesAt`; existing `enqueueRipple*` /
+     `extractRipplesAt` signatures unchanged). The `charge.persist` schema
+     change rides the `charge`-adjacent review in the same diff.
    - **No lock impact (not in `FROZEN_PACKAGES`):** main `fx` package
      (`FxRippleBroadcaster` shield-impact window/entry point, `FxPayloads`
      registration) and `fx.core` (`FxRippleRing` columns/identity,
@@ -866,10 +968,12 @@ its established review mechanism:
    `CuprumSchema.WORLD` 1 → 2 and the two per-domain identity
    `StateMigrations` steps, **field-local** hostile-decode handling
    (trim/drop + WARN per entry, cursor falls back to default; never fails the
-   record or defaults `nodes`/`vented_total`), the `queueDirty` participation
-   in `maybeSnapshot`, and the §6 hard-crash save-window statement — covered
-   by `PendingSurgeCodecTest` plus extending the existing saved-data gametests
-   and the restart probe.
+   record or defaults `nodes`/`vented_total`), the two-tier dirtiness rule
+   (`queueDirty` joins `maybeSnapshot`'s early return; runtime `cursorDirty`
+   does not — the cursor persists opportunistically with any written snapshot,
+   with the documented crash rewind, §6), and the §6 hard-crash save-window
+   statement — covered by `PendingSurgeCodecTest` plus extending the existing
+   saved-data gametests and the restart probe.
 4. **Ownership:** no ownership API change. The U01 controller stores
    `Claim.ofPlacer(placer)` in its envelope and evaluates via
    `OwnershipService.allows(...)` (§4) — model and evaluator exactly as W1A
@@ -911,7 +1015,7 @@ GameTests and client GameTests in `src/gametest` (INDEX prefixes
 
 | Test | Proves |
 |---|---|
-| `PendingSurgeQueueTest` (unit, MC-free) | ascending-posKey ring order with cursor start/wrap, per-pos FIFO, 4-entry bound with exact drop accounting, inspection-counted budget |
+| `PendingSurgeQueueTest` (unit, MC-free) | ascending-posKey ring order with cursor start/wrap, per-pos FIFO with one-head-drain-per-inspection, 4-entry bound with exact drop accounting, inspection-counted budget, **and the starvation proof at scale**: >1024 dormant/dirty entries plus sustained low-position appends ⇒ every position inspected at least once every `ceil(K/8)` simulated ticks, highest posKey included (cheap here; prohibitively heavy as a GameTest) |
 | `PendingSurgeCodecTest` (unit) | field-local hostile decode: >4-per-key trimmed, out-of-range amounts dropped, malformed entries dropped (each WARN), malformed cursor defaults — while `nodes`/`vented_total` in the same record decode untouched |
 | `JarFillStageTest` (unit) | exact `fill` and comparator integer formulas at boundary values (0, 1, ⅓·cap ± 1, ⅔·cap ± 1, cap) |
 | `u04_scripted_strike_full_deposit` | scripted `LightningBolt` on the rod queues and (same `endWorldTick`) deposits exactly 270,000 Cg into an empty 3-jar bank; conservation Σ == 270,000, vented == 0 |
@@ -919,12 +1023,12 @@ GameTests and client GameTests in `src/gametest` (INDEX prefixes
 | `u04_poi_natural_attraction_registered` | black-box §5 proof via public `PoiTypes.forState` + `PoiManager.findClosest` only |
 | `u04_jarless_strike_vents_exact` | no jar in the island ⇒ deposit vents exactly 270,000 Cg (counted in `ventedTotal`), rod holds nothing |
 | `u04_partial_capacity_vents_exact` | one jar at 30,000/100,000 ⇒ exactly 70,000 absorbed, 200,000 vented |
-| `u04_multiple_rods_single_jar_deterministic` | two rods struck in one tick, one empty jar, fresh drain cursor (`Long.MIN_VALUE`) ⇒ the lower-posKey rod's strike fills the jar (100,000), its remainder and the second strike vent exactly; ring order + cursor determinism asserted |
+| `u04_multiple_rods_single_jar_deterministic` | two rods (two positions) each struck once in one tick, one empty jar, fresh drain cursor (`Long.MIN_VALUE`) ⇒ both positions are inspected the same tick (one head amount each, 2 ≤ 8 deposits); the lower-posKey rod's strike fills the jar (100,000), its remainder and the second rod's strike vent exactly; ring order + cursor determinism asserted |
 | `u04_dirty_node_retry` (in `dev.cuprum.cuprum.charge`, §11 seam) | rebuild budget lowered via the package-private seam ⇒ strike queued while the rod's component is rebuild-pending ⇒ 0 deposited, nothing vented, deposit completes after `runRebuild` relabels; queue survives the wait; seam reset in cleanup |
 | `u04_queue_persistence_restart` (restart probe extension, §11 pinned setup) | strike queued at a deliberately frozen origin ⇒ pending state provably exists at save; written at schema 2, survives a real process restart, deposits after the chunk reloads |
 | `u04_queue_dirty_snapshot` | enqueue onto an already-snapshotted, otherwise-idle graph (no shadow/topology/vent change) ⇒ `queueDirty` alone forces the next snapshot; the strike survives a restart |
-| `u04_drain_budget_inspections_bounded` | >8 pending positions (mix of drainable and frozen/dirty) ⇒ exactly 8 **inspections** per tick — skips consume budget — remainder resumes from the persisted cursor next tick |
-| `u04_queue_no_starvation` | >1024 dormant/dirty pending entries plus sustained low-position strike traffic ⇒ every position is inspected at least once every `ceil(K/8)` ticks; the highest-posKey entry still drains |
+| `u04_drain_budget_inspections_bounded` | >8 pending positions (mix of drainable and frozen/dirty) ⇒ exactly 8 **inspections** and ≤8 `depositSurge` calls per tick — skips consume budget, at most one head amount deposits per inspected position — remainder resumes from the runtime cursor next tick; a tick of pure skips (cursor-only motion) does **not** set `queueDirty` or force a snapshot |
+| `u04_queue_no_starvation` | **small-K manager integration on the default 8×8×8 template**: K = 12 pending positions (mix of frozen/dirty skips and drainable, some low-posKey positions restruck each tick) ⇒ within `ceil(12/8)` = 2 ticks every position is inspected and the highest-posKey entry drains — integration-checks the same rotation `PendingSurgeQueueTest` proves at >1024 scale |
 | `u05_jar_capacity_and_caps` | capacity 100,000; `maxInsertPerTick() == capacity()`; extract actuals cap at 1,000 Cg/t |
 | `u05_jar_absorb_is_remaining_capacity` | `absorbSurge` actuals equal remaining capacity via the shared `ChargeBuffer` (both roles observe one stored value) |
 | `u05_jar_fill_stages_comparator` | blockstate `fill` and comparator signal match §7 formulas in-world |
@@ -966,7 +1070,8 @@ three-file API-freeze diff for `power`, `configSchemaFreeze` unchanged.
 | `u02_intercept_cost_exact` | scripted projectile at pinned velocity costs exactly the §8 formula, spent atomically from the controller escrow |
 | `u02_no_charge_no_intercept` | empty escrow/network ⇒ projectile passes; no partial payment ever |
 | `u02_escrow_replenishes_partial` | multiple partial `accept` deliveries fill the escrow through the existing allocator; deficit-driven `demandPerTick` observed |
-| `u02_upkeep_reserve_holds` | intercept denied when `stored < cost + 32` while the same tick's upkeep still gets paid (order-independence rule) |
+| `EscrowExtractExactTest` (unit, MC-free) | `extractExact` returns false below `cost + reserve` without mutating; a deliberately mis-budgeted buffer (extract budget < cost, violating the escrow's budget-equals-capacity precondition) makes it throw `IllegalStateException` rather than accept a partial extraction |
+| `u02_upkeep_reserve_boundaries` | the §8 boundary table: escrow 631/632/633 with one 600 Cg intercept + 32 Cg upkeep, **both engine orders driven explicitly** — 631 denies the intercept (final 599), 632 pays both (final 0), 633 pays both (final 1); upkeep is paid in every cell (upkeep-preservation guarantee); reserve drops to 0 once `upkeepPaidGameTime == gameTime` |
 | `u02_two_impacts_one_budget_deterministic` | two projectiles, escrow for one ⇒ first-ticked (controlled spawn order) intercepts, second passes |
 | `u02_brownout_defense_priority` | 50%-supply brownout ⇒ the DEFENSE dome request is filled before MISC targets |
 | `u02_escrow_persistence_restart` | escrow stored value round-trips the controller envelope across the restart probe |
@@ -1058,11 +1163,12 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
 11. **Jarless behavior undocumented** — upheld; §6: at least one connected jar
     with room is required for useful capture; jarless deposit vents exactly
     270,000 Cg; handbook says so.
-12. **Per-rod scans / no queue budget** — upheld; §6: no `nodeReport`/island
-    scans anywhere in the route; drain budget 8 per level-tick (round 3
-    sharpened it to inspection-counting and renamed the constant
-    `SURGE_DRAIN_INSPECTIONS_PER_TICK`); empty queue costs one check;
-    `u04_drain_budget_inspections_bounded` pins it.
+12. **Per-rod scans / no queue budget** — upheld; §6: no `nodeReport` calls;
+    drain budget 8 per level-tick (round 3 sharpened it to inspection-counting
+    and renamed the constant `SURGE_DRAIN_INSPECTIONS_PER_TICK`); empty queue
+    costs one check; `u04_drain_budget_inspections_bounded` pins it. *(Round 4
+    withdrew this round's over-claim that no island scans occur anywhere —
+    `depositSurge` itself scans the loaded island; see round 4 item 4.)*
 13. **New packages invisible to the API freeze** — upheld; §12(1): each phase's
     new package lands as a three-file reviewed diff (content +
     `ApiFreezeTest.FROZEN_PACKAGES` + regenerated lock); in-package changes stay
@@ -1089,24 +1195,29 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
    eviction and existing RenderType, defines the backwards-compatible +Y/0
    constructor, and no longer claims the pool is untouched.
 3. **Queue durability gap in `maybeSnapshot`** — upheld; §6: `queueDirty` set
-   on every append/drain/drop/cursor mutation, added to the early-return
-   condition, cleared only after the snapshot; `u04_queue_dirty_snapshot`
-   restarts after an enqueue onto already-snapshotted state.
+   on every append/drain/drop mutation, added to the early-return condition,
+   cleared only after the snapshot; `u04_queue_dirty_snapshot` restarts after
+   an enqueue onto already-snapshotted state. *(Round 4 split cursor motion
+   out of `queueDirty` — this round's "every cursor mutation" rule would have
+   forced full-graph snapshots on cursor-only advances; see round 4 item 4.)*
 4. **Queue budget/fairness under-specified** — upheld; §6: the 8-entry budget
    counts every inspected entry including dormant/dirty skips; a persisted
    deterministic round-robin cursor over the canonical ascending-posKey ring
    prevents starvation (order = canonical, cursor = starting point only);
-   `u04_queue_no_starvation` runs >1024 dormant/dirty entries under sustained
-   low-position traffic; `u04_drain_budget_inspections_bounded` pins the
-   inspection semantics.
+   `u04_drain_budget_inspections_bounded` pins the inspection semantics.
+   *(Round 4 moved the >1024-entry starvation proof from the gametest into the
+   MC-free `PendingSurgeQueueTest` and rescoped `u04_queue_no_starvation` to a
+   small-K integration; see round 4 item 5.)*
 5. **U02 payment unimplementable as written** — upheld; §8 replaces it with a
    persisted controller-local escrow `ChargeBuffer`: the DEFENSE-priority
    graph consumer accepts partial deliveries only into escrow; upkeep and
    intercepts spend through one atomic all-or-nothing `extractExact` helper
-   under server-thread ordering; the 32-Cg upkeep reserve makes same-tick
-   ordering irrelevant; capacity (1,280), replenishment, simultaneous impacts,
-   brownout, relays, serialization and tests are pinned; **no graph
-   reservation API** and no new `ChargeBuffer` method.
+   under server-thread ordering; capacity (1,280), replenishment, simultaneous
+   impacts, brownout, relays, serialization and tests are pinned; **no graph
+   reservation API** and no new `ChargeBuffer` method. *(Round 4 corrected
+   this round's unconditional 32-Cg reserve — it was itself order-dependent
+   after upkeep had been paid — with the `upkeepPaidGameTime` marker, and
+   narrowed the guarantee to upkeep preservation only; see round 4 item 1.)*
 6. **Variant ids unpinned** — upheld; §9: diagnostic surface variant id = 1,
    packed valid range exactly 0..1 at W4, server codecs reject out-of-range
    (reject-not-clamp), client render falls back to variant 0 with a
@@ -1136,6 +1247,69 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
     `PendingSurgeQueue` a sanctioned `charge.core` addition, the SavedData
     schema v2 amendment carries migration steps for both WORLD domains, and
     no invented API names remain anywhere in the route.
+
+### Round 4 (Sol reject findings + Fable test-scoping edit on revision 3)
+
+1. **Unconditional intercept reserve was itself order-dependent** — upheld;
+   §8: revision 3's "intercepts always reserve 32" denied a payable intercept
+   whenever upkeep had already run first (at escrow 632: order intercept-first
+   paid both, order upkeep-first denied the intercept). Rev 4 adds the
+   transient `upkeepPaidGameTime` marker — reserve 32 only while this game
+   tick's upkeep is unpaid, 0 after — pins the 631/632/633 boundary table for
+   **both** engine orders with matching outcomes
+   (`u02_upkeep_reserve_boundaries`), and defines the marker's lifecycle:
+   set on successful upkeep extraction, self-expiring by game-time
+   comparison, deliberately not persisted (reload reverts to the
+   conservative "unpaid" state; persistence could grant a stale reserve-0).
+2. **Tick-window and partial-extraction discipline unproven** — upheld; §8:
+   every escrow path (`accept` insert and `extractExact` spend) calls
+   `ChargeBuffer.beginGameTick(gameTime)` before observing budgets;
+   `extractExact` verifies the returned extraction equals `cost` and throws
+   `IllegalStateException` on mismatch. The equality is proven invariant:
+   within one tick all escrow extracts (entity/BE phase) precede all inserts
+   (allocator `accept` at `END_WORLD_TICK`), so Σ extracts ≤ window-start
+   `stored` ≤ capacity = extract budget — the budget can never bind before
+   the `stored ≥ cost + reserve` precheck does. `EscrowExtractExactTest`
+   drives the loud-failure guard against a mis-budgeted buffer.
+3. **Nonce flow not executable** — upheld; §8: `broadcastShieldImpact` now
+   takes an explicit `int nonce` parameter; the controller BE owns the
+   counter, increments/wraps (`& 0xFF`) exactly once per accepted intercept
+   at payload-build time, and the broadcaster only encodes the given value —
+   ownership, increment, wrap and payload lifecycle are all pinned in one
+   place.
+4. **Queue perf over-claim and snapshot amplification** — upheld; §6: the
+   "no island scans anywhere" claim is withdrawn — each `depositSurge` call
+   scans the origin's loaded sub-island (frozen core behavior). Rev 4 drains
+   at most ONE queued amount per inspected position per tick (≤8
+   `depositSurge` calls/level/tick), states the honest complexity bound
+   O(8 × island size) — same order as one allocator pass, within the W1B
+   solver posture — and pins the counter (deposits ≤ 8), not an unenforceable
+   wall-clock claim. Cursor motion is runtime-only `cursorDirty`, excluded
+   from `maybeSnapshot`'s early return, persisted opportunistically with any
+   content/accounting snapshot; the crash rewind of the rotation point is
+   accepted and documented; content append/drain/drop still set `queueDirty`
+   and snapshot. Fairness reconciled: `ceil(K/8)` holds within a crash-free
+   run and steady-state traffic keeps the persisted cursor fresh.
+5. **Starvation proof mis-scoped (Fable edit)** — upheld; §13: the
+   >1024-entry starvation proof moves to the MC-free `PendingSurgeQueueTest`;
+   `u04_queue_no_starvation` becomes a small-K (12 positions) manager
+   integration on the default 8×8×8 template; the §11 dirty-node-retry seam
+   remains a separate, unchanged concern.
+6. **Ripple extension replaced signatures** — upheld; §8: the existing
+   `addIfAbsent(long, long, int, int)` overload, `Visitor`,
+   `visitAt`/`visitAll`, `enqueueRipple*` and `extractRipplesAt` are retained
+   unchanged; the oriented path is additive (`addIfAbsent(..., normalOct,
+   nonce)` overload, `OrientedVisitor`, `visitAtOriented`,
+   `extractOrientedRipplesAt`); legacy identity (posKey, startTick, 0)
+   behaves exactly as W1D and **the existing `FxRippleRing` unit tests must
+   pass unmodified** as the pinned compatibility gate.
+7. **Multi-strike and order-independence wording** — upheld; §6/§8: a rod
+   with multiple queued strikes drains one per tick (same-tick multi-strike
+   drain at a single position is explicitly not a property of the design;
+   `u04_multiple_rods_single_jar_deterministic` is two positions, not one),
+   and the escrow guarantee is narrowed to **upkeep preservation only** — no
+   general order-independence theorem is claimed; intercept-vs-intercept
+   outcomes still follow entity tick order.
 
 ## 15. CP1A exit (delta over the CP1 exit checklist)
 
