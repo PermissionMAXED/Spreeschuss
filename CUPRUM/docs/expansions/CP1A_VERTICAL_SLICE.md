@@ -1,10 +1,10 @@
-# CP1A — The Playable Vertical Slice (binding amendment, revision 5)
+# CP1A — The Playable Vertical Slice (binding amendment, revision 6)
 
 Status: **BINDING**. This document is the authoritative sequencing and contract
 amendment for Cuprum's first post-foundation implementation work, issued at/after
-the W1E foundation commit `7b1d9fe`. Revision 5 supersedes revision 4 after the
-review round recorded in §14 (round 5) identified remaining audit gaps;
-§14 records every finding of all five review rounds and how each was reconciled
+the W1E foundation commit `7b1d9fe`. Revision 6 supersedes revision 5 after the
+review round recorded in §14 (round 6) demanded exact runtime APIs;
+§14 records every finding of all six review rounds and how each was reconciled
 against repository truth. Where this document is silent,
 `docs/foundation/FOUNDATION_PLAN.md` (as amended by
 `docs/expansions/CP0C_HOLOSPHERE.md`) and the sealed concept docs govern; where a
@@ -107,7 +107,7 @@ idempotent, loss-tolerant)
 
 | Phase | Id | Direction | Contents / budget |
 |---|---|---|---|
-| P3 | `cuprum:s2c/fx/shield_impact` | S2C | dome center `BlockPos` (8 B) + impact direction, 16-bit octahedral-encoded **outward** unit normal (`VAR_INT` ≤3 B) + **`surfaceOffsetQ8`** — the Q8.8 distance from dome center to the impact point along the normal, i.e. the dome radius; valid range (0, `SHIELD_IMPACT_MAX_OFFSET_Q8` = 16,383], decode rejects outside it (`VAR_INT` ≤2 B, since 16,383 = 2¹⁴−1 is the 2-byte VAR_INT ceiling) + `colorArgb` (`VAR_INT` ≤5 B) + **event nonce**, 8-bit wrapping per-dome counter (`VAR_INT` ≤2 B, decode rejects values outside 0..255) + server `gameTime` (`VAR_LONG` ≤10 B) — 8+3+2+5+2+10 = **≤30 payload bytes**, frozen constant `SHIELD_IMPACT_PAYLOAD_MAX_BYTES = 32` beside `RIPPLE_PAYLOAD_MAX_BYTES` in `FxBudgets`. This is the **one coherent representation** (§8): the payload carries center + normal + offset and every client derives the identical impact point as `center + normal × surfaceOffsetQ8`; no exact-impact-center coordinates and no visual radius are sent — the impact ring's visual max radius is the client-side constant `SHIELD_IMPACT_RING_RADIUS_Q8` (§12(7)). Sent through the §8 per-client send window. The nonce gives two same-tick impacts on one dome distinct pool identities (§8). |
+| P3 | `cuprum:s2c/fx/shield_impact` | S2C | dome center `BlockPos` (8 B) + **`normalPacked24`** — the outward unit normal in the §8 24-bit signed-component packing; valid range [0, 0xFFFFFF] with the zero vector 0x000000 additionally rejected (`VAR_INT` ≤4 B, since 24 bits need four 7-bit groups) + **`surfaceOffsetQ8`** — the Q8.8 distance from dome center to the impact point along the normal, i.e. the dome radius; valid range (0, `SHIELD_IMPACT_MAX_OFFSET_Q8` = 16,383], decode rejects outside it (`VAR_INT` ≤2 B, since 16,383 = 2¹⁴−1 is the 2-byte VAR_INT ceiling) + `colorArgb` (`VAR_INT` ≤5 B) + **event nonce**, 8-bit wrapping per-dome counter (`VAR_INT` ≤2 B, decode rejects values outside 0..255) + server `gameTime` (`VAR_LONG` ≤10 B) — 8+4+2+5+2+10 = **≤31 payload bytes**, frozen constant `SHIELD_IMPACT_PAYLOAD_MAX_BYTES = 32` beside `RIPPLE_PAYLOAD_MAX_BYTES` in `FxBudgets`. This is the **one coherent representation** (§8): the payload carries center + packed normal + offset; the packed int travels **unchanged** through snapshot, pool and visitors, and every client derives the identical impact point by the §8 pinned formula `Vec3.atCenterOf(center) + decodedNormal × (surfaceOffsetQ8 / 256.0)`; no exact-impact-center coordinates and no visual radius are sent — the impact ring's visual max radius is the client-side constant `SHIELD_IMPACT_RING_RADIUS_Q8` (§12(7)). Sent through the §8 per-client send window. The nonce gives two same-tick impacts on one dome distinct pool identities (§8). |
 
 No new C2S payload exists in P1–P3: the slice ships **no GUI** and no client-to-
 server interaction beyond vanilla block use. `FxRipplePayload` stays frozen
@@ -461,17 +461,41 @@ machinery as designed.
   no lock diff is needed for this class** (§12(1)). It stays MC-free
   (primitives only) and is unit-tested by `PendingSurgeQueueTest` in the same
   package under `src/test` (the repo's established package-access test
-  pattern). Pinned package-private surface (sufficient for the tests; all
-  posKeys are the canonical signed `long` keys):
-  `PendingSurgeQueue()` (empty, cursor `Long.MIN_VALUE`);
-  `long append(long posKey, long amountCg)` (returns the queued amount, 0 on
-  the 4-cap drop); `boolean hasPending()`; `int positionCount()`;
-  `long firstKeyAtOrAfter(long key)` and `long nextKeyAfter(long key)` (ring
-  iteration); `long headAmount(long posKey)`; `void removeHead(long posKey)`;
-  `long dropAll(long posKey)` (returns the dropped sum);
-  `long cursor()` / `void setCursor(long posKey)`; plus codec-facing
-  read/replace accessors for the §3 persistence fields. Any rename requires a
-  doc amendment, not a lock review.
+  pattern). **Pinned package-private surface — complete, no nullable returns,
+  no magic sentinels** (all posKeys are the canonical signed `long` keys; the
+  backing structure is an ordered long-keyed map, so every keyed operation
+  below is O(log K), K = position count):
+  - `PendingSurgeQueue()` — empty queue, cursor `Long.MIN_VALUE`.
+  - `long append(long posKey, long amountCg)` — returns the queued amount,
+    0 on the 4-cap drop.
+  - `boolean hasPending()`; `int positionCount()`.
+  - `long firstKeyAtOrAfter(long key)` — smallest pending posKey ≥ `key`,
+    wrapping to the smallest pending posKey overall when none is ≥ `key`.
+    **Precondition `hasPending()`; throws `IllegalStateException` on an empty
+    queue** — the ring functions are total for non-empty queues and callers
+    gate on `hasPending()` first, so no sentinel long is ever returned.
+  - `long nextKeyAfter(long key)` — smallest pending posKey **strictly
+    greater than** `key`, wrapping to the smallest overall; same non-empty
+    precondition/throw. **`key` itself need not be present** — it is a
+    ceiling lookup on `key + 1`, so the drain may call it with a key whose
+    last amount it just removed.
+  - `long headAmount(long posKey)`; `void removeHead(long posKey)`;
+    `long dropAll(long posKey)` (returns the dropped sum) — all three
+    **require the key to be pending and throw `IllegalStateException`
+    otherwise** (the drain only calls them for a key it just looked up on
+    the server thread, so the throw is a corruption guard, not a code path).
+  - `long cursor()`; `void setCursor(long posKey)`.
+  - Codec-facing surface (allocation acceptable — snapshots/loads are rare):
+    `long[] snapshotKeys()` — every pending posKey, ascending, a copy;
+    `long[] amountsAt(long posKey)` — that key's FIFO amounts oldest-first, a
+    copy (requires the key pending, throws otherwise);
+    `void replaceAll(long[] posKeys, long[][] amounts, long cursor)` —
+    wholesale replacement used by SavedData decode; requires strictly
+    ascending keys, per-key 1..4 amounts, every amount > 0 — throws
+    `IllegalArgumentException` on violation (the §6 field-local
+    hostile-decode trim/drop runs **before** this call, so a throw here means
+    a codec bug, not hostile data).
+  Any rename requires a doc amendment, not a lock review.
 
 **The drain point (server thread, per level, after graph maintenance):** at the
 end of `endWorldTick()`, after `core.tick(access)` and before `maybeSnapshot()`
@@ -482,22 +506,26 @@ not merely completed deposits, so a wall of unprocessable entries cannot make
 the loop scan unboundedly:
 
 ```
-inspected = 0
-key = smallest pending posKey >= cursor (wrap to smallest overall if none)
-while inspected < SURGE_DRAIN_INSPECTIONS_PER_TICK and pending entries remain unvisited this tick:
-    inspected++                                              // dormant/dirty skips consume budget too
-    entry = byPos(key)
+if (!queue.hasPending()): return                       // empty queue: exactly one O(1) check
+steps = min(SURGE_DRAIN_INSPECTIONS_PER_TICK, queue.positionCount())
+    // appends cannot interleave: queueSurge runs in the entity phase, this loop in endWorldTick
+key = queue.firstKeyAtOrAfter(cursor)                  // ring wrap; non-empty guaranteed here
+for i in 1..steps:                                     // every iteration inspects exactly one position
+    entry = byPos(key)                                 // dormant/dirty skips consume budget too
     if entry == null:
         if dormantRecords contains key: (keep; retry on a later pass)
-        else: drop amounts, droppedSurgeCg += Σ, WARN, queueDirty = true   // rod removed while pending
+        else: queue.dropAll(key), droppedSurgeCg += Σ, WARN, queueDirty = true  // rod removed while pending
     else if !core.isActive(entry.coreId) or core.networkOf(entry.coreId) == -1:
-        (keep; frozen or rebuild-pending: retry)             // dirty-node retry, budget still consumed
+        (keep; frozen or rebuild-pending: retry)       // dirty-node retry, budget still consumed
     else:
-        amount = head of this position's FIFO                // exactly ONE amount per position per tick
+        amount = queue.headAmount(key)                 // exactly ONE amount per position per tick
         accepted = core.depositSurge(entry.coreId, amount, access)  // final; remainder vented exactly
-        remove amount; queueDirty = true; storedShadowChanged = true
-    key = next pending posKey after key (ring order)
-cursor = key; cursorDirty = true                             // runtime flag; persisted opportunistically
+        queue.removeHead(key); queueDirty = true; storedShadowChanged = true
+    if (!queue.hasPending()):                          // this iteration removed the last entry
+        cursor = key; cursorDirty = true               // any value is fair on an empty queue; pinned
+        break                                          //   to the last inspected key for determinism
+    key = queue.nextKeyAfter(key)                      // total for non-empty queues, works after removal
+    cursor = key; cursorDirty = true                   // runtime flag; persisted opportunistically
 ```
 
 - **Dirty-node retry** is exactly fact 2: the manager checks stability *before*
@@ -511,42 +539,59 @@ cursor = key; cursorDirty = true                             // runtime flag; pe
   explicitly **not** a property of this design.
 - **Perf budget and fairness (source-accurate costs).** Symbols, defined once
   and used below: **N** = node count of the loaded sub-island containing the
-  deposit origin; **E** = adjacency-edge count of that island (E ≤ 3N in
-  Minecraft — at most 6 faces per node, undirected); **A** = surge-absorber
-  count in that island; **G** = total registered node count of the level's
-  graph (all islands plus dormant records — everything a snapshot
-  serializes); **K** = pending-queue position count. Costs, read off the
-  actual `ChargeGraphCore` source: ≤ 8 inspections per level per tick; an
-  empty queue costs one emptiness check. Each `depositSurge` call performs
-  (i) an island-cache refresh — O(1) when the epoch-keyed cache is warm,
-  O(N + E) after a topology/freeze change; (ii) **one traversal of the
-  island's member list** (the relay scan plus the absorber loop, O(N)); and
-  (iii) **per absorber it feeds, one `pathCap` BFS over the island** —
-  O(N + E) each when the island contains a relay (relay-free islands
-  short-circuit to O(1) per absorber, and the slice's typical rod-plus-jars
-  island has no relay). Worst case per deposit is therefore
-  **O(N + A·(N + E))**, and per level-tick — at most 8 deposits —
-  **O(8 · (N + A·(N + E)))**; the earlier flat "O(8 × N)" claim was wrong
-  because it ignored the per-absorber BFS. This is the same cost family as
-  one allocator P4 pass over the same island, and N is bounded in practice by
-  the existing max graph posture (`REBUILD_BUDGET` = 1,024 visits; W1B solver
-  evidence at 1,000 nodes). Additionally, any tick whose drain **mutates
-  queue content** triggers `maybeSnapshot`, and a snapshot serializes the
-  whole graph plus queue: **O(G + K)** — an honest accounting, not avoidable
-  without changing the frozen snapshot granularity. CP1A pins **no wall-clock
-  CI gate** for the drain (the "counter now, milliseconds later" rule); the
-  CI-checkable counter is the ≤8 deposits/tick bound
-  (`u04_drain_budget_inspections_bounded`). What rev 2 wrongly claimed
-  ("no island scans anywhere") stays withdrawn; what IS true and enforced: no
-  `nodeReport` calls, no scans for *skipped* (dormant/frozen/dirty) entries,
-  and zero steady-state cost with an empty queue. Starvation bound: with `K`
-  pending positions, every position is inspected at least once every
-  `ceil(K / 8)` ticks regardless of where traffic concentrates — proven
-  MC-free at scale (>1024 entries) in `PendingSurgeQueueTest` and
-  integration-checked at small K in `u04_queue_no_starvation` (§13).
-  Budget-window semantics are the documented core rule: a post-`tick()`
-  deposit draws on the current window's remaining absorber budgets,
-  cumulatively.
+  deposit origin; **E** = adjacency-edge count of that island; **A** =
+  surge-absorber count in that island; **L** = live (alive) node count of the
+  level's **whole** graph; **Eg** = adjacency-edge count of the whole graph
+  (both edge counts ≤ 3× their node counts in Minecraft — at most 6 faces per
+  node, undirected); **G** = total registered node count of the level's graph
+  (all islands plus dormant records — everything a snapshot serializes);
+  **K** = pending-queue position count. Costs, read off the actual
+  `ChargeGraphCore`/`ChargeGraphManager` source:
+  - **Warm drain path (the normal case).** The drain runs inside
+    `endWorldTick()` strictly after `core.tick(access)`, which itself begins
+    with `refreshCanonicalCache(); refreshIslandCache()`; deposits mutate no
+    topology and no freeze state, so **by the time the drain runs, both
+    global caches are always warm** and each `depositSurge` call pays only
+    O(1) version/epoch checks for them. Per deposit the warm cost is: one
+    traversal of the island's member list (relay scan + absorber loop, O(N))
+    plus, **per absorber it feeds, one `pathCap` BFS over the island** —
+    O(N + E) each when the island contains a relay (relay-free islands
+    short-circuit to O(1) per absorber, and the slice's typical rod-plus-jars
+    island has no relay). Warm worst case per deposit: **O(N + A·(N + E))**;
+    per level-tick, at most 8 deposits: **O(8 · (N + A·(N + E)))**. Queue
+    bookkeeping adds ordered-map operations — `firstKeyAtOrAfter` /
+    `nextKeyAfter` / `headAmount` / `removeHead` / `dropAll` are **O(log K)**
+    each, ≤ a small constant number per inspection, so ≤ **O(8 log K)** per
+    tick (and `queueSurge` appends are O(log K) each in the entity phase).
+  - **Cold global cache rebuild (not a drain cost, stated for honesty).**
+    When topology or freeze state changed since the last access, the first
+    accessor pays the global rebuild — in this design always `core.tick()`,
+    never the drain (call order above). That rebuild is **global, not
+    per-island**: `refreshCanonicalCache` collects and sorts every live node
+    with a boxed comparator (**O(L log L)** comparisons plus O(L)
+    boxing/copy), and `refreshIslandCache` BFS-labels the entire live graph
+    (**O(L + Eg)**). **`REBUILD_BUDGET` (1,024 visits) does NOT cap these
+    rebuilds** — it bounds only `runRebuild`'s network-relabel queue; the
+    cache rebuilds are uncapped and proportional to the whole level graph.
+  - **Snapshot on content mutation.** Any tick whose drain mutates queue
+    content triggers `maybeSnapshot`, and a snapshot serializes the whole
+    graph plus queue: **O(G + K)** — not avoidable without changing the
+    frozen snapshot granularity.
+  - **Enforceable gates.** CP1A pins **no wall-clock CI gate** for the drain
+    (the "counter now, milliseconds later" rule); the only CI-checkable
+    counters are the ≤8 inspections/≤8 deposits per tick bound
+    (`u04_drain_budget_inspections_bounded`) — asymptotic statements above
+    are documentation, not enforced claims. What rev 2 wrongly claimed
+    ("no island scans anywhere") stays withdrawn; what IS true and enforced:
+    no `nodeReport` calls, no scans for *skipped* (dormant/frozen/dirty)
+    entries, and an empty queue costs one O(1) check.
+  - **Fairness.** With `K` pending positions, every position is inspected at
+    least once every `ceil(K / 8)` ticks regardless of where traffic
+    concentrates — proven MC-free at scale (>1024 entries) in
+    `PendingSurgeQueueTest` and integration-checked at small K in
+    `u04_queue_no_starvation` (§13). Budget-window semantics are the
+    documented core rule: a post-`tick()` deposit draws on the current
+    window's remaining absorber budgets, cumulatively.
 
 **The jar (U05): storage and surge absorber on one `ChargeBuffer`.**
 
@@ -642,24 +687,51 @@ ring tangent to the dome surface. The sanctioned extension names **every**
 touched class and its freeze status explicitly — and it does **not** claim the
 pool is untouched, because it is not:
 
+- **The normal representation — ONE exact 24-bit signed-component packing,
+  end to end.** One `int` (`normalPacked24`) carries the outward unit normal
+  identically through payload → `FxRippleSnapshot` → `FxRippleRing` →
+  `OrientedVisitor` → render state; it is decoded to floats **exactly once
+  per consumer, at the consumption point** (render-state extraction and
+  T2/T3 burst placement), never re-encoded. It is deliberately **not**
+  octahedral (an octahedral fold would fit 16 bits but needs a fold/unfold
+  algorithm with subtle sign edge cases; the component packing below is
+  exactly specifiable in four lines and the payload budget still holds —
+  §3). Pinned algorithm, new MC-free helpers in `fx.core` `RippleMath`:
+  - **Pack** — `int packNormal24(double nx, double ny, double nz)`: if any
+    component is non-finite **or** `nx² + ny² + nz² < 1e-12`, return
+    `NORMAL_PACKED_UP`. Otherwise normalize to unit length, then per
+    component `b = clamp(round(c × 127), −127, 127)` (−128 is never
+    produced), and pack
+    `((bx & 0xFF) << 16) | ((by & 0xFF) << 8) | (bz & 0xFF)` — result always
+    in [0, 0xFFFFFF], never 0x000000 for a unit input.
+  - **Decode** — `float unpackNormalX(int p)` / `unpackNormalY` /
+    `unpackNormalZ`: sign-extend the byte (`(byte) (p >>> 16)` etc.) and
+    divide by 127; consumers then renormalize the decoded vector (its length
+    deviates from 1 only by quantization; per-component error before
+    renormalization ≤ 1/254). The zero vector cannot reach decode — §3
+    validation rejects 0x000000.
+  - **Numeric +Y constant** — `NORMAL_PACKED_UP = 0x007F00` (= 32,512:
+    bx = 0, by = 127, bz = 0), which decodes exactly to (0, 1, 0).
+  - **Validation split** — the server encodes only via `packNormal24`
+    (range-correct by construction); the client payload codec **rejects**
+    values outside [0, 0xFFFFFF] and rejects 0x000000 (reject-not-clamp,
+    plan §3.2); pool/snapshot/visitors treat the int as opaque.
 - **`FxRippleRing` (`fx.core`, MC-free, amended source-compatibly):** the
-  structure-of-arrays slots gain three `int` columns — the 16-bit octahedral
-  **outward unit normal** code, the 8-bit **event nonce**, and
-  **`surfaceOffsetQ8`**, the Q8.8 offset from the pool position to the impact
-  point along the normal (**the discriminator: 0 = legacy world ripple,
-  > 0 = shield impact**) — and the pool identity becomes the triple
-  (posKey, startTick, nonce) internally. **Existing signatures are retained,
-  not replaced:** the current `addIfAbsent(long, long, int, int)` overload
-  stays and delegates with `normalOct = OCT_UP, nonce = 0,
-  surfaceOffsetQ8 = 0` (`OCT_UP` = the pinned octahedral code for +Y, a new
-  `fx.core` constant); the existing `Visitor` interface and
-  `visitAt`/`visitAll` stay byte-for-byte compatible (they simply do not
-  surface the new columns). The oriented path is **additive**: a new
-  `addIfAbsent(long posKey, long startTick, int colorArgb, int radiusQ8,
-  int normalOct, int nonce, int surfaceOffsetQ8)` overload, a new
-  `OrientedVisitor` (seven columns:
+  structure-of-arrays slots gain three `int` columns — **`normalPacked24`**,
+  the 8-bit **event nonce**, and **`surfaceOffsetQ8`**, the Q8.8 offset from
+  the pool position to the impact point along the normal (**the
+  discriminator: 0 = legacy world ripple, > 0 = shield impact**) — and the
+  pool identity becomes the triple (posKey, startTick, nonce) internally.
+  **Existing signatures are retained, not replaced:** the current
+  `addIfAbsent(long, long, int, int)` overload stays and delegates with
+  `normalPacked24 = NORMAL_PACKED_UP, nonce = 0, surfaceOffsetQ8 = 0`; the
+  existing `Visitor` interface and `visitAt`/`visitAll` stay byte-for-byte
+  compatible (they simply do not surface the new columns). The oriented path
+  is **additive**: a new `addIfAbsent(long posKey, long startTick,
+  int colorArgb, int radiusQ8, int normalPacked24, int nonce,
+  int surfaceOffsetQ8)` overload, a new `OrientedVisitor` (seven columns:
   `accept(long posKey, long startTick, int colorArgb, int radiusQ8,
-  int normalOct, int nonce, int surfaceOffsetQ8)`), and **both** new
+  int normalPacked24, int nonce, int surfaceOffsetQ8)`), and **both** new
   extraction walks `visitAtOriented(long anchorPosKey, OrientedVisitor)` and
   `visitAllOriented(OrientedVisitor)` (the latter is what the T2 mote cadence
   migrates to — see the tier rule below). Legacy identity
@@ -670,16 +742,32 @@ pool is untouched, because it is not:
   the pinned compatibility gate — with `FxRippleRingIdentityTest` added for
   the oriented path (`fx.core` is not in `FROZEN_PACKAGES`, so this is not a
   lock diff — §12(1)).
-- **Impact point, one rule for every tier (T1/T2/T3):**
-  `impactPoint = center + normal × surfaceOffsetQ8` (Q8 fixed point,
-  deterministic on every client). T1 tessellates the ring at the impact point
-  on the normal's tangent plane; T2 spawns its mote cadence bursts at the
-  impact point (via `visitAllOriented`); T3 spawns its one arrival burst at
-  the impact point. **When `surfaceOffsetQ8 == 0` the code short-circuits to
-  the pool position itself** — no fixed-point math, no float conversion — so
-  every legacy ripple renders byte- and position-identically to W1D at all
-  three tiers (today's T2/T3 bursts at `BlockPos.of(posKey)` and today's XZ
-  ring at the block center are reproduced exactly).
+- **Impact point — exact pinned math, one rule for every tier (T1/T2/T3):**
+  - **World point (T2/T3 and any world-space consumer):**
+    `impactWorld = Vec3.atCenterOf(center).add(decodedNormal.scale(
+    surfaceOffsetQ8 / 256.0))` — double precision, deterministic on every
+    client (`decodedNormal` = the renormalized unpack above). T2 spawns its
+    mote cadence bursts at exactly `impactWorld` (via `visitAllOriented` and
+    a new coordinate-taking `spawnMoteBurstAt(level, x, y, z, count, speed)`;
+    the existing `BlockPos` method delegates to it with its historical
+    `(+0.5, +1.1, +0.5)` offsets); T3 spawns its one arrival burst at exactly
+    `impactWorld`.
+  - **Render-local point (T1 geometry):** ripple geometry positions are
+    block-local — the render pose is already translated to the anchor block
+    origin (verified: `FxRippleGeometry` emits around
+    `cx = 0.5, cy = 1.0 + HEIGHT_ABOVE_TOP, cz = 0.5`). The oriented ring
+    therefore tessellates around the local point
+    `(0.5 + nx·d, 0.5 + ny·d, 0.5 + nz·d)` with `d = surfaceOffsetQ8 /
+    256.0` — numerically identical to `impactWorld` minus the anchor block
+    origin — on the orthonormal basis perpendicular to the normal.
+  - **Explicit `surfaceOffsetQ8 == 0` legacy branch:** the code takes the
+    **pre-change code path verbatim** — T1 keeps the existing local
+    constants `(0.5, 1.0 + HEIGHT_ABOVE_TOP, 0.5)` (the legacy ring floats
+    above the block top, NOT at the block center — the formula above is
+    never applied to legacy ripples), T2/T3 keep calling the existing
+    `spawnMoteBurst(level, BlockPos.of(posKey), …)` with its `(+0.5, +1.1,
+    +0.5)` offsets — so every legacy position is preserved bit-exactly at
+    all three tiers.
 - **`FxRippleSnapshot` + `FxDispatcher` (`client.fx` top level — LOCK-FROZEN,
   reviewed lock diff, exact post-change surface pinned):** the record is
   today `FxRippleSnapshot(BlockPos center, float maxRadius, int colorArgb,
@@ -687,37 +775,39 @@ pool is untouched, because it is not:
   `of(FxRipplePayload)` (verified against source). Post-change it is pinned
   as — components in this exact order and these exact types —
   `FxRippleSnapshot(BlockPos center, float maxRadius, int colorArgb,
-  long startGameTime, float normalX, float normalY, float normalZ, int nonce,
-  int surfaceOffsetQ8)`, plus a **backwards-compatible secondary
-  constructor** with the original four components delegating with
-  `(0, 1, 0), nonce 0, surfaceOffsetQ8 0`, the existing
-  `of(FxRipplePayload)` factory unchanged (it calls the four-component
-  constructor — the W1D path compiles and renders bit-identically), and a new
-  `of(ShieldImpactPayload)` factory (decodes the octahedral normal, applies
-  the colorblind remap exactly once as today, fills `maxRadius` from
-  `SHIELD_IMPACT_RING_RADIUS_Q8`). `FxDispatcher` keeps its current pinned
-  signatures untouched — `public synchronized void
-  enqueueRipple(FxRippleSnapshot)`, package-private `synchronized boolean
-  enqueueRippleFromDimension(FxRippleSnapshot, ResourceKey<Level>,
-  ResourceKey<Level>)`, `public synchronized void
+  long startGameTime, int normalPacked24, int nonce, int surfaceOffsetQ8)` —
+  the packed normal rides the snapshot as the **same opaque `int`** the wire
+  carries (no float triple in the record: one representation end to end,
+  decoded only at consumption points) — plus a **backwards-compatible
+  secondary constructor** with the original four components delegating with
+  `(NORMAL_PACKED_UP, 0, 0)`, the existing `of(FxRipplePayload)` factory
+  unchanged (it calls the four-component constructor — the W1D path compiles
+  and renders bit-identically), and a new `of(ShieldImpactPayload)` factory
+  (copies `normalPacked24` verbatim, applies the colorblind remap exactly
+  once as today, fills `maxRadius` from `SHIELD_IMPACT_RING_RADIUS_Q8`).
+  `FxDispatcher` keeps its current pinned signatures untouched — `public
+  synchronized void enqueueRipple(FxRippleSnapshot)`, package-private
+  `synchronized boolean enqueueRippleFromDimension(FxRippleSnapshot,
+  ResourceKey<Level>, ResourceKey<Level>)`, `public synchronized void
   extractRipplesAt(FxProbeRenderState, BlockPos, long)` — and adds exactly
   one public method: `public synchronized void
   extractOrientedRipplesAt(FxProbeRenderState out, BlockPos anchor,
   long nowTick)` over `visitAtOriented`, for the render path that needs
   normals/offsets. Internally the enqueue path now always calls the
   seven-argument ring overload with the snapshot's fields (legacy snapshots
-  carry the 0/`OCT_UP`/0 defaults, producing the identical legacy identity),
-  and the T2 cadence in `tick` migrates from `visitAll` to
-  `visitAllOriented` to place bursts at the impact point (offset 0
-  short-circuits to `BlockPos.of(posKey)` — today's behavior exactly).
+  carry the `NORMAL_PACKED_UP`/0/0 defaults, producing the identical legacy
+  identity), and the T2 cadence in `tick` migrates from `visitAll` to
+  `visitAllOriented` to place bursts by the pinned tier rule (the offset-0
+  branch takes today's `BlockPos.of(posKey)` path exactly).
 - **`FxProbeRenderState` + `FxRippleGeometry` (`client.fx.render` — internals,
-  NOT lock-frozen):** the extracted per-frame state carries per-ripple normal
-  components and the **impact point** — computed deterministically at
-  extraction by the one tier rule (`center + normal × surfaceOffsetQ8`, Q8
-  fixed point, offset-0 short-circuit); `emitRing` builds the ring on an
-  orthonormal basis perpendicular to the normal (basis derived
-  deterministically from the normal; winding defined so the front face looks
-  along the normal, matching today's from-above convention for +Y).
+  NOT lock-frozen):** the extracted per-frame state carries the per-ripple
+  **decoded** normal floats and the **render-local impact point** — both
+  computed deterministically at extraction (the single place the packed int
+  is unpacked for T1) by the pinned tier rule, with the offset-0 legacy
+  branch; `emitRing` builds the ring on an orthonormal basis perpendicular
+  to the normal (basis derived deterministically from the normal; winding
+  defined so the front face looks along the normal, matching today's
+  from-above convention for +Y).
 - **`FxRippleBroadcaster` + `FxPayloads` (main `fx` — NOT lock-frozen):** gain
   the shield-impact broadcast entry point and payload registration; no lock
   impact (§12(1)).
@@ -744,7 +834,8 @@ pool is untouched, because it is not:
 - **No new RenderType, no new pipeline:** the impact ring renders through the
   existing `cuprum:fx_ripple` RenderType at T1 and the existing vanilla-pipeline
   T2 fallback; census stays 1 through P3 (§3 table).
-- Tests: `FxRippleRingIdentityTest` (unit — widened identity, legacy-tuple
+- Tests: `NormalPack24Test` (unit — the pinned pack/decode algorithm),
+  `FxRippleRingIdentityTest` (unit — widened identity, legacy-tuple
   coalescing, eviction unchanged), `OrientedRippleBasisTest` (unit — §13), and
   the client gametests in §13 including the W1D-screenshot backward-compat
   proof.
@@ -756,10 +847,12 @@ per client (16/s, JOIN/DISCONNECT/STOP hardened). The sanctioned extension adds 
 client over the same `SEND_WINDOW_TICKS` — and a
 `broadcastShieldImpact(ServerLevel level, BlockPos center, Vec3 outwardNormal,
 int surfaceOffsetQ8, int colorArgb, int nonce)` entry point that sends the §3
-payload to tracking players through that window; `surfaceOffsetQ8` is the dome
-radius in Q8 (the controller passes `DOME_RADIUS × 256` = 2,048), and `nonce`
-is the controller-supplied event identity (already wrapped to 0..255 by the
-owner; the broadcaster masks `& 0xFF` defensively on encode).
+payload to tracking players through that window; the broadcaster encodes
+`outwardNormal` via `RippleMath.packNormal24` (§8 — non-finite/degenerate
+inputs become `NORMAL_PACKED_UP`), `surfaceOffsetQ8` is the dome radius in Q8
+(the controller passes `DOME_RADIUS × 256` = 2,048), and `nonce` is the
+controller-supplied event identity (already wrapped to 0..255 by the owner;
+the broadcaster masks `& 0xFF` defensively on encode).
 Overflow is dropped silently (idempotent, loss-tolerant cosmetic events; the
 client pool would evict anyway). Reusing the session object avoids duplicating
 the JOIN/DISCONNECT race hardening.
@@ -1032,8 +1125,8 @@ its established review mechanism:
      `ChargeGraphManager.queueSurge(BlockPos, long)` and
      `droppedSurgeCgTotal()` (§6, exact signatures pinned there); `client.fx`
      (top level) — the `FxRippleSnapshot` record extension with the exact
-     pinned post-change component list (§8: four original components + three
-     normal floats + `nonce` + `surfaceOffsetQ8`, additive secondary
+     pinned post-change component list (§8: four original components +
+     `normalPacked24` + `nonce` + `surfaceOffsetQ8`, additive secondary
      constructor, new `of(ShieldImpactPayload)` factory) and the
      `FxDispatcher` **additive** oriented extraction entry point
      (`extractOrientedRipplesAt(FxProbeRenderState, BlockPos, long)`;
@@ -1097,9 +1190,10 @@ its established review mechanism:
    2-byte VAR_INT bound, ≈64 blocks, comfortably above any dome radius) and
    `SHIELD_IMPACT_RING_RADIUS_Q8 = 512` (2.0 blocks — the impact ring's
    client-side visual max radius, within the existing `MAX_RADIUS_Q8` =
-   16,384 validity bound); the `OCT_UP` constant (§8) lands beside the
-   octahedral encode/decode helpers in `fx.core`, also lock-free; W4 applies
-   the CP0C-sanctioned holo budget additions. No existing constant changes.
+   16,384 validity bound); the `NORMAL_PACKED_UP = 0x007F00` constant and the
+   `packNormal24`/`unpackNormalX/Y/Z` helpers (§8) land in `fx.core`
+   `RippleMath`, also lock-free; W4 applies the CP0C-sanctioned holo budget
+   additions. No existing constant changes.
 8. **CP0C clarifications** recorded in §9 (GameTime probe outcome neutrality;
    variant-dispatch proof = production variant 0 + one diagnostic variant) and
    §13 (W4 ms figures are logged evidence, not CI gates — the binding CI gates
@@ -1164,10 +1258,11 @@ three-file API-freeze diff for `power`, `configSchemaFreeze` unchanged.
 
 | Test | Proves |
 |---|---|
-| `ShieldImpactPayloadTest` (unit) | codec bounds: octahedral normal round-trip, `surfaceOffsetQ8` range (0, 16,383] reject-not-clamp, nonce range 0..255 reject-not-clamp, encoded size ≤30 B ≤ `SHIELD_IMPACT_PAYLOAD_MAX_BYTES` |
+| `NormalPack24Test` (unit, MC-free) | §8 pinned algorithm: axis vectors round-trip exactly; `NORMAL_PACKED_UP` decodes to (0, 1, 0); non-finite and near-zero inputs pack to `NORMAL_PACKED_UP`; −128 bytes never produced; per-component decode error ≤ 1/254 over a sampled unit sphere |
+| `ShieldImpactPayloadTest` (unit) | codec bounds: `normalPacked24` range [0, 0xFFFFFF] reject-not-clamp with 0x000000 also rejected, `surfaceOffsetQ8` range (0, 16,383] reject-not-clamp, nonce range 0..255 reject-not-clamp, encoded size ≤31 B ≤ `SHIELD_IMPACT_PAYLOAD_MAX_BYTES` |
 | `InterceptCostTest` (unit) | §8 boundary table: 0 / 1.0 / pinned arrow speed / 10.0 / 10.0+ε / NaN / Q8 rounding edges |
-| `OrientedRippleBasisTest` (unit) | normal → orthonormal basis is deterministic; +Y basis reproduces the W1D XZ ring exactly; impact-point rule `center + normal × surfaceOffsetQ8` in Q8, including the **offset-0 short-circuit returning the pool position bit-exactly** (legacy path) |
-| `FxRippleRingIdentityTest` (unit) | widened (posKey, startTick, nonce) identity; legacy tuples (nonce 0) coalesce exactly as W1D; the three new columns (normalOct/nonce/surfaceOffsetQ8) round-trip through `visitAtOriented` **and** `visitAllOriented`; legacy 4-arg `addIfAbsent` yields 0/`OCT_UP`/0; eviction/expiry unchanged |
+| `OrientedRippleBasisTest` (unit) | normal → orthonormal basis is deterministic; +Y basis reproduces the W1D XZ ring exactly; the §8 pinned impact-point math — world `Vec3.atCenterOf(center) + decodedNormal × (surfaceOffsetQ8 / 256.0)` and its block-local equivalent — including the **offset-0 legacy branch taking the pre-change path** (old constants, old positions) |
+| `FxRippleRingIdentityTest` (unit) | widened (posKey, startTick, nonce) identity; legacy tuples (nonce 0) coalesce exactly as W1D; the three new columns (normalPacked24/nonce/surfaceOffsetQ8) round-trip through `visitAtOriented` **and** `visitAllOriented`; legacy 4-arg `addIfAbsent` yields `NORMAL_PACKED_UP`/0/0; eviction/expiry unchanged |
 | `u02_arrow_intercepted_at_surface` | incoming arrow removed at the boundary, never inside |
 | `u02_intercept_cost_exact` | scripted projectile at pinned velocity costs exactly the §8 formula, spent atomically from the controller escrow |
 | `u02_no_charge_no_intercept` | empty escrow/network ⇒ projectile passes; no partial payment ever |
@@ -1180,7 +1275,7 @@ three-file API-freeze diff for `power`, `configSchemaFreeze` unchanged.
 | `u02_same_tick_impacts_distinct` | two same-tick impacts on one dome carry distinct nonces and occupy two pool slots (server payload count + client pool count) |
 | `u02_impact_payload_rate_capped` | one S2C `shield_impact` per intercept; ≥9 intercepts in one second reach one client as ≤8 payloads (send window) |
 | client: `u02_impact_ripple_renders` + screenshot/recording | **T1**: oriented ripple on the **existing** `fx_ripple` RenderType at the derived impact point, ring tangent to the dome; shared pool eviction; census still 1 |
-| client: `u02_impact_t2_motes_at_point` | forced T2 rung ⇒ the mote cadence bursts (via `visitAllOriented`) spawn at `center + normal × surfaceOffsetQ8`, not at the dome center |
+| client: `u02_impact_t2_motes_at_point` | forced T2 rung ⇒ the mote cadence bursts (via `visitAllOriented` and `spawnMoteBurstAt`) spawn at the §8 world impact point `Vec3.atCenterOf(center) + decodedNormal × (surfaceOffsetQ8 / 256.0)`, not at the dome center |
 | client: `u02_impact_t3_burst_at_point` | forced T3 rung ⇒ the single arrival burst spawns at the impact point |
 | client: `u02_legacy_ripple_tiers_unchanged` | a W1D `FxRipplePayload` ripple under T1/T2/T3 in turn: ring geometry, T2 cadence positions and T3 burst position all match pre-change behavior exactly (offset-0 short-circuit), and the pre-existing W1D ripple screenshots pass unchanged (backward-compat proof) |
 
@@ -1423,7 +1518,10 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
    pass unmodified** as the pinned compatibility gate. *(Round 5 items 2–3
    completed this: a third `surfaceOffsetQ8` column and `visitAllOriented`
    were added, and the full post-change `FxRippleSnapshot` record and
-   dispatcher signatures were pinned against source.)*
+   dispatcher signatures were pinned against source. Round 6 item 2 then
+   renamed the column `normalOct` → `normalPacked24`: the representation was
+   never actually pinned as octahedral, and rev 6 pins the exact 24-bit
+   signed-component packing instead.)*
 7. **Multi-strike and order-independence wording** — upheld; §6/§8: a rod
    with multiple queued strikes drains one per tick (same-tick multi-strike
    drain at a single position is explicitly not a property of the design;
@@ -1440,11 +1538,13 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
    Rev 5 defines the symbols N (island nodes), E (island edges, ≤ 3N),
    A (island absorbers), G (all registered nodes a snapshot serializes) and
    K (queue positions), and pins the source-accurate bounds: per deposit
-   O(N + A·(N + E)) (relay-free islands collapse toward O(N); a cold island
-   cache adds one O(N + E) refresh), per tick ≤ 8 deposits ⇒
-   O(8·(N + A·(N + E))), and any content-mutating drain tick additionally
-   triggers an O(G + K) snapshot. Counters remain the only CI gates; no
-   wall-clock claim.
+   O(N + A·(N + E)) (relay-free islands collapse toward O(N)), per tick ≤ 8
+   deposits ⇒ O(8·(N + A·(N + E))), and any content-mutating drain tick
+   additionally triggers an O(G + K) snapshot. Counters remain the only CI
+   gates; no wall-clock claim. *(Round 6 item 1 corrected this round's "a
+   cold island cache adds one O(N + E) refresh": the cache rebuilds are
+   GLOBAL — O(L log L) sort plus O(L + Eg) labeling — and are paid by
+   `core.tick()`, never by the drain, which always runs warm.)*
 2. **Oriented fallback incomplete / representation incoherent** — upheld;
    §3/§8: `visitAllOriented(OrientedVisitor)` added (the T2 cadence migrates
    to it); a third ring column `surfaceOffsetQ8` (0 = legacy, > 0 = shield)
@@ -1457,7 +1557,9 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
    radius (client constant `SHIELD_IMPACT_RING_RADIUS_Q8`) — recalculated at
    8+3+2+5+2+10 = ≤30 B ≤ 32. Tier tests pinned
    (`u02_impact_t2_motes_at_point`, `u02_impact_t3_burst_at_point`,
-   `u02_legacy_ripple_tiers_unchanged`).
+   `u02_legacy_ripple_tiers_unchanged`). *(Round 6 item 2 replaced the still
+   unpinned 16-bit normal encoding with the exact 24-bit signed-component
+   packing, moving the budget to 8+4+2+5+2+10 = ≤31 B ≤ 32.)*
 3. **Lock-visible guessing** — upheld; §8/§12(1): the current
    `FxRippleSnapshot(BlockPos center, float maxRadius, int colorArgb, long
    startGameTime)` record was inspected and the full post-change component
@@ -1466,7 +1568,9 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
    class to a **package-private `dev.cuprum.cuprum.charge` class** with its
    package-private constructor/method surface pinned for tests — no public
    `charge.core` API is added and the §12(1) lock discussion drops
-   `charge.core` from the diff list.
+   `charge.core` from the diff list. *(Round 6 items 2–4 completed both
+   pins: the snapshot's normal became the packed int and the queue API
+   gained its codec methods and exact ring-function preconditions.)*
 4. **Rewind understated as crash-only** — upheld; §6/§12(3): because
    cursor-only motion never marks the SavedData dirty, the save pass skips
    the file — so ANY restart (clean shutdown, autosave, or crash) may rewind
@@ -1485,6 +1589,60 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
    drain — same-tick multi-strikes on one rod queue together and drain on
    subsequent ticks — or while the node is frozen/dirty; always bounded by
    the 4-cap.
+
+### Round 6 (Sol exactness findings on revision 5)
+
+1. **Warm and cold costs conflated** — upheld; §6: revision 5 charged the
+   drain a per-deposit "cold island cache refresh O(N + E)", which is wrong
+   twice over — the cache rebuilds are **global** (`refreshCanonicalCache`
+   boxes and sorts every live node, O(L log L) comparisons plus O(L) copy;
+   `refreshIslandCache` BFS-labels the entire live graph, O(L + Eg) — both
+   verified in `ChargeGraphCore`), and the drain never pays them because it
+   runs after `core.tick()` in the same `endWorldTick()` with no topology or
+   freeze mutation in between, so its refresh calls are always O(1) version
+   checks. Rev 6 defines L/Eg beside N/E/A/G/K, separates the warm drain
+   bound O(8·(N + A·(N + E))) from the cold global rebuild paid by
+   `core.tick()`, adds the ordered-map queue costs (O(log K) per keyed
+   operation, ≤ O(8 log K) per drain tick, O(log K) per append) and keeps the
+   O(G + K) content-mutation snapshot. It explicitly states
+   **`REBUILD_BUDGET` does not cap the cache rebuilds** (it bounds only
+   `runRebuild`'s relabel queue). Only the ≤8 inspections/deposits counters
+   remain enforceable gates; every asymptotic statement is documentation.
+2. **Normal representation incoherent/underspecified** — upheld; §3/§8: one
+   exact **24-bit signed-component packed int** (`normalPacked24`) now
+   travels unchanged through payload, `FxRippleSnapshot` (the record carries
+   the int, not float triples), `FxRippleRing`, `OrientedVisitor` and into
+   render state, decoded exactly once per consumer. The pack/decode
+   algorithm is pinned (normalize → per-component `clamp(round(c × 127),
+   −127, 127)` → byte-pack; sign-extend and divide by 127, then renormalize;
+   error ≤ 1/254 per component), non-finite/near-zero inputs pack to the
+   pinned numeric +Y constant `NORMAL_PACKED_UP = 0x007F00`, the payload
+   codec rejects out-of-range and zero-vector values, and the column is
+   renamed away from `normalOct` because the encoding is deliberately not
+   octahedral (justified in §8). Payload recalculated: 8+4+2+5+2+10 =
+   ≤31 B ≤ 32 (`NormalPack24Test`, updated `ShieldImpactPayloadTest`).
+3. **Impact-point math unpinned** — upheld; §8: world point
+   `Vec3.atCenterOf(center).add(decodedNormal.scale(surfaceOffsetQ8 /
+   256.0))`; T1 render-local equivalent `(0.5 + nx·d, 0.5 + ny·d,
+   0.5 + nz·d)` in the anchor-block-local frame (the pose is already
+   translated to the block origin — verified in `FxRippleGeometry`); T2/T3
+   spawn at the world point via the new `spawnMoteBurstAt` overload (the
+   `BlockPos` method delegates with its historical `(+0.5, +1.1, +0.5)`
+   offsets). The `surfaceOffsetQ8 == 0` branch takes the pre-change code
+   path verbatim — including the legacy ring's `(0.5, 1.0 +
+   HEIGHT_ABOVE_TOP, 0.5)` above-block-top position, which the oriented
+   formula would NOT reproduce — preserving all old positions bit-exactly.
+4. **Queue API incompletely pinned** — upheld; §6: the package-private
+   surface now includes the codec methods (`snapshotKeys`, `amountsAt`,
+   `replaceAll` with pinned validation and exception behavior) and exact
+   ring-function semantics — `firstKeyAtOrAfter`/`nextKeyAfter` are total
+   wrapping functions for non-empty queues that **throw
+   `IllegalStateException` when empty** (no nullable returns, no sentinel
+   longs), `nextKeyAfter` is a ceiling lookup that works after its argument
+   key was removed, and `headAmount`/`removeHead`/`dropAll`/`amountsAt`
+   require key presence. The §6 drain pseudocode was rewritten against this
+   exact API: one emptiness check, `steps = min(8, positionCount)`, and a
+   pinned deterministic cursor value when the loop empties the queue.
 
 ## 15. CP1A exit (delta over the CP1 exit checklist)
 
