@@ -1,10 +1,10 @@
-# CP1A — The Playable Vertical Slice (binding amendment, revision 6)
+# CP1A — The Playable Vertical Slice (binding amendment, revision 7)
 
 Status: **BINDING**. This document is the authoritative sequencing and contract
 amendment for Cuprum's first post-foundation implementation work, issued at/after
-the W1E foundation commit `7b1d9fe`. Revision 6 supersedes revision 5 after the
-review round recorded in §14 (round 6) demanded exact runtime APIs;
-§14 records every finding of all six review rounds and how each was reconciled
+the W1E foundation commit `7b1d9fe`. Revision 7 supersedes revision 6 after the
+review round recorded in §14 (round 7) closed the last edge contracts;
+§14 records every finding of all seven review rounds and how each was reconciled
 against repository truth. Where this document is silent,
 `docs/foundation/FOUNDATION_PLAN.md` (as amended by
 `docs/expansions/CP0C_HOLOSPHERE.md`) and the sealed concept docs govern; where a
@@ -316,7 +316,8 @@ public class LightningCaptureRodBlock extends LightningRodBlock implements Entit
         super.onLightningStrike(state, level, pos);   // vanilla power pulse + behavior preserved
         if (level instanceof ServerLevel serverLevel) {
             ChargeGraphManager.of(serverLevel)
-                    .queueSurge(pos, ChargeBalance.strikeDepositCg()); // full 270,000 Cg, §6
+                    .queueSurge(pos, ChargeBalance.strikeDepositCg()); // default 270,000 Cg, §6
+                    // (a configured 0 is queueSurge's pinned no-op — §6 amount domain)
         }
     }
 }
@@ -338,7 +339,9 @@ against `LightningBolt` sources: `powerLightningRod()` runs for every bolt that
 lands on a rod regardless of cause (natural storm strike, channeling trident,
 `/summon`, skeleton-trap), and the `visualOnly` flag suppresses only fire creation
 and entity damage — **not** the rod-power callback. Every callback invocation
-queues the full configured `strikeDepositCg`. The 10%-loss figures elsewhere in
+queues the full configured `strikeDepositCg` (queuing nothing, by the §6
+pinned no-op, when an operator has configured it to the valid bound-minimum
+0). The 10%-loss figures elsewhere in
 the concepts (SHD-04 "243,000 Cg = 270,000 minus 10% arc loss", PWR-24 "minus 10%
 string loss") are **redirection losses of those specific later features**, not
 properties of a direct hit (repository truth: `RepairedConceptSemanticsTest` pins
@@ -395,11 +398,27 @@ machinery as designed.
   explicitly lock-reviewed **amendment to the frozen `charge` package public
   surface** (§12(1)); the exact signature is pinned here so no other name or
   shape may be implemented. It returns the amount actually queued (0 when
-  dropped). It validates a node or dormant record exists at the origin (else
-  the amount is dropped with a WARN log and a saturating `droppedSurgeCg`
-  diagnostic counter, exposed by a new lock-reviewed accessor
-  `public long droppedSurgeCgTotal()` — never silently), then appends the
-  amount to the per-level **pending-surge queue** and marks `queueDirty`.
+  dropped or no-op). **Pinned amount domain**, anchored to the repository's
+  authoritative range `CuprumCommonConfig.Bounds.STRIKE_DEPOSIT_CG` =
+  [0, 100,000,000] (the same range `ConfigSyncPayload.requireInRange`
+  enforces on sync):
+  - `amountCg == 0` — **explicit no-op**: returns 0 immediately with **no
+    queue mutation, no `droppedSurgeCg` increment, no `queueDirty`, no
+    WARN**. `charge.strikeDepositCg = 0` is a *valid* config value (the
+    bound's lower end — "captured strikes deposit nothing"), so a zero
+    amount is a legitimate configured state, not an error and not a drop.
+  - `amountCg < 0` or `amountCg > 100,000,000` — **throws
+    `IllegalArgumentException`**. The only caller passes the
+    config-validated `strikeDepositCg` (clamped at load, range-checked on
+    sync), so an out-of-domain value is a programming error and crashes
+    loudly; it is **not** counted in `droppedSurgeCg`, which measures real
+    strike energy lost, never bugs.
+  - In-domain positive amounts: validates a node or dormant record exists at
+    the origin (else the amount is dropped with a WARN log and a saturating
+    `droppedSurgeCg` diagnostic counter, exposed by a new lock-reviewed
+    accessor `public long droppedSurgeCgTotal()` — never silently), then
+    appends the amount to the per-level **pending-surge queue** and marks
+    `queueDirty`.
 
 **The pending-surge queue (per level, inside `ChargeGraphManager`):**
 
@@ -447,8 +466,10 @@ machinery as designed.
   `pending_surge_cursor` fields of `cuprum_charge_graph` (schema
   `CuprumSchema.WORLD` 1 → 2 with migration). **Hostile decode is field-local:**
   each queue entry is decoded leniently — a key with >4 amounts is trimmed to
-  its first 4, an amount outside `(0, STRIKE_DEPOSIT_CG upper bound]` is
-  dropped, a structurally malformed entry is dropped, each with one WARN — and
+  its first 4, an amount outside (0, 100,000,000] (the
+  `Bounds.STRIKE_DEPOSIT_CG` upper end — the same domain `append` enforces by
+  exception) is dropped, a structurally malformed entry is dropped, each with
+  one WARN — and
   a malformed cursor falls back to its default. A hostile queue field can
   therefore **never** fail the whole-record decode or default `nodes` /
   `vented_total` to empty/0. Queued strikes survive unload and full restarts
@@ -467,7 +488,11 @@ machinery as designed.
   below is O(log K), K = position count):
   - `PendingSurgeQueue()` — empty queue, cursor `Long.MIN_VALUE`.
   - `long append(long posKey, long amountCg)` — returns the queued amount,
-    0 on the 4-cap drop.
+    0 on the 4-cap drop. **Accepts only the positive bounded domain
+    (0, 100,000,000]** (the `Bounds.STRIKE_DEPOSIT_CG` upper end) and throws
+    `IllegalArgumentException` otherwise — zero never reaches the queue (the
+    manager's `queueSurge` no-ops it first), and out-of-domain values are
+    bugs, not data.
   - `boolean hasPending()`; `int positionCount()`.
   - `long firstKeyAtOrAfter(long key)` — smallest pending posKey ≥ `key`,
     wrapping to the smallest pending posKey overall when none is ≥ `key`.
@@ -491,10 +516,10 @@ machinery as designed.
     copy (requires the key pending, throws otherwise);
     `void replaceAll(long[] posKeys, long[][] amounts, long cursor)` —
     wholesale replacement used by SavedData decode; requires strictly
-    ascending keys, per-key 1..4 amounts, every amount > 0 — throws
-    `IllegalArgumentException` on violation (the §6 field-local
-    hostile-decode trim/drop runs **before** this call, so a throw here means
-    a codec bug, not hostile data).
+    ascending keys, per-key 1..4 amounts, every amount in the same
+    (0, 100,000,000] domain as `append` — throws `IllegalArgumentException`
+    on violation (the §6 field-local hostile-decode trim/drop runs **before**
+    this call, so a throw here means a codec bug, not hostile data).
   Any rename requires a doc amendment, not a lock review.
 
 **The drain point (server thread, per level, after graph maintenance):** at the
@@ -541,12 +566,15 @@ for i in 1..steps:                                     // every iteration inspec
   and used below: **N** = node count of the loaded sub-island containing the
   deposit origin; **E** = adjacency-edge count of that island; **A** =
   surge-absorber count in that island; **L** = live (alive) node count of the
-  level's **whole** graph; **Eg** = adjacency-edge count of the whole graph
-  (both edge counts ≤ 3× their node counts in Minecraft — at most 6 faces per
-  node, undirected); **G** = total registered node count of the level's graph
-  (all islands plus dormant records — everything a snapshot serializes);
-  **K** = pending-queue position count. Costs, read off the actual
-  `ChargeGraphCore`/`ChargeGraphManager` source:
+  level's **whole** graph; **H** = `nodeArraySize`, the core's retained
+  **high-water** dense-id array size — the free-list reuses ids but the
+  parallel arrays never shrink, so H ≥ L and H reflects the historical peak
+  node count, not the current one; **Eg** = adjacency-edge count of the whole
+  graph (both edge counts ≤ 3× their node counts in Minecraft — at most 6
+  faces per node, undirected); **G** = total registered node count of the
+  level's graph (all islands plus dormant records — everything a snapshot
+  serializes); **K** = pending-queue position count. Costs, read off the
+  actual `ChargeGraphCore`/`ChargeGraphManager` source:
   - **Warm drain path (the normal case).** The drain runs inside
     `endWorldTick()` strictly after `core.tick(access)`, which itself begins
     with `refreshCanonicalCache(); refreshIslandCache()`; deposits mutate no
@@ -567,12 +595,18 @@ for i in 1..steps:                                     // every iteration inspec
     When topology or freeze state changed since the last access, the first
     accessor pays the global rebuild — in this design always `core.tick()`,
     never the drain (call order above). That rebuild is **global, not
-    per-island**: `refreshCanonicalCache` collects and sorts every live node
-    with a boxed comparator (**O(L log L)** comparisons plus O(L)
-    boxing/copy), and `refreshIslandCache` BFS-labels the entire live graph
-    (**O(L + Eg)**). **`REBUILD_BUDGET` (1,024 visits) does NOT cap these
-    rebuilds** — it bounds only `runRebuild`'s network-relabel queue; the
-    cache rebuilds are uncapped and proportional to the whole level graph.
+    per-island, and scans the high-water arrays, not just live nodes**:
+    `refreshCanonicalCache` walks all H dense-id slots to collect the L live
+    ones, then sorts them with a boxed comparator — **O(H + L log L)**
+    (O(L log L) comparisons plus O(L) boxing/copy on top of the O(H) walk) —
+    and `refreshIslandCache` clears all H island labels before BFS-labeling
+    the live graph — **O(H + L + Eg)**. In the same family,
+    `resetTransferBudgets` walks all H slots **every** `core.tick()` —
+    **O(H) per tick, unconditionally** — an existing allocator cost CP1A
+    inherits, not one the drain adds. **`REBUILD_BUDGET` (1,024 visits) does
+    NOT cap any of these** — it bounds only `runRebuild`'s network-relabel
+    queue; the cache rebuilds are uncapped and proportional to the whole
+    level graph's high-water size.
   - **Snapshot on content mutation.** Any tick whose drain mutates queue
     content triggers `maybeSnapshot`, and a snapshot serializes the whole
     graph plus queue: **O(G + K)** — not avoidable without changing the
@@ -697,13 +731,24 @@ pool is untouched, because it is not:
   algorithm with subtle sign edge cases; the component packing below is
   exactly specifiable in four lines and the payload budget still holds —
   §3). Pinned algorithm, new MC-free helpers in `fx.core` `RippleMath`:
-  - **Pack** — `int packNormal24(double nx, double ny, double nz)`: if any
-    component is non-finite **or** `nx² + ny² + nz² < 1e-12`, return
-    `NORMAL_PACKED_UP`. Otherwise normalize to unit length, then per
-    component `b = clamp(round(c × 127), −127, 127)` (−128 is never
-    produced), and pack
-    `((bx & 0xFF) << 16) | ((by & 0xFF) << 8) | (bz & 0xFF)` — result always
-    in [0, 0xFFFFFF], never 0x000000 for a unit input.
+  - **Pack** — `int packNormal24(double nx, double ny, double nz)`,
+    **overflow-safe by construction** (naive `nx² + ny² + nz²` overflows to
+    infinity for large finite inputs and underflows to 0 for subnormal ones;
+    neither can happen below):
+    1. if any component is NaN or infinite → return `NORMAL_PACKED_UP`;
+    2. `m = max(|nx|, |ny|, |nz|)`; if `m == 0.0` (exact — covers the zero
+       vector including negative zeros) → return `NORMAL_PACKED_UP`;
+    3. pre-scale by the max-abs component: `sx = nx/m, sy = ny/m,
+       sz = nz/m` — every component now lies in [−1, 1] with at least one
+       equal to ±1, for **any** finite nonzero input including
+       `Double.MAX_VALUE`-magnitude and subnormal vectors;
+    4. `len = Math.hypot(Math.hypot(sx, sy), sz)` — nested `Math.hypot`
+       cannot overflow or underflow here (its true value lies in [1, √3]);
+    5. `ux = sx/len` etc., then per component
+       `b = clamp(round(u × 127), −127, 127)` (−128 is never produced), and
+       pack `((bx & 0xFF) << 16) | ((by & 0xFF) << 8) | (bz & 0xFF)` —
+       result always in [0, 0xFFFFFF], and never 0x000000 (step 3 guarantees
+       one component with |u| ≥ 1/√3 ≈ 0.577, which rounds to |b| ≥ 73).
   - **Decode** — `float unpackNormalX(int p)` / `unpackNormalY` /
     `unpackNormalZ`: sign-extend the byte (`(byte) (p >>> 16)` etc.) and
     divide by 127; consumers then renormalize the decoded vector (its length
@@ -1211,8 +1256,9 @@ GameTests and client GameTests in `src/gametest` (INDEX prefixes
 
 | Test | Proves |
 |---|---|
-| `PendingSurgeQueueTest` (unit, MC-free, in `dev.cuprum.cuprum.charge` under `src/test` for package-private access, §6) | ascending-posKey ring order with cursor start/wrap, per-pos FIFO with one-head-drain-per-inspection, 4-entry bound with exact drop accounting, inspection-counted budget, **and the starvation proof at scale**: >1024 dormant/dirty entries plus sustained low-position appends ⇒ every position inspected at least once every `ceil(K/8)` simulated ticks, highest posKey included (cheap here; prohibitively heavy as a GameTest) |
-| `PendingSurgeCodecTest` (unit) | field-local hostile decode: >4-per-key trimmed, out-of-range amounts dropped, malformed entries dropped (each WARN), malformed cursor defaults — while `nodes`/`vented_total` in the same record decode untouched |
+| `PendingSurgeQueueTest` (unit, MC-free, in `dev.cuprum.cuprum.charge` under `src/test` for package-private access, §6) | ascending-posKey ring order with cursor start/wrap, per-pos FIFO with one-head-drain-per-inspection, 4-entry bound with exact drop accounting, inspection-counted budget, **`append` domain boundaries** (1 and 100,000,000 accepted; 0, −1 and 100,000,001 throw `IllegalArgumentException` with the queue unchanged; `replaceAll` enforces the same domain), **and the starvation proof at scale**: >1024 dormant/dirty entries plus sustained low-position appends ⇒ every position inspected at least once every `ceil(K/8)` simulated ticks, highest posKey included (cheap here; prohibitively heavy as a GameTest) |
+| `PendingSurgeCodecTest` (unit) | field-local hostile decode: >4-per-key trimmed, amounts outside (0, 100,000,000] dropped (0, negatives, 100,000,001 — never an exception on the decode path), malformed entries dropped (each WARN), malformed cursor defaults — while `nodes`/`vented_total` in the same record decode untouched |
+| `u04_queue_surge_amount_domain` (in `dev.cuprum.cuprum.charge`, §11 seam pattern) | manager boundaries: `queueSurge(pos, 0)` returns 0 as a pure no-op — queue empty, `droppedSurgeCgTotal()` unchanged, no `queueDirty` (next `maybeSnapshot` still early-returns), no WARN; `queueSurge(pos, −1)` and `queueSurge(pos, 100_000_001)` throw `IllegalArgumentException` without mutating; 1 and 100,000,000 queue normally |
 | `JarFillStageTest` (unit) | exact `fill` and comparator integer formulas at boundary values (0, 1, ⅓·cap ± 1, ⅔·cap ± 1, cap) |
 | `u04_scripted_strike_full_deposit` | scripted `LightningBolt` on the rod queues and (same `endWorldTick`) deposits exactly 270,000 Cg into an empty 3-jar bank; conservation Σ == 270,000, vented == 0 |
 | `u04_channeling_strike_deposit` | channeling-path bolt triggers the same full queue+deposit |
@@ -1258,7 +1304,7 @@ three-file API-freeze diff for `power`, `configSchemaFreeze` unchanged.
 
 | Test | Proves |
 |---|---|
-| `NormalPack24Test` (unit, MC-free) | §8 pinned algorithm: axis vectors round-trip exactly; `NORMAL_PACKED_UP` decodes to (0, 1, 0); non-finite and near-zero inputs pack to `NORMAL_PACKED_UP`; −128 bytes never produced; per-component decode error ≤ 1/254 over a sampled unit sphere |
+| `NormalPack24Test` (unit, MC-free) | §8 pinned overflow-safe algorithm: axis vectors round-trip exactly; `NORMAL_PACKED_UP` decodes to (0, 1, 0); NaN/±∞ components and the zero vector (including −0.0 components) pack to `NORMAL_PACKED_UP`; `(Double.MAX_VALUE, Double.MAX_VALUE, 0)` packs to the exact diagonal, not `NORMAL_PACKED_UP`; `(Double.MIN_VALUE, 0, 0)` (subnormal) packs to exact +X; −128 bytes never produced; result never 0x000000; per-component decode error ≤ 1/254 over a sampled unit sphere |
 | `ShieldImpactPayloadTest` (unit) | codec bounds: `normalPacked24` range [0, 0xFFFFFF] reject-not-clamp with 0x000000 also rejected, `surfaceOffsetQ8` range (0, 16,383] reject-not-clamp, nonce range 0..255 reject-not-clamp, encoded size ≤31 B ≤ `SHIELD_IMPACT_PAYLOAD_MAX_BYTES` |
 | `InterceptCostTest` (unit) | §8 boundary table: 0 / 1.0 / pinned arrow speed / 10.0 / 10.0+ε / NaN / Q8 rounding edges |
 | `OrientedRippleBasisTest` (unit) | normal → orthonormal basis is deterministic; +Y basis reproduces the W1D XZ ring exactly; the §8 pinned impact-point math — world `Vec3.atCenterOf(center) + decodedNormal × (surfaceOffsetQ8 / 256.0)` and its block-local equivalent — including the **offset-0 legacy branch taking the pre-change path** (old constants, old positions) |
@@ -1608,6 +1654,9 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
    **`REBUILD_BUDGET` does not cap the cache rebuilds** (it bounds only
    `runRebuild`'s relabel queue). Only the ≤8 inspections/deposits counters
    remain enforceable gates; every asymptotic statement is documentation.
+   *(Round 7 item 1 refined these bounds with the high-water term H =
+   `nodeArraySize`: both rebuilds and the per-tick `resetTransferBudgets`
+   walk all H dense-id slots, not just the L live nodes.)*
 2. **Normal representation incoherent/underspecified** — upheld; §3/§8: one
    exact **24-bit signed-component packed int** (`normalPacked24`) now
    travels unchanged through payload, `FxRippleSnapshot` (the record carries
@@ -1621,6 +1670,9 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
    renamed away from `normalOct` because the encoding is deliberately not
    octahedral (justified in §8). Payload recalculated: 8+4+2+5+2+10 =
    ≤31 B ≤ 32 (`NormalPack24Test`, updated `ShieldImpactPayloadTest`).
+   *(Round 7 item 3 replaced this round's naive squared-length
+   normalization — which overflows for large finite inputs — with the
+   pinned max-abs pre-scale + nested `Math.hypot` algorithm.)*
 3. **Impact-point math unpinned** — upheld; §8: world point
    `Vec3.atCenterOf(center).add(decodedNormal.scale(surfaceOffsetQ8 /
    256.0))`; T1 render-local equivalent `(0.5 + nx·d, 0.5 + ny·d,
@@ -1643,6 +1695,46 @@ re-specify them — the concept docs already do. The §2 P5 boundary is binding.
    require key presence. The §6 drain pseudocode was rewritten against this
    exact API: one emptiness check, `steps = min(8, positionCount)`, and a
    pinned deterministic cursor value when the loop empties the queue.
+
+### Round 7 (Sol edge-contract findings on revision 6)
+
+1. **High-water array walks omitted from the bounds** — upheld; §6: the
+   core's parallel arrays never shrink (dense ids with free-list reuse), so
+   the global passes scan **H = `nodeArraySize`** slots, not L live nodes.
+   Verified in `ChargeGraphCore` and corrected: `refreshCanonicalCache` =
+   **O(H + L log L)** (O(H) slot walk to collect live ids, then the boxed
+   sort), `refreshIslandCache` = **O(H + L + Eg)** (O(H) label clear before
+   the live BFS), and `resetTransferBudgets` = **O(H) every `core.tick()`,
+   unconditionally** — an inherited allocator cost, named so nobody mistakes
+   it for a drain cost. The warm drain bound O(8·(N + A·(N + E))) +
+   O(8 log K) and the O(G + K) content-mutation snapshot are unchanged and
+   remain honest; counters stay the only enforceable gates.
+2. **Queue amount domain unpinned** — upheld; §6: the domain is anchored to
+   the actual repository constant `CuprumCommonConfig.Bounds.
+   STRIKE_DEPOSIT_CG` = [0, 100,000,000] (config clamps at load,
+   `ConfigSyncPayload.requireInRange` rejects on sync). `queueSurge(pos, 0)`
+   is a pinned **explicit no-op** — returns 0 with no queue mutation, no
+   `droppedSurgeCg`, no `queueDirty`, no WARN — because `strikeDepositCg = 0`
+   is a valid configured value, not an error. Negative amounts and amounts
+   > 100,000,000 **throw `IllegalArgumentException`** from `queueSurge`
+   (programming errors, never counted as dropped energy);
+   `PendingSurgeQueue.append` and `replaceAll` accept only (0, 100,000,000]
+   and throw otherwise; the persisted decode path stays field-local
+   trim/drop + WARN and never throws on hostile data. Boundary tests added
+   at all three layers (`PendingSurgeQueueTest` append/replaceAll bounds,
+   `PendingSurgeCodecTest` decode drops, `u04_queue_surge_amount_domain`
+   manager no-op/throw semantics).
+3. **Normalization not overflow-safe** — upheld; §8: `packNormal24` now pins
+   the exact safe algorithm — non-finite check, exact `m == 0` zero test
+   (covering −0.0), **max-abs pre-scale** into [−1, 1], then **nested
+   `Math.hypot(Math.hypot(sx, sy), sz)`** whose true value lies in [1, √3]
+   so it can neither overflow nor underflow — replacing the naive
+   squared-length test that overflowed for `Double.MAX_VALUE`-magnitude
+   vectors and underflowed for subnormal ones. `NormalPack24Test` gains the
+   pinned edge vectors: `(MAX_VALUE, MAX_VALUE, 0)` → exact diagonal,
+   subnormal `(MIN_VALUE, 0, 0)` → exact +X, NaN/±∞ → `NORMAL_PACKED_UP`,
+   zero (±0.0) → `NORMAL_PACKED_UP`, and the never-0x000000 guarantee
+   (max component rounds to |b| ≥ 73).
 
 ## 15. CP1A exit (delta over the CP1 exit checklist)
 
