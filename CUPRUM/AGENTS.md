@@ -133,3 +133,43 @@ this directory (`CUPRUM/`).
 - The `git status` check in `scripts/datagen_determinism.sh` and the CI
   `git diff --exit-code -- src/main/generated` gate are only meaningful once the
   CUPRUM tree is committed; the tree-hash comparison works regardless.
+
+## W1E handbook / config / test-infra notes
+
+- **Handbook data is server data**: `data/cuprum/handbook/categories/*.json` +
+  `handbook/pages/**.json` + the reviewed `handbook/exempt.json` completeness exemption
+  list. Strict codecs (unknown keys rejected); malformed files log + skip — the
+  `handbookPagesValid` gametest asserts **zero** skips over shipped data, so never commit
+  intentionally-broken JSON under `data/` (use an in-memory `PackResources` fixture in the
+  test instead, see `HandbookGameTest.JsonPack`).
+- Every registered `cuprum` block/item must be a `subject` of some page or listed in
+  `exempt.json` (`handbookCompletenessRegistry`), and every catalog entry maps to a
+  planned handbook contract (`HandbookPlanCompletenessTest`) — adding content means
+  adding/planning its page in the same change.
+- Handbook text lives in datagen lang providers (`CuprumEnUsLanguageProvider` /
+  `CuprumDeDeLanguageProvider`); EN/DE key parity + placeholder equality is
+  unit-enforced (`LangParityTest`), so always add both languages and rerun `runDatagen`.
+- **API freeze**: `ApiFreezeTest` digests the public/protected surface of `src/main` +
+  `src/client` via `javap` and compares against `api/cuprum-api.lock`. Any intentional
+  public-API change must regenerate the lock (`./gradlew test -Dcuprum.apilock.update=true`)
+  and the diff must be reviewed like a contract change.
+- **Perf budgets**: `PerfBudgets` (gametest source set) pins W1 baselines (idle server
+  tick mean, handbook-screen frame mean); reports land in `build/perf/*.json`. Budgets are
+  intentionally loose CI-noise-tolerant ceilings — tighten deliberately, never loosen to
+  make a red build pass.
+- Client gametest gotchas: `ClientGameTestContext.clickScreenButton` matches the
+  **translated** button label (locale-dependent) — prefer the `clickRow`-style helper in
+  `HandbookClientGameTest` (find widget by translation key, click its centre via
+  `TestInput.setCursorPos`/`pressMouse`). GameTests that mutate global state (language,
+  resource packs, handbook reloads) must restore it in `finally`; server tests that need
+  isolation get their own `test_environment` JSON under
+  `src/gametest/resources/data/cuprum-gametest/test_environment/`.
+- Mock players (`MockServerPlayers`) skip the CONFIGURATION phase, so Fabric attachment
+  sync packets are **not** emitted to them — assert attachment state server-side and via
+  player-NBT round-trips instead of counting sync payloads.
+- Cloth Config *screens* + Mod Menu are **client/dev UI only** (Mod Menu is
+  `modCompileOnly` + `modLocalRuntime`; Cloth Config itself is a required dep — its bundled
+  AutoConfig/Jankson serializer IS the W1A common-config authority). The W1E screens edit
+  the LOCAL files only; while connected the server-synced overlay wins, and the frozen
+  json5 schema/defaults stay gametest-pinned (`ConfigGameTest`). Client FX/handbook
+  settings live in the frozen `CuprumClientConfig` fields.

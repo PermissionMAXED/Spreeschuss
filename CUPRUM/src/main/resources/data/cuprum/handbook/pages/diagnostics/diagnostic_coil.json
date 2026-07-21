@@ -1,0 +1,25 @@
+{
+  "id": "cuprum:diagnostics/diagnostic_coil",
+  "category": "cuprum:diagnostics",
+  "title_key": "handbook.cuprum.page.diagnostic_coil.title",
+  "subject": ["cuprum:diagnostic_coil_core", "cuprum:diagnostic_coil_frame"],
+  "unlock": { "type": "always" },
+  "search_extra_keys": ["multiblock", "coil"],
+  "widgets": [
+    { "type": "text", "key": "handbook.cuprum.page.diagnostic_coil.intro" },
+    {
+      "type": "multiblock",
+      "palette": {
+        "W": "minecraft:waxed_copper_block",
+        "O": "minecraft:oxidized_copper",
+        "F": "cuprum:diagnostic_coil_frame",
+        "C": "cuprum:diagnostic_coil_core"
+      },
+      "layers": [
+        ["WOF", "FCF", "FFF"]
+      ]
+    },
+    { "type": "text", "key": "handbook.cuprum.page.diagnostic_coil.formation", "style": "body" },
+    { "type": "text", "key": "handbook.cuprum.page.diagnostic_coil.acquisition", "style": "caption" }
+  ]
+}

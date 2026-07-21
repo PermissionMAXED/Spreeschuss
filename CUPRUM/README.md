@@ -166,6 +166,24 @@ Every `vanilla_overlap` names the real 1.21.9 vanilla feature it extends or the
 closest analogue (1.21.9 ships copper tools/armor/golem/chest, lightning rods,
 weighted pressure plates, etc.).
 
+## Handbook (W1E foundation)
+
+The in-game **Copper Codex** handbook is server data: strict-`Codec` categories/pages/widgets
+under `data/cuprum/handbook/{categories,pages}` reload with the data packs (malformed files
+log + skip, never crash) and sync to clients as one bounded snapshot payload on join and
+after `/reload`. Unlock state is a synced, persistent Fabric player attachment
+(`HandbookUnlocks.grant` is the server-truth API); bookmarks are client-local
+(`config/cuprum/handbook_bookmarks.json`). Open with `H` (rebindable), navigate via
+mouse/keyboard, search works in EN and DE. A completeness gate
+(`handbookCompletenessRegistry` + `HandbookPlanCompletenessTest`) maps every registered
+`cuprum` block/item to a page and all 300 catalog entries to a planned handbook contract —
+W1 pages document only the diagnostic infrastructure, no catalog gameplay. Config UIs use
+Cloth Config/AutoConfig (Jankson) + Mod Menu on the client; the frozen W1A server config
+authority/sync path is untouched. `api/cuprum-api.lock` freezes the W1A–E public surface
+(`ApiFreezeTest`; regenerate deliberately with
+`./gradlew test -Dcuprum.apilock.update=true`), and `PerfSampler`/`PerfBudgets` gate W1
+idle-tick and handbook frame-time baselines (reports in `build/perf/`).
+
 ## Layout
 
 - `src/main`, `src/client` — split environment source sets (`dev.cuprum.cuprum`,
@@ -177,6 +195,7 @@ weighted pressure plates, etc.).
   tooling and its JUnit tests.
 - `catalog/` — `schema.json` (strict), `catalog.json` (U01–U22 + PWR-01..QOL-12 +
   U23 + VFX-01..27), `expected_counts.json`.
+- `api/cuprum-api.lock` — SHA-256 freeze of the public/protected W1 API surface.
 - `docs/feature-concepts/` — authoritative CP0B+CP0C concept data (INDEX.md + 17
   family files) that the 277 additional catalog entries are validated against.
 - `docs/API_PROBES.md` — verified 1.21.9 FQNs/signatures; `docs/RENDERING_NOTES.md` —

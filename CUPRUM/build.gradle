@@ -109,6 +109,11 @@ dependencies {
     modLocalRuntime("com.terraformersmc:modmenu:${project.modmenu_version}") {
         exclude group: 'net.fabricmc.fabric-api'
     }
+    // W1E: compile the optional "modmenu" entrypoint against the same pinned coordinate
+    // (plan §5-3; suggests-only in fabric.mod.json — never a required runtime dependency).
+    modCompileOnly("com.terraformersmc:modmenu:${project.modmenu_version}") {
+        exclude group: 'net.fabricmc.fabric-api'
+    }
 
     // Catalog tool + unit tests (plain JUnit; no Minecraft classes touched at runtime).
     catalogToolImplementation 'com.google.code.gson:gson:2.11.0'
@@ -181,6 +186,21 @@ test {
     systemProperty 'cuprum.catalogDir', file('catalog').absolutePath
     systemProperty 'cuprum.conceptDocsDir', file('docs/feature-concepts').absolutePath
     systemProperty 'cuprum.mainResourcesDir', file('src/main/resources').absolutePath
+    // W1E (plan §2 build.gradle delta): generated-tree properties for the lang parity/coverage
+    // suites and compiled-class-dir + lock-file properties for the javap ApiFreezeTest (D5).
+    systemProperty 'cuprum.generatedAssetsDir', file('src/main/generated/assets').absolutePath
+    systemProperty 'cuprum.generatedDataDir', file('src/main/generated/data').absolutePath
+    systemProperty 'cuprum.apiLockFile', file('api/cuprum-api.lock').absolutePath
+    systemProperty 'cuprum.mainClassesDir', sourceSets.main.java.classesDirectory.get().asFile.absolutePath
+    systemProperty 'cuprum.clientClassesDir', sourceSets.client.java.classesDirectory.get().asFile.absolutePath
+    // Regeneration flag must reach the forked test JVM (Gradle -D only reaches the daemon).
+    systemProperty 'cuprum.apilock.update', System.getProperty('cuprum.apilock.update', 'false')
+    dependsOn tasks.named('compileJava')
+    dependsOn tasks.named('compileClientJava')
+    inputs.dir(sourceSets.main.java.classesDirectory)
+    inputs.dir(sourceSets.client.java.classesDirectory)
+    inputs.dir('src/main/generated')
+    inputs.files('api/cuprum-api.lock')
 }
 
 java {

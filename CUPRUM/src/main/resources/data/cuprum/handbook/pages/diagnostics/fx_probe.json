@@ -1,0 +1,20 @@
+{
+  "id": "cuprum:diagnostics/fx_probe",
+  "category": "cuprum:diagnostics",
+  "title_key": "handbook.cuprum.page.fx_probe.title",
+  "subject": ["cuprum:fx_probe"],
+  "unlock": { "type": "always" },
+  "search_extra_keys": ["fx", "ripple"],
+  "widgets": [
+    { "type": "text", "key": "handbook.cuprum.page.fx_probe.intro" },
+    {
+      "type": "image",
+      "texture": "cuprum:textures/block/fx_probe.png",
+      "width": 64,
+      "height": 64,
+      "caption_key": "handbook.cuprum.page.fx_probe.image_caption"
+    },
+    { "type": "text", "key": "handbook.cuprum.page.fx_probe.tiers", "style": "body" },
+    { "type": "text", "key": "handbook.cuprum.page.fx_probe.acquisition", "style": "caption" }
+  ]
+}

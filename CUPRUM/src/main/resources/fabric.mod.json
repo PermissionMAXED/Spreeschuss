@@ -15,6 +15,9 @@
     ],
     "client": [
       "dev.cuprum.cuprum.client.CuprumClient"
+    ],
+    "modmenu": [
+      "dev.cuprum.cuprum.client.config.CuprumModMenu"
     ]
   },
   "depends": {

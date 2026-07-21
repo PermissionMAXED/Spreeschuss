@@ -3,6 +3,7 @@ package dev.cuprum.cuprum.client.config;
 import dev.cuprum.cuprum.Cuprum;
 import me.shedaniel.autoconfig.ConfigData;
 import me.shedaniel.autoconfig.annotation.Config;
+import me.shedaniel.autoconfig.annotation.ConfigEntry;
 
 /**
  * The client-only config (plan §3.3): presentation + accessibility, AutoConfig + Jankson →
@@ -23,12 +24,18 @@ public class CuprumClientConfig implements ConfigData {
         OFF, DEUTERANOPIA, PROTANOPIA, TRITANOPIA
     }
 
+    // Tooltip annotations are W1E screen-only metadata (lang-keyed ⇒ EN/DE parity-gated);
+    // Jankson serialization and the frozen key set are unaffected.
+    @ConfigEntry.Gui.Tooltip
     public FxTierCap fxTierCap = FxTierCap.FULL;
     /** 0..1, multiplies ALL Cuprum screen-space flashes (effective flash also scales with vanilla
      * {@code screenEffectScale()} and is forced 0 by {@code hideLightningFlash()} — W1D). */
+    @ConfigEntry.Gui.Tooltip
     public float flashScale = 1.0f;
+    @ConfigEntry.Gui.Tooltip
     public ColorblindMode colorblindMode = ColorblindMode.OFF;
     /** QOL-05: state indicators get glyph + color (shape variants always available). */
+    @ConfigEntry.Gui.Tooltip
     public boolean shapeCodedIndicators = true;
 
     /** Clamps/restores out-of-range file values and logs each correction (plan §3.3). */

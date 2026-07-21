@@ -3,6 +3,7 @@ package dev.cuprum.cuprum;
 import dev.cuprum.cuprum.charge.ChargeModule;
 import dev.cuprum.cuprum.config.CuprumConfigs;
 import dev.cuprum.cuprum.fx.FxModule;
+import dev.cuprum.cuprum.handbook.HandbookModule;
 import dev.cuprum.cuprum.machine.MachineModule;
 import dev.cuprum.cuprum.net.CuprumNet;
 import dev.cuprum.cuprum.state.StateProbe;
@@ -27,6 +28,7 @@ public final class Cuprum implements ModInitializer {
         ChargeModule.init();
         MachineModule.init();
         FxModule.init();
+        HandbookModule.init();
         LOGGER.info("Cuprum {} initialized; catalog {} entries, sha256={}", version(), CuprumCatalog.ENTRY_COUNT, CuprumCatalog.CATALOG_SHA256);
     }
 

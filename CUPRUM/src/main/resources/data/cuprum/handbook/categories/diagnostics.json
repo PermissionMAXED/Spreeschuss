@@ -1,0 +1,6 @@
+{
+  "id": "cuprum:diagnostics",
+  "title_key": "handbook.cuprum.category.diagnostics",
+  "icon": "cuprum:charge_probe",
+  "sort": 900
+}

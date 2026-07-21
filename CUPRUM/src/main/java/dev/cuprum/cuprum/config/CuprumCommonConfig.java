@@ -3,6 +3,7 @@ package dev.cuprum.cuprum.config;
 import dev.cuprum.cuprum.Cuprum;
 import me.shedaniel.autoconfig.ConfigData;
 import me.shedaniel.autoconfig.annotation.Config;
+import me.shedaniel.autoconfig.annotation.ConfigEntry;
 
 /**
  * The single common (main/server) config authority (plan D2): AutoConfig + Jankson →
@@ -49,23 +50,37 @@ public class CuprumCommonConfig implements ConfigData {
 
     /** Charge-economy constants (INDEX literals; semantic owner: charge, plan §3.3). */
     public static class ChargeSection {
+        // Explanations live in these W1E screen tooltips (lang keys ⇒ EN/DE parity-gated);
+        // the json5 file itself is machine-managed and never hand-commented.
+        @ConfigEntry.Gui.Tooltip
         public int passiveBaselineCgPerTick = 5;
+        @ConfigEntry.Gui.Tooltip
         public int leydenJarCapacityCg = 100_000;
+        @ConfigEntry.Gui.Tooltip
         public int strikeDepositCg = 270_000;
+        @ConfigEntry.Gui.Tooltip
         public int wireLossPpTenthsPerSpanBare = 20;
+        @ConfigEntry.Gui.Tooltip
         public int wireLossPpTenthsPerSpanHv = 5;
     }
 
     /** Network guard constants (semantic owner: net-state, plan §3.3). */
     public static class NetSection {
+        @ConfigEntry.Gui.Tooltip
         public int ratePerSecDefault = 4;
+        @ConfigEntry.Gui.Tooltip
         public int burstDefault = 8;
+        @ConfigEntry.Gui.Tooltip
         public int rateGlobalPerSec = 16;
+        @ConfigEntry.Gui.Tooltip
         public int violationKickThreshold = 8;
+        @ConfigEntry.Gui.Tooltip
         public int violationWindowTicks = 6000;
     }
 
+    @ConfigEntry.Gui.CollapsibleObject(startExpanded = true)
     public ChargeSection charge = new ChargeSection();
+    @ConfigEntry.Gui.CollapsibleObject(startExpanded = true)
     public NetSection net = new NetSection();
 
     /** Clamps out-of-range file values and logs each correction (plan §3.3). */

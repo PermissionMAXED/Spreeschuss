@@ -76,6 +76,7 @@ jobs:
             CUPRUM/build/libs/*.jar
             CUPRUM/build/reports/tests/**
             CUPRUM/build/run/gameTest/logs/**
+            CUPRUM/build/perf/**
           if-no-files-found: warn
 
   datagen:
@@ -150,4 +151,5 @@ jobs:
             CUPRUM/build/run/clientGameTest/screenshots/**
             CUPRUM/build/run/clientGameTest/logs/**
             CUPRUM/build/clientSmoke-console.log
+            CUPRUM/build/perf/**
           if-no-files-found: warn

@@ -663,3 +663,107 @@ void submitModelPart(ModelPart modelPart, PoseStack poseStack, RenderType render
 - Colorblind remap is data-driven from `assets/cuprum/fx/colorblind.json` (3×3 row-major RGB
   matrices, MC-free math in `ColorblindCore`); missing/malformed file disables remap with one
   warning — NEVER a tier change.
+
+## Handbook / config / test foundation (W1E; compile- and runtime-pinned by the handbook module + gametests)
+
+### Server-data reloading (bounded JSON)
+
+- Fabric v1 reloader API also serves data packs:
+  `ResourceLoader.get(PackType.SERVER_DATA).registerReloader(id, listener)` — same
+  `net.fabricmc.fabric.api.resource.v1.ResourceLoader` used for W1D client reloads.
+  `HandbookManager extends SimplePreparableReloadListener<…>` (`prepare(ResourceManager,
+  ProfilerFiller)` off-thread, `apply(...)` on the reload thread); vanilla
+  `net.minecraft.resources.FileToIdConverter.json("handbook/pages")` enumerates
+  `data/<ns>/handbook/pages/**.json` and `fileToId` recovers the ResourceLocation.
+- Parse with `net.minecraft.util.StrictJsonParser.parse(Reader)` (same strict parser vanilla
+  uses for data) + DFU `Codec.parse(JsonOps.INSTANCE, json)`. Reloader posture mirrors
+  vanilla `SimpleJsonResourceReloadListener`: a malformed file logs + skips (counted in
+  `HandbookManager.skippedFiles()`), NEVER crashes the reload. Note codecs built from
+  records can also throw `IllegalArgumentException` out of the canonical constructor —
+  strict-parse failure tests must accept both `DataResult.error` and the throw.
+- Post-reload resync hook: `ServerLifecycleEvents.END_DATA_PACK_RELOAD.register((server,
+  resourceManager, success) -> …)` — fires after `/reload` completes (also on failed reloads
+  with `success=false`); Cuprum resyncs the snapshot to every `PlayerLookup.all(server)`.
+
+### Player data attachments (Fabric Attachment API v1)
+
+- `net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry.create(id, builder -> builder
+  .persistent(codec).copyOnDeath().syncWith(streamCodec, AttachmentSyncPredicate.targetOnly()))`
+  — persistent player attachments ride player NBT (survive restart), `copyOnDeath()` covers
+  respawn, `syncWith(..., targetOnly())` auto-syncs to the owning client only. Client read:
+  `entity.getAttachedOrElse(type, fallback)`; server mutate:
+  `player.modifyAttached(type, fn)` (sync packet sent automatically on change).
+- **Gametest caveat:** mock players that skip the CONFIGURATION phase never negotiate
+  supported attachment channels, so Fabric silently skips the sync packet — attachment
+  gametests must assert server-side state (`getAttached`) and player-NBT round-trips
+  (`TagValueOutput.createUnvalidated` → `player.saveWithoutId` →
+  `TagValueInput.create(...)` → `player.load`) instead of counting sync payloads.
+
+### Recipe displays (server → client, no client recipe manager)
+
+- 1.21.9 clients no longer hold the recipe tree; the display layer is
+  `net.minecraft.world.item.crafting.display.RecipeDisplay` (dispatched:
+  `ShapedCraftingRecipeDisplay`/`ShapelessCraftingRecipeDisplay`/`FurnaceRecipeDisplay`) with
+  a vanilla `RecipeDisplay.STREAM_CODEC`. Server side:
+  `server.getRecipeManager().byKey(ResourceKey.create(Registries.RECIPE, id))` →
+  `holder.value().display()` (a `List<RecipeDisplay>`). Client rendering resolves
+  `SlotDisplay.resolveForFirstStack(contextMap)`; the empty context is
+  `new ContextMap.Builder().create(SlotDisplayContext.CONTEXT)` — `ContextMap.EMPTY` does
+  NOT exist in 1.21.9.
+
+### Client UI (Screen/EditBox/Button, 1.21.9 signatures)
+
+- `Screen` subclass hooks used: `init()` (add widgets), `render(GuiGraphics, mouseX, mouseY,
+  partialTick)` (call `super.render` first — it paints the blur/background),
+  `resize(Minecraft, w, h)`, `onClose()`, `mouseScrolled(x, y, xDelta, yDelta)`,
+  `keyPressed(KeyEvent)` — 1.21.9 wraps key/mouse input in `net.minecraft.client.input.KeyEvent`
+  / `MouseButtonEvent` (with `MouseButtonInfo`) instead of raw ints.
+- `EditBox` fires `setResponder(Consumer<String>)`; `Button.builder(msg, onPress)
+  .bounds(x, y, w, h).build()`; `Button.DEFAULT_NARRATION` is **protected** — custom buttons
+  needing it must be named subclasses of `Button`, not lambdas/anonymous classes elsewhere.
+  Narration: override `updateWidgetNarration(NarrationElementOutput)` and use
+  `NarratedElementType.TITLE/HINT`.
+- Keybind: `KeyMapping.Category.register(ResourceLocation)` first (1.21.9 replaced free-form
+  category strings), then `KeyBindingHelper.registerKeyBinding(new KeyMapping(name, keyCode,
+  category))`; poll `while (key.consumeClick())` in `ClientTickEvents.END_CLIENT_TICK`.
+- GUI-scale responsiveness comes free by laying out from `this.width`/`this.height` in
+  `init()`; `minecraft.options.guiScale().set(n)` + `minecraft.resizeDisplay()` re-inits the
+  screen (client gametest-proven).
+
+### Cloth Config / AutoConfig / Mod Menu (dev-runtime UI over frozen W1A config)
+
+- AutoConfig (bundled in cloth-config 20.0.149): `AutoConfig.register(Class,
+  JanksonConfigSerializer::new)` once per config class (client init — server stays on the
+  frozen W1A hand-rolled loader as authority), then `AutoConfig.getConfigHolder(Class)` /
+  `AutoConfig.getConfigScreen(Class, parent).get()`. GUI keys derive from
+  `text.autoconfig.<name>.title|category.<cat>|option.<field>`; `@ConfigEntry.Gui.Tooltip`
+  adds `.@Tooltip`; enum options localize via `text.autoconfig.<name>.option.<field>.<VALUE>`.
+- Mod Menu entrypoint: `"modmenu": ["…client.config.CuprumModMenu"]` in fabric.mod.json,
+  implementing `com.terraformersmc.modmenu.api.ModMenuApi#getModConfigScreenFactory`.
+  `modCompileOnly` dependency only — Mod Menu is a dev-runtime mod (`modLocalRuntime`).
+
+### Client GameTest additions (beyond the W1A–D facts)
+
+- `ClientGameTestContext.clickScreenButton(text)` matches the **translated display string**,
+  not the translation key — locale-dependent. For robust interaction find the widget via
+  `screen.children()`, match `TranslatableContents.getKey()` on its message, then
+  `input.setCursorPos(windowX, windowY)` + `input.pressMouse(GLFW.GLFW_MOUSE_BUTTON_LEFT)`
+  at the widget centre scaled by `window.getGuiScale()`.
+- Language switch in-test: `minecraft.options.languageCode = "de_de"` +
+  `minecraft.getLanguageManager().setSelected(...)` + `minecraft.reloadResourcePacks()`
+  (wait for completion) — used by the EN/DE search assertions; restore in `finally`.
+- `context.assertScreenshotEquals(...)`/template bootstrap: templates live in
+  `src/gametest/resources/templates/<name>.png`; bootstrap by running once with
+  `-Dfabric.client.gametest.testModResourcesPath` pointing at the resources dir.
+
+### API freeze + perf harness (test-infra facts)
+
+- `javap -protected -classpath <classesDirs> <fqcn>` over the compiled main+client trees
+  gives a stable public/protected surface once normalized (strip `Compiled from`, constant
+  pool indices, sort members); SHA-256 of the normalized dump is pinned in
+  `api/cuprum-api.lock` and asserted by `ApiFreezeTest` (regenerate via
+  `./gradlew test -Dcuprum.apilock.update=true`).
+- Perf sampling: server side `MinecraftServer.getAverageTickTimeNanos()` (smoothed),
+  client side `Minecraft.getFrameTimeNs()`; `PerfSampler`/`PerfBudget` (gametest source set)
+  aggregate N samples after warmup and assert the mean against `PerfBudgets` literals,
+  writing JSON reports under `build/perf/`.

@@ -1,0 +1,21 @@
+{
+  "id": "cuprum:diagnostics/charge_probe",
+  "category": "cuprum:diagnostics",
+  "title_key": "handbook.cuprum.page.charge_probe.title",
+  "subject": ["cuprum:charge_probe"],
+  "unlock": { "type": "always" },
+  "search_extra_keys": ["diagnostics", "cg"],
+  "widgets": [
+    { "type": "text", "key": "handbook.cuprum.page.charge_probe.intro" },
+    {
+      "type": "image",
+      "texture": "cuprum:textures/block/charge_probe.png",
+      "width": 64,
+      "height": 64,
+      "caption_key": "handbook.cuprum.page.charge_probe.image_caption"
+    },
+    { "type": "recipe", "recipe": "cuprum:charge_probe" },
+    { "type": "charge", "value_ref": "charge.passiveBaselineCgPerTick", "unit": "Cg/t" },
+    { "type": "text", "key": "handbook.cuprum.page.charge_probe.usage", "style": "caption" }
+  ]
+}

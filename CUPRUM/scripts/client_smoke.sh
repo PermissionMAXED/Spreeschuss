@@ -79,6 +79,13 @@ EXPECTED_SCREENSHOTS=(
     0005_cuprum_fx_ripple_t2.png
     0006_cuprum_fx_ripple_t3_motes.png
     0007_cuprum_fx_ripple_t1_colorblind.png
+    0008_cuprum_handbook_landing.png
+    0009_cuprum_handbook_charge_probe_page.png
+    0010_cuprum_handbook_search_results_en.png
+    0011_cuprum_handbook_search_results_de.png
+    0012_cuprum_handbook_bookmark_rail.png
+    0013_cuprum_handbook_locked_page.png
+    0014_cuprum_handbook_unlocked_page.png
 )
 for expected in "${EXPECTED_SCREENSHOTS[@]}"; do
     if [[ ! -s "$SCREENSHOT_DIR/$expected" ]]; then

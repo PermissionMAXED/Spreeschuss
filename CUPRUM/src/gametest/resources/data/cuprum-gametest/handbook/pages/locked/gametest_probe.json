@@ -1,0 +1,9 @@
+{
+  "id": "cuprum-gametest:locked/gametest_probe",
+  "category": "cuprum:diagnostics",
+  "title_key": "handbook.cuprum-gametest.page.locked.title",
+  "unlock": { "type": "key", "key": "cuprum:unlock/gametest_probe" },
+  "widgets": [
+    { "type": "text", "key": "handbook.cuprum-gametest.page.locked.body" }
+  ]
+}

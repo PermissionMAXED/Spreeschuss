@@ -1,0 +1,774 @@
+# Cuprum frozen W1 API surface — normalized `javap -protected` listing (plan D5).
+# Any change to this file is a reviewed two-file diff. Regenerate ONLY via:
+#   ./gradlew test --tests dev.cuprum.cuprum.ApiFreezeTest -Dcuprum.apilock.update=true
+sha256:9056902280f493f20e6eee410d263b2a66cae0f9ff40531f92edb83bcbef4b79
+dev.cuprum.cuprum.api.handbook.HandbookTopics :: public final class dev.cuprum.cuprum.api.handbook.HandbookTopics
+dev.cuprum.cuprum.api.handbook.HandbookTopics :: public static final net.minecraft.resources.ResourceLocation CHARGE_PROBE;
+dev.cuprum.cuprum.api.handbook.HandbookTopics :: public static final net.minecraft.resources.ResourceLocation DIAGNOSTIC_COIL;
+dev.cuprum.cuprum.api.handbook.HandbookTopics :: public static final net.minecraft.resources.ResourceLocation FX_PROBE;
+dev.cuprum.cuprum.api.handbook.HandbookTopics :: public static java.util.List<net.minecraft.resources.ResourceLocation> all();
+dev.cuprum.cuprum.api.handbook.HandbookUnlocks :: public final class dev.cuprum.cuprum.api.handbook.HandbookUnlocks
+dev.cuprum.cuprum.api.handbook.HandbookUnlocks :: public static boolean grant(net.minecraft.server.level.ServerPlayer, net.minecraft.resources.ResourceLocation);
+dev.cuprum.cuprum.api.handbook.HandbookUnlocks :: public static final int MAX_KEYS;
+dev.cuprum.cuprum.api.handbook.HandbookUnlocks :: public static final int MAX_KEY_CHARS;
+dev.cuprum.cuprum.api.handbook.HandbookUnlocks :: public static java.util.Set<net.minecraft.resources.ResourceLocation> unlockedKeys(net.minecraft.server.level.ServerPlayer);
+dev.cuprum.cuprum.charge.ChargeApi :: public final class dev.cuprum.cuprum.charge.ChargeApi
+dev.cuprum.cuprum.charge.ChargeApi :: public static final net.fabricmc.fabric.api.lookup.v1.block.BlockApiLookup<dev.cuprum.cuprum.charge.ChargeNode, net.minecraft.core.Direction> NODE;
+dev.cuprum.cuprum.charge.ChargeBalance :: public final class dev.cuprum.cuprum.charge.ChargeBalance
+dev.cuprum.cuprum.charge.ChargeBalance :: public static int wireLossPpTenthsPerSpanBare();
+dev.cuprum.cuprum.charge.ChargeBalance :: public static int wireLossPpTenthsPerSpanHv();
+dev.cuprum.cuprum.charge.ChargeBalance :: public static long leydenJarCapacityCg();
+dev.cuprum.cuprum.charge.ChargeBalance :: public static long passiveBaselineCgPerTick();
+dev.cuprum.cuprum.charge.ChargeBalance :: public static long strikeDepositCg();
+dev.cuprum.cuprum.charge.ChargeConsumer :: public abstract long accept(long);
+dev.cuprum.cuprum.charge.ChargeConsumer :: public abstract long demandPerTick();
+dev.cuprum.cuprum.charge.ChargeConsumer :: public interface dev.cuprum.cuprum.charge.ChargeConsumer extends dev.cuprum.cuprum.charge.ChargeNode
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot diagnostics();
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public final class dev.cuprum.cuprum.charge.ChargeGraphManager
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public java.util.Map<java.lang.Integer, java.util.List<dev.cuprum.cuprum.charge.NodeReport>> networkReports();
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public java.util.Optional<dev.cuprum.cuprum.charge.NodeReport> nodeReport(net.minecraft.core.BlockPos);
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public long allocatorTicks();
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public long depositSurge(net.minecraft.core.BlockPos, long);
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public static dev.cuprum.cuprum.charge.ChargeGraphManager of(net.minecraft.server.level.ServerLevel);
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public static void init();
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public void notifyNodeAdded(net.minecraft.core.BlockPos);
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public void notifyNodeChanged(net.minecraft.core.BlockPos);
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public void notifyNodeRemoved(net.minecraft.core.BlockPos);
+dev.cuprum.cuprum.charge.ChargeGraphManager :: public void notifyNodeRemoved(net.minecraft.world.level.block.entity.BlockEntity);
+dev.cuprum.cuprum.charge.ChargeModule :: public final class dev.cuprum.cuprum.charge.ChargeModule
+dev.cuprum.cuprum.charge.ChargeModule :: public static void init();
+dev.cuprum.cuprum.charge.ChargeNode :: public abstract boolean canConnect(net.minecraft.core.Direction);
+dev.cuprum.cuprum.charge.ChargeNode :: public default dev.cuprum.cuprum.charge.core.ChargePriority priority();
+dev.cuprum.cuprum.charge.ChargeNode :: public interface dev.cuprum.cuprum.charge.ChargeNode
+dev.cuprum.cuprum.charge.ChargeProducer :: public abstract long drain(long);
+dev.cuprum.cuprum.charge.ChargeProducer :: public abstract long offerPerTick();
+dev.cuprum.cuprum.charge.ChargeProducer :: public interface dev.cuprum.cuprum.charge.ChargeProducer extends dev.cuprum.cuprum.charge.ChargeNode
+dev.cuprum.cuprum.charge.ChargeRelay :: public abstract long throughputPerTick();
+dev.cuprum.cuprum.charge.ChargeRelay :: public interface dev.cuprum.cuprum.charge.ChargeRelay extends dev.cuprum.cuprum.charge.ChargeNode
+dev.cuprum.cuprum.charge.ChargeStorage :: public abstract long capacity();
+dev.cuprum.cuprum.charge.ChargeStorage :: public abstract long extract(long, boolean);
+dev.cuprum.cuprum.charge.ChargeStorage :: public abstract long insert(long, boolean);
+dev.cuprum.cuprum.charge.ChargeStorage :: public abstract long insertSurge(long);
+dev.cuprum.cuprum.charge.ChargeStorage :: public abstract long maxExtractPerTick();
+dev.cuprum.cuprum.charge.ChargeStorage :: public abstract long maxInsertPerTick();
+dev.cuprum.cuprum.charge.ChargeStorage :: public abstract long stored();
+dev.cuprum.cuprum.charge.ChargeStorage :: public interface dev.cuprum.cuprum.charge.ChargeStorage extends dev.cuprum.cuprum.charge.ChargeNode
+dev.cuprum.cuprum.charge.NodeReport :: public boolean frozen();
+dev.cuprum.cuprum.charge.NodeReport :: public dev.cuprum.cuprum.charge.NodeReport(net.minecraft.core.BlockPos, int, dev.cuprum.cuprum.charge.core.ChargePriority, long, long, int, boolean, long, long, long);
+dev.cuprum.cuprum.charge.NodeReport :: public dev.cuprum.cuprum.charge.core.ChargePriority priority();
+dev.cuprum.cuprum.charge.NodeReport :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.charge.NodeReport :: public final class dev.cuprum.cuprum.charge.NodeReport extends java.lang.Record
+dev.cuprum.cuprum.charge.NodeReport :: public final int hashCode();
+dev.cuprum.cuprum.charge.NodeReport :: public final java.lang.String toString();
+dev.cuprum.cuprum.charge.NodeReport :: public int networkId();
+dev.cuprum.cuprum.charge.NodeReport :: public int roleMask();
+dev.cuprum.cuprum.charge.NodeReport :: public long capacity();
+dev.cuprum.cuprum.charge.NodeReport :: public long networkCapacity();
+dev.cuprum.cuprum.charge.NodeReport :: public long networkStored();
+dev.cuprum.cuprum.charge.NodeReport :: public long stored();
+dev.cuprum.cuprum.charge.NodeReport :: public long topologyVersion();
+dev.cuprum.cuprum.charge.NodeReport :: public net.minecraft.core.BlockPos pos();
+dev.cuprum.cuprum.charge.SurgeAbsorber :: public abstract long absorbSurge(long);
+dev.cuprum.cuprum.charge.SurgeAbsorber :: public interface dev.cuprum.cuprum.charge.SurgeAbsorber extends dev.cuprum.cuprum.charge.ChargeNode
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public dev.cuprum.cuprum.charge.core.ChargeBuffer(long, long, long);
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public final class dev.cuprum.cuprum.charge.core.ChargeBuffer
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public long capacity();
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public long depositSurge(long);
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public long extract(long, boolean);
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public long insert(long, boolean);
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public long maxExtractPerTick();
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public long maxInsertPerTick();
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public long setStored(long);
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public long stored();
+dev.cuprum.cuprum.charge.core.ChargeBuffer :: public void beginGameTick(long);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public boolean isActive(int);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public dev.cuprum.cuprum.charge.core.ChargeGraphCore();
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot diagnostics();
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public dev.cuprum.cuprum.charge.core.RebuildStats runRebuild(int);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public dev.cuprum.cuprum.charge.core.TickReport tick(dev.cuprum.cuprum.charge.core.NodeAccess);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public final class dev.cuprum.cuprum.charge.core.ChargeGraphCore
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public int addNode(long, int, int, long, long, long);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public int networkOf(int);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public int priorityOrdinalOf(int);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public int roleMaskOf(int);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public int[] aliveNodeIds();
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public int[] loadedIslandMembers(int);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public long capacityOf(int);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public long depositSurge(int, long, dev.cuprum.cuprum.charge.core.NodeAccess);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public long ticksRun();
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public long topologyVersion();
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public void addEdge(int, int);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public void removeNode(int);
+dev.cuprum.cuprum.charge.core.ChargeGraphCore :: public void setActive(int, boolean);
+dev.cuprum.cuprum.charge.core.ChargeMath :: public final class dev.cuprum.cuprum.charge.core.ChargeMath
+dev.cuprum.cuprum.charge.core.ChargeMath :: public static long clamp(long, long, long);
+dev.cuprum.cuprum.charge.core.ChargeMath :: public static long lineLossDelivered(long, int, int);
+dev.cuprum.cuprum.charge.core.ChargeMath :: public static long mulDiv(long, long, long);
+dev.cuprum.cuprum.charge.core.ChargeMath :: public static long satAdd(long, long);
+dev.cuprum.cuprum.charge.core.ChargeMath :: public static long satSub(long, long);
+dev.cuprum.cuprum.charge.core.ChargePriority :: public final class dev.cuprum.cuprum.charge.core.ChargePriority extends java.lang.Enum<dev.cuprum.cuprum.charge.core.ChargePriority>
+dev.cuprum.cuprum.charge.core.ChargePriority :: public static dev.cuprum.cuprum.charge.core.ChargePriority fromOrdinal(int);
+dev.cuprum.cuprum.charge.core.ChargePriority :: public static dev.cuprum.cuprum.charge.core.ChargePriority valueOf(java.lang.String);
+dev.cuprum.cuprum.charge.core.ChargePriority :: public static dev.cuprum.cuprum.charge.core.ChargePriority[] values();
+dev.cuprum.cuprum.charge.core.ChargePriority :: public static final dev.cuprum.cuprum.charge.core.ChargePriority DEFENSE;
+dev.cuprum.cuprum.charge.core.ChargePriority :: public static final dev.cuprum.cuprum.charge.core.ChargePriority LOGISTICS;
+dev.cuprum.cuprum.charge.core.ChargePriority :: public static final dev.cuprum.cuprum.charge.core.ChargePriority MISC;
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot(int, int, int, int, long, long, long, long, long, long, int);
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public final class dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot extends java.lang.Record
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public final int hashCode();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public final java.lang.String toString();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public int edges();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public int frozenNodes();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public int networks();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public int nodes();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public int rebuildQueueDepth();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public long movedLastTick();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public long tickNanosEma();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public long tickNanosLast();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public long topologyVersion();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public long ventedLastTick();
+dev.cuprum.cuprum.charge.core.GraphDiagnosticsSnapshot :: public long ventedTotal();
+dev.cuprum.cuprum.charge.core.NodeAccess :: public abstract long absorb(int, long);
+dev.cuprum.cuprum.charge.core.NodeAccess :: public abstract long accept(int, long);
+dev.cuprum.cuprum.charge.core.NodeAccess :: public abstract long demand(int);
+dev.cuprum.cuprum.charge.core.NodeAccess :: public abstract long drain(int, long);
+dev.cuprum.cuprum.charge.core.NodeAccess :: public abstract long extractStorage(int, long);
+dev.cuprum.cuprum.charge.core.NodeAccess :: public abstract long insertStorage(int, long);
+dev.cuprum.cuprum.charge.core.NodeAccess :: public abstract long insertSurgeStorage(int, long);
+dev.cuprum.cuprum.charge.core.NodeAccess :: public abstract long offer(int);
+dev.cuprum.cuprum.charge.core.NodeAccess :: public abstract long stored(int);
+dev.cuprum.cuprum.charge.core.NodeAccess :: public interface dev.cuprum.cuprum.charge.core.NodeAccess
+dev.cuprum.cuprum.charge.core.RebuildStats :: public dev.cuprum.cuprum.charge.core.RebuildStats(int, int);
+dev.cuprum.cuprum.charge.core.RebuildStats :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.charge.core.RebuildStats :: public final class dev.cuprum.cuprum.charge.core.RebuildStats extends java.lang.Record
+dev.cuprum.cuprum.charge.core.RebuildStats :: public final int hashCode();
+dev.cuprum.cuprum.charge.core.RebuildStats :: public final java.lang.String toString();
+dev.cuprum.cuprum.charge.core.RebuildStats :: public int queueDepth();
+dev.cuprum.cuprum.charge.core.RebuildStats :: public int visited();
+dev.cuprum.cuprum.charge.core.Roles :: public final class dev.cuprum.cuprum.charge.core.Roles
+dev.cuprum.cuprum.charge.core.Roles :: public static boolean has(int, int);
+dev.cuprum.cuprum.charge.core.Roles :: public static final int ALL;
+dev.cuprum.cuprum.charge.core.Roles :: public static final int CONSUMER;
+dev.cuprum.cuprum.charge.core.Roles :: public static final int PRODUCER;
+dev.cuprum.cuprum.charge.core.Roles :: public static final int RELAY;
+dev.cuprum.cuprum.charge.core.Roles :: public static final int STORAGE;
+dev.cuprum.cuprum.charge.core.Roles :: public static final int SURGE_ABSORBER;
+dev.cuprum.cuprum.charge.core.TickReport :: public dev.cuprum.cuprum.charge.core.TickReport(long, long, int, long);
+dev.cuprum.cuprum.charge.core.TickReport :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.charge.core.TickReport :: public final class dev.cuprum.cuprum.charge.core.TickReport extends java.lang.Record
+dev.cuprum.cuprum.charge.core.TickReport :: public final int hashCode();
+dev.cuprum.cuprum.charge.core.TickReport :: public final java.lang.String toString();
+dev.cuprum.cuprum.charge.core.TickReport :: public int networksTicked();
+dev.cuprum.cuprum.charge.core.TickReport :: public long moved();
+dev.cuprum.cuprum.charge.core.TickReport :: public long nanos();
+dev.cuprum.cuprum.charge.core.TickReport :: public long vented();
+dev.cuprum.cuprum.client.api.handbook.HandbookClientApi :: public final class dev.cuprum.cuprum.client.api.handbook.HandbookClientApi
+dev.cuprum.cuprum.client.api.handbook.HandbookClientApi :: public static void open(net.minecraft.resources.ResourceLocation);
+dev.cuprum.cuprum.client.api.handbook.HandbookClientApi :: public static void openLanding();
+dev.cuprum.cuprum.client.api.handbook.HandbookMultiblockPreview :: public final class dev.cuprum.cuprum.client.api.handbook.HandbookMultiblockPreview
+dev.cuprum.cuprum.client.api.handbook.HandbookMultiblockPreview :: public static final int CELL_SIZE;
+dev.cuprum.cuprum.client.api.handbook.HandbookMultiblockPreview :: public static int layerHeight(dev.cuprum.cuprum.handbook.HandbookWidget$Multiblock, int);
+dev.cuprum.cuprum.client.api.handbook.HandbookMultiblockPreview :: public static int layerWidth(dev.cuprum.cuprum.handbook.HandbookWidget$Multiblock, int);
+dev.cuprum.cuprum.client.api.handbook.HandbookMultiblockPreview :: public static int maxLayerHeight(dev.cuprum.cuprum.handbook.HandbookWidget$Multiblock);
+dev.cuprum.cuprum.client.api.handbook.HandbookMultiblockPreview :: public static int maxLayerWidth(dev.cuprum.cuprum.handbook.HandbookWidget$Multiblock);
+dev.cuprum.cuprum.client.api.handbook.HandbookMultiblockPreview :: public static net.minecraft.world.item.ItemStack stackFor(net.minecraft.resources.ResourceLocation);
+dev.cuprum.cuprum.client.api.handbook.HandbookMultiblockPreview :: public static void render(net.minecraft.client.gui.GuiGraphics, dev.cuprum.cuprum.handbook.HandbookWidget$Multiblock, int, int, int);
+dev.cuprum.cuprum.client.fx.ColorblindPalettes :: public final class dev.cuprum.cuprum.client.fx.ColorblindPalettes
+dev.cuprum.cuprum.client.fx.ColorblindPalettes :: public static boolean isLoaded();
+dev.cuprum.cuprum.client.fx.ColorblindPalettes :: public static int remap(int, dev.cuprum.cuprum.client.config.CuprumClientConfig$ColorblindMode);
+dev.cuprum.cuprum.client.fx.ColorblindPalettes :: public static void reload(net.minecraft.server.packs.resources.ResourceManager);
+dev.cuprum.cuprum.client.fx.FxArcPool :: public final class dev.cuprum.cuprum.client.fx.FxArcPool
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe :: public final class dev.cuprum.cuprum.client.fx.FxCapabilityProbe
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe :: public static dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report lastReport();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe :: public static dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report run(net.minecraft.server.packs.resources.ResourceManager);
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe :: public static dev.cuprum.cuprum.client.fx.FxTier capabilityCap();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public boolean deviceAvailable();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public boolean particleAssetPresent();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public boolean pipelineValid();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public boolean shaderAssetsPresent();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report(boolean, boolean, boolean, boolean, java.lang.String, java.lang.String, java.lang.String, int, dev.cuprum.cuprum.client.fx.FxTier);
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public dev.cuprum.cuprum.client.fx.FxTier capabilityCap();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public final class dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report extends java.lang.Record
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public final int hashCode();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public final java.lang.String toString();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public int maxTextureSize();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public java.lang.String backendName();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public java.lang.String renderer();
+dev.cuprum.cuprum.client.fx.FxCapabilityProbe$Report :: public java.lang.String vendor();
+dev.cuprum.cuprum.client.fx.FxClientModule :: public final class dev.cuprum.cuprum.client.fx.FxClientModule
+dev.cuprum.cuprum.client.fx.FxClientModule :: public static void init();
+dev.cuprum.cuprum.client.fx.FxCompat :: public final class dev.cuprum.cuprum.client.fx.FxCompat
+dev.cuprum.cuprum.client.fx.FxCompat :: public static boolean irisLoaded();
+dev.cuprum.cuprum.client.fx.FxCompat :: public static boolean sodiumLoaded();
+dev.cuprum.cuprum.client.fx.FxCompat :: public static dev.cuprum.cuprum.client.fx.FxTier compatCap();
+dev.cuprum.cuprum.client.fx.FxCompat :: public static void refresh();
+dev.cuprum.cuprum.client.fx.FxDispatcher :: public final class dev.cuprum.cuprum.client.fx.FxDispatcher
+dev.cuprum.cuprum.client.fx.FxDispatcher :: public static dev.cuprum.cuprum.client.fx.FxDispatcher get();
+dev.cuprum.cuprum.client.fx.FxDispatcher :: public synchronized int liveRippleCount();
+dev.cuprum.cuprum.client.fx.FxDispatcher :: public synchronized long droppedWhileOff();
+dev.cuprum.cuprum.client.fx.FxDispatcher :: public synchronized long evictedTotal();
+dev.cuprum.cuprum.client.fx.FxDispatcher :: public synchronized long wrongDimensionDrops();
+dev.cuprum.cuprum.client.fx.FxDispatcher :: public synchronized void clear();
+dev.cuprum.cuprum.client.fx.FxDispatcher :: public synchronized void enqueueRipple(dev.cuprum.cuprum.client.fx.FxRippleSnapshot);
+dev.cuprum.cuprum.client.fx.FxDispatcher :: public synchronized void extractRipplesAt(dev.cuprum.cuprum.client.fx.render.FxProbeRenderState, net.minecraft.core.BlockPos, long);
+dev.cuprum.cuprum.client.fx.FxDispatcher :: public synchronized void tick(net.minecraft.client.multiplayer.ClientLevel);
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public final class dev.cuprum.cuprum.client.fx.FxFrameStats
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static long currentFrameRippleVertices();
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static long customPipelineSubmits();
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static long customPipelineSubmitsSinceTierChange();
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static long peakFrameRippleVertices();
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static long rippleVerticesTotal();
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static long vanillaFallbackSubmits();
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static long vertexBudgetBreaches();
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static synchronized void beginFrame(java.lang.Object);
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static void clear();
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static void onTierChanged();
+dev.cuprum.cuprum.client.fx.FxFrameStats :: public static void recordSubmit(net.minecraft.client.renderer.RenderType, int);
+dev.cuprum.cuprum.client.fx.FxParticleBudget :: public final class dev.cuprum.cuprum.client.fx.FxParticleBudget
+dev.cuprum.cuprum.client.fx.FxParticleBudget :: public static boolean trySpawn(net.minecraft.client.multiplayer.ClientLevel, net.minecraft.core.particles.ParticleOptions, double, double, double, double, double, double);
+dev.cuprum.cuprum.client.fx.FxParticleBudget :: public static int liveEstimate();
+dev.cuprum.cuprum.client.fx.FxParticleBudget :: public static long acceptedTotal();
+dev.cuprum.cuprum.client.fx.FxParticleBudget :: public static long rejectedTotal();
+dev.cuprum.cuprum.client.fx.FxParticleBudget :: public static void reset();
+dev.cuprum.cuprum.client.fx.FxParticleBudget :: public static void tick(long);
+dev.cuprum.cuprum.client.fx.FxReloadListener :: public dev.cuprum.cuprum.client.fx.FxReloadListener();
+dev.cuprum.cuprum.client.fx.FxReloadListener :: public final class dev.cuprum.cuprum.client.fx.FxReloadListener implements net.minecraft.server.packs.resources.ResourceManagerReloadListener
+dev.cuprum.cuprum.client.fx.FxReloadListener :: public void onResourceManagerReload(net.minecraft.server.packs.resources.ResourceManager);
+dev.cuprum.cuprum.client.fx.FxRenderSubmission :: public final class dev.cuprum.cuprum.client.fx.FxRenderSubmission
+dev.cuprum.cuprum.client.fx.FxRenderSubmission :: public static void submit(com.mojang.blaze3d.vertex.PoseStack, net.minecraft.client.renderer.SubmitNodeCollector, net.minecraft.client.renderer.RenderType, dev.cuprum.cuprum.client.fx.FxTier, dev.cuprum.cuprum.client.fx.render.FxProbeRenderState);
+dev.cuprum.cuprum.client.fx.FxRippleSnapshot :: public dev.cuprum.cuprum.client.fx.FxRippleSnapshot(net.minecraft.core.BlockPos, float, int, long);
+dev.cuprum.cuprum.client.fx.FxRippleSnapshot :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.client.fx.FxRippleSnapshot :: public final class dev.cuprum.cuprum.client.fx.FxRippleSnapshot extends java.lang.Record
+dev.cuprum.cuprum.client.fx.FxRippleSnapshot :: public final int hashCode();
+dev.cuprum.cuprum.client.fx.FxRippleSnapshot :: public final java.lang.String toString();
+dev.cuprum.cuprum.client.fx.FxRippleSnapshot :: public float maxRadius();
+dev.cuprum.cuprum.client.fx.FxRippleSnapshot :: public int colorArgb();
+dev.cuprum.cuprum.client.fx.FxRippleSnapshot :: public long startGameTime();
+dev.cuprum.cuprum.client.fx.FxRippleSnapshot :: public net.minecraft.core.BlockPos center();
+dev.cuprum.cuprum.client.fx.FxRippleSnapshot :: public static dev.cuprum.cuprum.client.fx.FxRippleSnapshot of(dev.cuprum.cuprum.fx.FxRipplePayload);
+dev.cuprum.cuprum.client.fx.FxSettings :: public final class dev.cuprum.cuprum.client.fx.FxSettings
+dev.cuprum.cuprum.client.fx.FxSettings :: public static dev.cuprum.cuprum.client.config.CuprumClientConfig$ColorblindMode colorblindMode();
+dev.cuprum.cuprum.client.fx.FxSettings :: public static float effectiveFlash();
+dev.cuprum.cuprum.client.fx.FxSettings :: public static int remapColor(int);
+dev.cuprum.cuprum.client.fx.FxTier :: public final class dev.cuprum.cuprum.client.fx.FxTier extends java.lang.Enum<dev.cuprum.cuprum.client.fx.FxTier>
+dev.cuprum.cuprum.client.fx.FxTier :: public static dev.cuprum.cuprum.client.fx.FxTier lowerOf(dev.cuprum.cuprum.client.fx.FxTier, dev.cuprum.cuprum.client.fx.FxTier);
+dev.cuprum.cuprum.client.fx.FxTier :: public static dev.cuprum.cuprum.client.fx.FxTier valueOf(java.lang.String);
+dev.cuprum.cuprum.client.fx.FxTier :: public static dev.cuprum.cuprum.client.fx.FxTier[] values();
+dev.cuprum.cuprum.client.fx.FxTier :: public static final dev.cuprum.cuprum.client.fx.FxTier OFF;
+dev.cuprum.cuprum.client.fx.FxTier :: public static final dev.cuprum.cuprum.client.fx.FxTier T1;
+dev.cuprum.cuprum.client.fx.FxTier :: public static final dev.cuprum.cuprum.client.fx.FxTier T2;
+dev.cuprum.cuprum.client.fx.FxTier :: public static final dev.cuprum.cuprum.client.fx.FxTier T3;
+dev.cuprum.cuprum.client.fx.FxTierPolicy :: public final class dev.cuprum.cuprum.client.fx.FxTierPolicy
+dev.cuprum.cuprum.client.fx.FxTierPolicy :: public static dev.cuprum.cuprum.client.fx.FxTier effectiveTier();
+dev.cuprum.cuprum.client.fx.FxTierPolicy :: public static dev.cuprum.cuprum.client.fx.FxTier failureCap();
+dev.cuprum.cuprum.client.fx.FxTierPolicy :: public static void demote(dev.cuprum.cuprum.client.fx.FxTier, java.lang.String);
+dev.cuprum.cuprum.client.fx.FxTierPolicy :: public static void resetForReload();
+dev.cuprum.cuprum.config.ConfigPayloads :: public final class dev.cuprum.cuprum.config.ConfigPayloads
+dev.cuprum.cuprum.config.ConfigPayloads :: public static void register();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public dev.cuprum.cuprum.config.ConfigSyncPayload(int, int, int, int, int, int, int, int, int, int, int);
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public dev.cuprum.cuprum.config.CuprumCommonConfig toOverlayConfig();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public final class dev.cuprum.cuprum.config.ConfigSyncPayload extends java.lang.Record implements net.minecraft.network.protocol.common.custom.CustomPacketPayload
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public final int hashCode();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public final java.lang.String toString();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int burstDefault();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int leydenJarCapacityCg();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int netVersion();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int passiveBaselineCgPerTick();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int rateGlobalPerSec();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int ratePerSecDefault();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int strikeDepositCg();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int violationKickThreshold();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int violationWindowTicks();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int wireLossPpTenthsPerSpanBare();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public int wireLossPpTenthsPerSpanHv();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public net.minecraft.network.protocol.common.custom.CustomPacketPayload$Type<? extends net.minecraft.network.protocol.common.custom.CustomPacketPayload> type();
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public static dev.cuprum.cuprum.config.ConfigSyncPayload of(dev.cuprum.cuprum.config.CuprumCommonConfig);
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public static final net.minecraft.network.codec.StreamCodec<net.minecraft.network.RegistryFriendlyByteBuf, dev.cuprum.cuprum.config.ConfigSyncPayload> STREAM_CODEC;
+dev.cuprum.cuprum.config.ConfigSyncPayload :: public static final net.minecraft.network.protocol.common.custom.CustomPacketPayload$Type<dev.cuprum.cuprum.config.ConfigSyncPayload> TYPE;
+dev.cuprum.cuprum.config.ConfigValueRefs :: public final class dev.cuprum.cuprum.config.ConfigValueRefs
+dev.cuprum.cuprum.config.ConfigValueRefs :: public static boolean isValid(java.lang.String);
+dev.cuprum.cuprum.config.ConfigValueRefs :: public static java.util.OptionalInt resolve(java.lang.String, dev.cuprum.cuprum.config.CuprumCommonConfig);
+dev.cuprum.cuprum.config.ConfigValueRefs :: public static java.util.Set<java.lang.String> allowedPaths();
+dev.cuprum.cuprum.config.CuprumCommonConfig :: public class dev.cuprum.cuprum.config.CuprumCommonConfig implements me.shedaniel.autoconfig.ConfigData
+dev.cuprum.cuprum.config.CuprumCommonConfig :: public dev.cuprum.cuprum.config.CuprumCommonConfig$ChargeSection charge;
+dev.cuprum.cuprum.config.CuprumCommonConfig :: public dev.cuprum.cuprum.config.CuprumCommonConfig$NetSection net;
+dev.cuprum.cuprum.config.CuprumCommonConfig :: public dev.cuprum.cuprum.config.CuprumCommonConfig();
+dev.cuprum.cuprum.config.CuprumCommonConfig :: public void validatePostLoad();
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public final class dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public static final dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange BURST_DEFAULT;
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public static final dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange LEYDEN_JAR_CAPACITY_CG;
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public static final dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange PASSIVE_BASELINE_CG_PER_TICK;
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public static final dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange RATE_GLOBAL_PER_SEC;
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public static final dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange RATE_PER_SEC_DEFAULT;
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public static final dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange STRIKE_DEPOSIT_CG;
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public static final dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange VIOLATION_KICK_THRESHOLD;
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public static final dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange VIOLATION_WINDOW_TICKS;
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public static final dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange WIRE_LOSS_PP_TENTHS_PER_SPAN_BARE;
+dev.cuprum.cuprum.config.CuprumCommonConfig$Bounds :: public static final dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange WIRE_LOSS_PP_TENTHS_PER_SPAN_HV;
+dev.cuprum.cuprum.config.CuprumCommonConfig$ChargeSection :: public class dev.cuprum.cuprum.config.CuprumCommonConfig$ChargeSection
+dev.cuprum.cuprum.config.CuprumCommonConfig$ChargeSection :: public dev.cuprum.cuprum.config.CuprumCommonConfig$ChargeSection();
+dev.cuprum.cuprum.config.CuprumCommonConfig$ChargeSection :: public int leydenJarCapacityCg;
+dev.cuprum.cuprum.config.CuprumCommonConfig$ChargeSection :: public int passiveBaselineCgPerTick;
+dev.cuprum.cuprum.config.CuprumCommonConfig$ChargeSection :: public int strikeDepositCg;
+dev.cuprum.cuprum.config.CuprumCommonConfig$ChargeSection :: public int wireLossPpTenthsPerSpanBare;
+dev.cuprum.cuprum.config.CuprumCommonConfig$ChargeSection :: public int wireLossPpTenthsPerSpanHv;
+dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange :: public boolean contains(int);
+dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange :: public dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange(int, int);
+dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange :: public final class dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange extends java.lang.Record
+dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange :: public final int hashCode();
+dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange :: public final java.lang.String toString();
+dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange :: public int clamp(int);
+dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange :: public int max();
+dev.cuprum.cuprum.config.CuprumCommonConfig$IntRange :: public int min();
+dev.cuprum.cuprum.config.CuprumCommonConfig$NetSection :: public class dev.cuprum.cuprum.config.CuprumCommonConfig$NetSection
+dev.cuprum.cuprum.config.CuprumCommonConfig$NetSection :: public dev.cuprum.cuprum.config.CuprumCommonConfig$NetSection();
+dev.cuprum.cuprum.config.CuprumCommonConfig$NetSection :: public int burstDefault;
+dev.cuprum.cuprum.config.CuprumCommonConfig$NetSection :: public int rateGlobalPerSec;
+dev.cuprum.cuprum.config.CuprumCommonConfig$NetSection :: public int ratePerSecDefault;
+dev.cuprum.cuprum.config.CuprumCommonConfig$NetSection :: public int violationKickThreshold;
+dev.cuprum.cuprum.config.CuprumCommonConfig$NetSection :: public int violationWindowTicks;
+dev.cuprum.cuprum.config.CuprumConfigs :: public final class dev.cuprum.cuprum.config.CuprumConfigs
+dev.cuprum.cuprum.config.CuprumConfigs :: public static dev.cuprum.cuprum.config.CuprumCommonConfig common();
+dev.cuprum.cuprum.config.CuprumConfigs :: public static void init();
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: protected dev.cuprum.cuprum.machine.ChargeMachineBlockEntity(net.minecraft.world.level.block.entity.BlockEntityType<?>, net.minecraft.core.BlockPos, net.minecraft.world.level.block.state.BlockState, long, long, long);
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: protected final void markChangedAndSync();
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: protected final void markChangedAndSyncThrottled();
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: protected int formationStateOrdinalForMenu();
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: protected void loadAdditional(net.minecraft.world.level.storage.ValueInput);
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: protected void loadMachineData(net.minecraft.world.level.storage.ValueInput);
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: protected void saveAdditional(net.minecraft.world.level.storage.ValueOutput);
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: protected void saveMachineData(net.minecraft.world.level.storage.ValueOutput);
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: protected void writeClientExtras(net.minecraft.nbt.CompoundTag);
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public abstract class dev.cuprum.cuprum.machine.ChargeMachineBlockEntity extends dev.cuprum.cuprum.charge.blockentity.AbstractChargeStorageBlockEntity
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public final dev.cuprum.cuprum.charge.core.ChargeBuffer chargeBuffer();
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public net.minecraft.nbt.CompoundTag getUpdateTag(net.minecraft.core.HolderLookup$Provider);
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public net.minecraft.network.protocol.Packet getUpdatePacket();
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket getUpdatePacket();
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public net.minecraft.world.inventory.ContainerData createMenuData();
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public static final int DATA_SLOT_COUNT;
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public static final int SLOT_CHARGE_LANE0;
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public static final int SLOT_CHARGE_LANE1;
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public static final int SLOT_CHARGE_LANE2;
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public static final int SLOT_STATUS;
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public static final int SYNC_MIN_INTERVAL_TICKS;
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public static final long MAX_SYNCABLE_CG;
+dev.cuprum.cuprum.machine.ChargeMachineBlockEntity :: public static long requireSyncableCg(java.lang.String, long);
+dev.cuprum.cuprum.machine.ChargeMachineMenu :: public boolean stillValid(net.minecraft.world.entity.player.Player);
+dev.cuprum.cuprum.machine.ChargeMachineMenu :: public class dev.cuprum.cuprum.machine.ChargeMachineMenu extends net.minecraft.world.inventory.AbstractContainerMenu
+dev.cuprum.cuprum.machine.ChargeMachineMenu :: public dev.cuprum.cuprum.machine.ChargeMachineMenu(int, net.minecraft.world.entity.player.Inventory, dev.cuprum.cuprum.machine.ChargeMachineBlockEntity);
+dev.cuprum.cuprum.machine.ChargeMachineMenu :: public dev.cuprum.cuprum.machine.ChargeMachineMenu(int, net.minecraft.world.entity.player.Inventory, dev.cuprum.cuprum.machine.ChargeMachineOpenData);
+dev.cuprum.cuprum.machine.ChargeMachineMenu :: public dev.cuprum.cuprum.multiblock.FormationState formationState();
+dev.cuprum.cuprum.machine.ChargeMachineMenu :: public long capacityCg();
+dev.cuprum.cuprum.machine.ChargeMachineMenu :: public long chargeCg();
+dev.cuprum.cuprum.machine.ChargeMachineMenu :: public net.minecraft.world.item.ItemStack quickMoveStack(net.minecraft.world.entity.player.Player, int);
+dev.cuprum.cuprum.machine.ChargeMachineOpenData :: public dev.cuprum.cuprum.machine.ChargeMachineOpenData(net.minecraft.core.BlockPos, long);
+dev.cuprum.cuprum.machine.ChargeMachineOpenData :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.machine.ChargeMachineOpenData :: public final class dev.cuprum.cuprum.machine.ChargeMachineOpenData extends java.lang.Record
+dev.cuprum.cuprum.machine.ChargeMachineOpenData :: public final int hashCode();
+dev.cuprum.cuprum.machine.ChargeMachineOpenData :: public final java.lang.String toString();
+dev.cuprum.cuprum.machine.ChargeMachineOpenData :: public long capacityCg();
+dev.cuprum.cuprum.machine.ChargeMachineOpenData :: public net.minecraft.core.BlockPos pos();
+dev.cuprum.cuprum.machine.ChargeMachineOpenData :: public static final net.minecraft.network.codec.StreamCodec<net.minecraft.network.RegistryFriendlyByteBuf, dev.cuprum.cuprum.machine.ChargeMachineOpenData> STREAM_CODEC;
+dev.cuprum.cuprum.machine.MachineApiProbe :: public final class dev.cuprum.cuprum.machine.MachineApiProbe
+dev.cuprum.cuprum.machine.MachineContent :: public final class dev.cuprum.cuprum.machine.MachineContent
+dev.cuprum.cuprum.machine.MachineContent :: public static final net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerType<dev.cuprum.cuprum.machine.ChargeMachineMenu, dev.cuprum.cuprum.machine.ChargeMachineOpenData> CHARGE_MACHINE_MENU;
+dev.cuprum.cuprum.machine.MachineContent :: public static final net.minecraft.world.item.Item DIAGNOSTIC_COIL_CORE_ITEM;
+dev.cuprum.cuprum.machine.MachineContent :: public static final net.minecraft.world.item.Item DIAGNOSTIC_COIL_FRAME_ITEM;
+dev.cuprum.cuprum.machine.MachineContent :: public static final net.minecraft.world.level.block.Block DIAGNOSTIC_COIL_CORE;
+dev.cuprum.cuprum.machine.MachineContent :: public static final net.minecraft.world.level.block.Block DIAGNOSTIC_COIL_FRAME;
+dev.cuprum.cuprum.machine.MachineContent :: public static final net.minecraft.world.level.block.entity.BlockEntityType<dev.cuprum.cuprum.block.DiagnosticCoilCoreBlockEntity> DIAGNOSTIC_COIL_CORE_BLOCK_ENTITY;
+dev.cuprum.cuprum.machine.MachineContent :: public static void init();
+dev.cuprum.cuprum.machine.MachineModule :: public final class dev.cuprum.cuprum.machine.MachineModule
+dev.cuprum.cuprum.machine.MachineModule :: public static void init();
+dev.cuprum.cuprum.machine.ShortSplit :: public final class dev.cuprum.cuprum.machine.ShortSplit
+dev.cuprum.cuprum.machine.ShortSplit :: public static final int LANES_PER_LONG;
+dev.cuprum.cuprum.machine.ShortSplit :: public static final int SYNC_LANES;
+dev.cuprum.cuprum.machine.ShortSplit :: public static final long MAX_THREE_LANE_VALUE;
+dev.cuprum.cuprum.machine.ShortSplit :: public static int lane(long, int);
+dev.cuprum.cuprum.machine.ShortSplit :: public static int syncLane(long, int);
+dev.cuprum.cuprum.machine.ShortSplit :: public static long combine(int, int, int, int);
+dev.cuprum.cuprum.machine.ShortSplit :: public static long combineThree(int, int, int);
+dev.cuprum.cuprum.machine.ShortSplit :: public static long requireThreeLaneValue(long);
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public boolean matches(net.minecraft.world.level.block.state.BlockState, dev.cuprum.cuprum.multiblock.MultiblockOrientation);
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public dev.cuprum.cuprum.multiblock.BlockMatcher(java.util.Optional<net.minecraft.world.level.block.Block>, java.util.Optional<net.minecraft.tags.TagKey<net.minecraft.world.level.block.Block>>, java.util.Map<java.lang.String, java.lang.String>, java.util.Optional<net.minecraft.core.Direction>);
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public final class dev.cuprum.cuprum.multiblock.BlockMatcher extends java.lang.Record
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public final int hashCode();
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public final java.lang.String toString();
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public java.util.Map<java.lang.String, java.lang.String> state();
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public java.util.Optional<net.minecraft.core.Direction> facing();
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public java.util.Optional<net.minecraft.tags.TagKey<net.minecraft.world.level.block.Block>> tag();
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public java.util.Optional<net.minecraft.world.level.block.Block> block();
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public java.util.Optional<net.minecraft.world.level.block.state.BlockState> displayState();
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public static final com.mojang.serialization.Codec<dev.cuprum.cuprum.multiblock.BlockMatcher> CODEC;
+dev.cuprum.cuprum.multiblock.BlockMatcher :: public static final java.lang.String FACING_PROPERTY;
+dev.cuprum.cuprum.multiblock.FaultCode :: public final class dev.cuprum.cuprum.multiblock.FaultCode extends java.lang.Enum<dev.cuprum.cuprum.multiblock.FaultCode> implements net.minecraft.util.StringRepresentable
+dev.cuprum.cuprum.multiblock.FaultCode :: public java.lang.String getSerializedName();
+dev.cuprum.cuprum.multiblock.FaultCode :: public static dev.cuprum.cuprum.multiblock.FaultCode byName(java.lang.String);
+dev.cuprum.cuprum.multiblock.FaultCode :: public static dev.cuprum.cuprum.multiblock.FaultCode valueOf(java.lang.String);
+dev.cuprum.cuprum.multiblock.FaultCode :: public static dev.cuprum.cuprum.multiblock.FaultCode[] values();
+dev.cuprum.cuprum.multiblock.FaultCode :: public static final dev.cuprum.cuprum.multiblock.FaultCode CONFLICT;
+dev.cuprum.cuprum.multiblock.FaultCode :: public static final dev.cuprum.cuprum.multiblock.FaultCode MISMATCH;
+dev.cuprum.cuprum.multiblock.FaultCode :: public static final dev.cuprum.cuprum.multiblock.FaultCode PATTERN_MISSING;
+dev.cuprum.cuprum.multiblock.FaultCode :: public static final dev.cuprum.cuprum.multiblock.FaultCode UNLOADED;
+dev.cuprum.cuprum.multiblock.FormationState :: public final class dev.cuprum.cuprum.multiblock.FormationState extends java.lang.Enum<dev.cuprum.cuprum.multiblock.FormationState>
+dev.cuprum.cuprum.multiblock.FormationState :: public static dev.cuprum.cuprum.multiblock.FormationState byOrdinal(int);
+dev.cuprum.cuprum.multiblock.FormationState :: public static dev.cuprum.cuprum.multiblock.FormationState valueOf(java.lang.String);
+dev.cuprum.cuprum.multiblock.FormationState :: public static dev.cuprum.cuprum.multiblock.FormationState[] values();
+dev.cuprum.cuprum.multiblock.FormationState :: public static final dev.cuprum.cuprum.multiblock.FormationState FAULT;
+dev.cuprum.cuprum.multiblock.FormationState :: public static final dev.cuprum.cuprum.multiblock.FormationState FORMED;
+dev.cuprum.cuprum.multiblock.FormationState :: public static final dev.cuprum.cuprum.multiblock.FormationState UNFORMED;
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public dev.cuprum.cuprum.multiblock.FormationState state();
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior(net.minecraft.world.level.block.entity.BlockEntity, net.minecraft.resources.ResourceLocation);
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public final class dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public java.util.Optional<dev.cuprum.cuprum.multiblock.MultiblockFault> fault();
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public java.util.Optional<dev.cuprum.cuprum.multiblock.MultiblockOrientation> orientation();
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public static final int REVALIDATION_INTERVAL_TICKS;
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public void load(net.minecraft.world.level.storage.ValueInput);
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public void onHostRemoved(net.minecraft.server.level.ServerLevel);
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public void readClientData(net.minecraft.world.level.storage.ValueInput);
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public void requestRevalidation();
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public void save(net.minecraft.world.level.storage.ValueOutput);
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public void serverTick(net.minecraft.server.level.ServerLevel);
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public void setListener(dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior$FormationListener);
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior :: public void writeClientData(net.minecraft.nbt.CompoundTag);
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior$FormationListener :: public abstract void formationChanged(dev.cuprum.cuprum.multiblock.FormationState, dev.cuprum.cuprum.multiblock.FormationState);
+dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior$FormationListener :: public interface dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior$FormationListener
+dev.cuprum.cuprum.multiblock.MultiblockControllerHost :: public abstract dev.cuprum.cuprum.multiblock.MultiblockControllerBehavior multiblockBehavior();
+dev.cuprum.cuprum.multiblock.MultiblockControllerHost :: public interface dev.cuprum.cuprum.multiblock.MultiblockControllerHost
+dev.cuprum.cuprum.multiblock.MultiblockFault :: public dev.cuprum.cuprum.multiblock.FaultCode code();
+dev.cuprum.cuprum.multiblock.MultiblockFault :: public dev.cuprum.cuprum.multiblock.MultiblockFault(dev.cuprum.cuprum.multiblock.FaultCode, java.util.Optional<net.minecraft.core.BlockPos>, java.lang.String);
+dev.cuprum.cuprum.multiblock.MultiblockFault :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.multiblock.MultiblockFault :: public final class dev.cuprum.cuprum.multiblock.MultiblockFault extends java.lang.Record
+dev.cuprum.cuprum.multiblock.MultiblockFault :: public final int hashCode();
+dev.cuprum.cuprum.multiblock.MultiblockFault :: public final java.lang.String toString();
+dev.cuprum.cuprum.multiblock.MultiblockFault :: public java.lang.String detail();
+dev.cuprum.cuprum.multiblock.MultiblockFault :: public java.util.Optional<net.minecraft.core.BlockPos> pos();
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public boolean claim(net.minecraft.core.BlockPos, long[]);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public final class dev.cuprum.cuprum.multiblock.MultiblockLevelIndex
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public net.minecraft.core.BlockPos controllerAt(net.minecraft.core.BlockPos);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public net.minecraft.core.BlockPos firstConflict(net.minecraft.core.BlockPos, long[]);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public static dev.cuprum.cuprum.multiblock.MultiblockLevelIndex get(net.minecraft.server.level.ServerLevel);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public static final int MAX_PATTERN_REACH;
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public static void onBlockEntityLoad(net.minecraft.world.level.block.entity.BlockEntity, net.minecraft.server.level.ServerLevel);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public static void onBlockEntityUnload(net.minecraft.world.level.block.entity.BlockEntity, net.minecraft.server.level.ServerLevel);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public static void onChunkLoad(net.minecraft.server.level.ServerLevel, net.minecraft.world.level.chunk.LevelChunk);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public static void onChunkUnload(net.minecraft.server.level.ServerLevel, net.minecraft.world.level.chunk.LevelChunk);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public static void onServerStopped(net.minecraft.server.MinecraftServer);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public static void onWorldUnload(net.minecraft.server.MinecraftServer, net.minecraft.server.level.ServerLevel);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public void release(net.minecraft.core.BlockPos);
+dev.cuprum.cuprum.multiblock.MultiblockLevelIndex :: public void requestRevalidation(net.minecraft.core.BlockPos);
+dev.cuprum.cuprum.multiblock.MultiblockMatch :: public dev.cuprum.cuprum.multiblock.MultiblockMatch(net.minecraft.resources.ResourceLocation, dev.cuprum.cuprum.multiblock.MultiblockOrientation, long[]);
+dev.cuprum.cuprum.multiblock.MultiblockMatch :: public dev.cuprum.cuprum.multiblock.MultiblockOrientation orientation();
+dev.cuprum.cuprum.multiblock.MultiblockMatch :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.multiblock.MultiblockMatch :: public final class dev.cuprum.cuprum.multiblock.MultiblockMatch extends java.lang.Record
+dev.cuprum.cuprum.multiblock.MultiblockMatch :: public final int hashCode();
+dev.cuprum.cuprum.multiblock.MultiblockMatch :: public final java.lang.String toString();
+dev.cuprum.cuprum.multiblock.MultiblockMatch :: public long[] memberPositions();
+dev.cuprum.cuprum.multiblock.MultiblockMatch :: public net.minecraft.resources.ResourceLocation patternId();
+dev.cuprum.cuprum.multiblock.MultiblockMatchResult :: public dev.cuprum.cuprum.multiblock.MultiblockMatchResult(java.util.Optional<dev.cuprum.cuprum.multiblock.MultiblockMatch>, java.util.Optional<dev.cuprum.cuprum.multiblock.MultiblockFault>);
+dev.cuprum.cuprum.multiblock.MultiblockMatchResult :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.multiblock.MultiblockMatchResult :: public final class dev.cuprum.cuprum.multiblock.MultiblockMatchResult extends java.lang.Record
+dev.cuprum.cuprum.multiblock.MultiblockMatchResult :: public final int hashCode();
+dev.cuprum.cuprum.multiblock.MultiblockMatchResult :: public final java.lang.String toString();
+dev.cuprum.cuprum.multiblock.MultiblockMatchResult :: public java.util.Optional<dev.cuprum.cuprum.multiblock.MultiblockFault> bestFault();
+dev.cuprum.cuprum.multiblock.MultiblockMatchResult :: public java.util.Optional<dev.cuprum.cuprum.multiblock.MultiblockMatch> match();
+dev.cuprum.cuprum.multiblock.MultiblockMatchResult :: public static dev.cuprum.cuprum.multiblock.MultiblockMatchResult failure(dev.cuprum.cuprum.multiblock.MultiblockFault);
+dev.cuprum.cuprum.multiblock.MultiblockMatchResult :: public static dev.cuprum.cuprum.multiblock.MultiblockMatchResult success(dev.cuprum.cuprum.multiblock.MultiblockMatch);
+dev.cuprum.cuprum.multiblock.MultiblockMemberBlock :: protected void affectNeighborsAfterRemoval(net.minecraft.world.level.block.state.BlockState, net.minecraft.server.level.ServerLevel, net.minecraft.core.BlockPos, boolean);
+dev.cuprum.cuprum.multiblock.MultiblockMemberBlock :: protected void onPlace(net.minecraft.world.level.block.state.BlockState, net.minecraft.world.level.Level, net.minecraft.core.BlockPos, net.minecraft.world.level.block.state.BlockState, boolean);
+dev.cuprum.cuprum.multiblock.MultiblockMemberBlock :: public class dev.cuprum.cuprum.multiblock.MultiblockMemberBlock extends net.minecraft.world.level.block.Block
+dev.cuprum.cuprum.multiblock.MultiblockMemberBlock :: public dev.cuprum.cuprum.multiblock.MultiblockMemberBlock(net.minecraft.world.level.block.state.BlockBehaviour$Properties);
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public dev.cuprum.cuprum.multiblock.MultiblockOrientation(net.minecraft.world.level.block.Rotation, net.minecraft.world.level.block.Mirror);
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public final class dev.cuprum.cuprum.multiblock.MultiblockOrientation extends java.lang.Record
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public final int hashCode();
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public final java.lang.String toString();
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public net.minecraft.core.BlockPos transformOffset(net.minecraft.core.Vec3i);
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public net.minecraft.core.Direction transformFacing(net.minecraft.core.Direction);
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public net.minecraft.world.level.block.Mirror mirror();
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public net.minecraft.world.level.block.Rotation rotation();
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public static final java.util.List<dev.cuprum.cuprum.multiblock.MultiblockOrientation> HORIZONTAL_ALL;
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public static final java.util.List<dev.cuprum.cuprum.multiblock.MultiblockOrientation> HORIZONTAL_UNMIRRORED;
+dev.cuprum.cuprum.multiblock.MultiblockOrientation :: public static int rotationSteps(net.minecraft.world.level.block.Rotation);
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public dev.cuprum.cuprum.multiblock.MultiblockMatchResult tryMatch(net.minecraft.server.level.ServerLevel, net.minecraft.core.BlockPos);
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public final class dev.cuprum.cuprum.multiblock.MultiblockPattern
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public int memberCount();
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public int sizeX();
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public int sizeY();
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public int sizeZ();
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public java.lang.String cellKey(int, int, int);
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public java.util.Optional<net.minecraft.world.level.block.state.BlockState> displayState(char);
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public long[] memberPositions(net.minecraft.core.BlockPos, dev.cuprum.cuprum.multiblock.MultiblockOrientation);
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public net.minecraft.core.Vec3i controllerCell();
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public net.minecraft.resources.ResourceLocation id();
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public static final com.mojang.serialization.Codec<dev.cuprum.cuprum.multiblock.MultiblockPattern> CODEC;
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public static final int FORMAT_VERSION;
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public static final int MAX_CELLS;
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public static final int MAX_DIMENSION;
+dev.cuprum.cuprum.multiblock.MultiblockPattern :: public static final int MAX_KEY_ENTRIES;
+dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode :: public final class dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode extends java.lang.Enum<dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode> implements net.minecraft.util.StringRepresentable
+dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode :: public java.lang.String getSerializedName();
+dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode :: public static dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode valueOf(java.lang.String);
+dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode :: public static dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode[] values();
+dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode :: public static final com.mojang.serialization.Codec<dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode> CODEC;
+dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode :: public static final dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode ANY_HORIZONTAL;
+dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode :: public static final dev.cuprum.cuprum.multiblock.MultiblockPattern$OrientationMode CONTROLLER_FACING;
+dev.cuprum.cuprum.multiblock.MultiblockPatterns :: protected java.lang.Object prepare(net.minecraft.server.packs.resources.ResourceManager, net.minecraft.util.profiling.ProfilerFiller);
+dev.cuprum.cuprum.multiblock.MultiblockPatterns :: protected void apply(java.lang.Object, net.minecraft.server.packs.resources.ResourceManager, net.minecraft.util.profiling.ProfilerFiller);
+dev.cuprum.cuprum.multiblock.MultiblockPatterns :: protected void apply(java.util.Map<net.minecraft.resources.ResourceLocation, dev.cuprum.cuprum.multiblock.MultiblockPattern>, net.minecraft.server.packs.resources.ResourceManager, net.minecraft.util.profiling.ProfilerFiller);
+dev.cuprum.cuprum.multiblock.MultiblockPatterns :: public dev.cuprum.cuprum.multiblock.MultiblockPatterns();
+dev.cuprum.cuprum.multiblock.MultiblockPatterns :: public final class dev.cuprum.cuprum.multiblock.MultiblockPatterns extends net.minecraft.server.packs.resources.SimpleJsonResourceReloadListener<dev.cuprum.cuprum.multiblock.MultiblockPattern>
+dev.cuprum.cuprum.multiblock.MultiblockPatterns :: public static final net.minecraft.resources.FileToIdConverter LISTER;
+dev.cuprum.cuprum.multiblock.MultiblockPatterns :: public static final net.minecraft.resources.ResourceLocation RELOADER_ID;
+dev.cuprum.cuprum.multiblock.MultiblockPatterns :: public static int loadedCount();
+dev.cuprum.cuprum.multiblock.MultiblockPatterns :: public static int reloadGeneration();
+dev.cuprum.cuprum.multiblock.MultiblockPatterns :: public static java.util.Optional<dev.cuprum.cuprum.multiblock.MultiblockPattern> get(net.minecraft.resources.ResourceLocation);
+dev.cuprum.cuprum.multiblock.PatternGeometry :: public final class dev.cuprum.cuprum.multiblock.PatternGeometry
+dev.cuprum.cuprum.multiblock.PatternGeometry :: public static final int ROTATION_COUNT;
+dev.cuprum.cuprum.multiblock.PatternGeometry :: public static final int ROT_CLOCKWISE_180;
+dev.cuprum.cuprum.multiblock.PatternGeometry :: public static final int ROT_CLOCKWISE_90;
+dev.cuprum.cuprum.multiblock.PatternGeometry :: public static final int ROT_COUNTERCLOCKWISE_90;
+dev.cuprum.cuprum.multiblock.PatternGeometry :: public static final int ROT_NONE;
+dev.cuprum.cuprum.multiblock.PatternGeometry :: public static int transformX(int, int, int, boolean);
+dev.cuprum.cuprum.multiblock.PatternGeometry :: public static int transformZ(int, int, int, boolean);
+dev.cuprum.cuprum.multiblock.PatternShape :: public dev.cuprum.cuprum.multiblock.PatternShape$Cell controllerCell();
+dev.cuprum.cuprum.multiblock.PatternShape :: public final class dev.cuprum.cuprum.multiblock.PatternShape
+dev.cuprum.cuprum.multiblock.PatternShape :: public int memberCount();
+dev.cuprum.cuprum.multiblock.PatternShape :: public int sizeX();
+dev.cuprum.cuprum.multiblock.PatternShape :: public int sizeY();
+dev.cuprum.cuprum.multiblock.PatternShape :: public int sizeZ();
+dev.cuprum.cuprum.multiblock.PatternShape :: public java.util.List<dev.cuprum.cuprum.multiblock.PatternShape$Cell> memberCells();
+dev.cuprum.cuprum.multiblock.PatternShape :: public static dev.cuprum.cuprum.multiblock.PatternShape analyze(java.util.List<java.util.List<java.lang.String>>, java.util.Set<java.lang.String>, java.lang.String);
+dev.cuprum.cuprum.multiblock.PatternShape :: public static final int MAX_CELLS;
+dev.cuprum.cuprum.multiblock.PatternShape :: public static final int MAX_DIMENSION;
+dev.cuprum.cuprum.multiblock.PatternShape :: public static final int MAX_KEY_ENTRIES;
+dev.cuprum.cuprum.multiblock.PatternShape :: public static final java.lang.String IGNORED_CELL;
+dev.cuprum.cuprum.multiblock.PatternShape$Cell :: public dev.cuprum.cuprum.multiblock.PatternShape$Cell(int, int, int, java.lang.String);
+dev.cuprum.cuprum.multiblock.PatternShape$Cell :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.multiblock.PatternShape$Cell :: public final class dev.cuprum.cuprum.multiblock.PatternShape$Cell extends java.lang.Record
+dev.cuprum.cuprum.multiblock.PatternShape$Cell :: public final int hashCode();
+dev.cuprum.cuprum.multiblock.PatternShape$Cell :: public final java.lang.String toString();
+dev.cuprum.cuprum.multiblock.PatternShape$Cell :: public int x();
+dev.cuprum.cuprum.multiblock.PatternShape$Cell :: public int y();
+dev.cuprum.cuprum.multiblock.PatternShape$Cell :: public int z();
+dev.cuprum.cuprum.multiblock.PatternShape$Cell :: public java.lang.String key();
+dev.cuprum.cuprum.net.CuprumNet :: public final class dev.cuprum.cuprum.net.CuprumNet
+dev.cuprum.cuprum.net.CuprumNet :: public static <T extends net.minecraft.network.protocol.common.custom.CustomPacketPayload> dev.cuprum.cuprum.net.server.GuardResult dispatch(net.minecraft.network.protocol.common.custom.CustomPacketPayload$Type<T>, T, net.minecraft.server.level.ServerPlayer);
+dev.cuprum.cuprum.net.CuprumNet :: public static <T extends net.minecraft.network.protocol.common.custom.CustomPacketPayload> void registerGuardedC2S(net.minecraft.network.protocol.common.custom.CustomPacketPayload$Type<T>, dev.cuprum.cuprum.net.server.RateKey, dev.cuprum.cuprum.net.CuprumNet$GuardSpecFactory<T>, dev.cuprum.cuprum.net.CuprumNet$GuardedHandler<T>);
+dev.cuprum.cuprum.net.CuprumNet :: public static void init();
+dev.cuprum.cuprum.net.CuprumNet$GuardSpecFactory :: public abstract dev.cuprum.cuprum.net.server.GuardSpec create(T);
+dev.cuprum.cuprum.net.CuprumNet$GuardSpecFactory :: public interface dev.cuprum.cuprum.net.CuprumNet$GuardSpecFactory<T extends net.minecraft.network.protocol.common.custom.CustomPacketPayload>
+dev.cuprum.cuprum.net.CuprumNet$GuardedHandler :: public abstract void handle(T, net.minecraft.server.level.ServerPlayer);
+dev.cuprum.cuprum.net.CuprumNet$GuardedHandler :: public interface dev.cuprum.cuprum.net.CuprumNet$GuardedHandler<T extends net.minecraft.network.protocol.common.custom.CustomPacketPayload>
+dev.cuprum.cuprum.net.CuprumNetVersion :: public final class dev.cuprum.cuprum.net.CuprumNetVersion
+dev.cuprum.cuprum.net.CuprumNetVersion :: public static boolean isCompatible(int);
+dev.cuprum.cuprum.net.CuprumNetVersion :: public static final int NET_VERSION;
+dev.cuprum.cuprum.net.CuprumPayloads :: public final class dev.cuprum.cuprum.net.CuprumPayloads
+dev.cuprum.cuprum.net.CuprumPayloads :: public static void register();
+dev.cuprum.cuprum.net.NetApiProbe :: public final class dev.cuprum.cuprum.net.NetApiProbe
+dev.cuprum.cuprum.net.NetBounds :: public final class dev.cuprum.cuprum.net.NetBounds
+dev.cuprum.cuprum.net.NetBounds :: public static boolean fitsLength(java.lang.String, int);
+dev.cuprum.cuprum.net.NetBounds :: public static boolean fitsLengthNfc(java.lang.String, int);
+dev.cuprum.cuprum.net.NetBounds :: public static boolean isLogSafe(java.lang.String);
+dev.cuprum.cuprum.net.NetBounds :: public static boolean isNfc(java.lang.String);
+dev.cuprum.cuprum.net.NetBounds :: public static boolean isValidRangeDistance(double);
+dev.cuprum.cuprum.net.NetBounds :: public static final double MAX_RANGE_DISTANCE;
+dev.cuprum.cuprum.net.NetBounds :: public static java.lang.String escapeForLog(java.lang.String);
+dev.cuprum.cuprum.net.NetBounds :: public static java.lang.String requireBounded(java.lang.String, int, java.lang.String);
+dev.cuprum.cuprum.net.NetBounds :: public static java.lang.String toNfc(java.lang.String);
+dev.cuprum.cuprum.net.server.C2SGuard :: public final class dev.cuprum.cuprum.net.server.C2SGuard
+dev.cuprum.cuprum.net.server.C2SGuard :: public static dev.cuprum.cuprum.net.server.GuardResult check(net.minecraft.server.level.ServerPlayer, net.minecraft.resources.ResourceLocation, dev.cuprum.cuprum.net.server.GuardSpec);
+dev.cuprum.cuprum.net.server.C2SGuard :: public static dev.cuprum.cuprum.net.server.GuardResult checkArrival(net.minecraft.server.level.ServerPlayer, net.minecraft.resources.ResourceLocation, dev.cuprum.cuprum.net.server.RateKey);
+dev.cuprum.cuprum.net.server.GuardCore :: public final class dev.cuprum.cuprum.net.server.GuardCore
+dev.cuprum.cuprum.net.server.GuardCore :: public static dev.cuprum.cuprum.net.server.GuardCore$Decision evaluate(java.util.List<dev.cuprum.cuprum.net.server.GuardCore$Check>);
+dev.cuprum.cuprum.net.server.GuardCore$Check :: public dev.cuprum.cuprum.net.server.GuardCore$Check(dev.cuprum.cuprum.net.server.GuardStep, java.util.function.BooleanSupplier, dev.cuprum.cuprum.net.server.GuardResult);
+dev.cuprum.cuprum.net.server.GuardCore$Check :: public dev.cuprum.cuprum.net.server.GuardResult onFail();
+dev.cuprum.cuprum.net.server.GuardCore$Check :: public dev.cuprum.cuprum.net.server.GuardStep step();
+dev.cuprum.cuprum.net.server.GuardCore$Check :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.net.server.GuardCore$Check :: public final class dev.cuprum.cuprum.net.server.GuardCore$Check extends java.lang.Record
+dev.cuprum.cuprum.net.server.GuardCore$Check :: public final int hashCode();
+dev.cuprum.cuprum.net.server.GuardCore$Check :: public final java.lang.String toString();
+dev.cuprum.cuprum.net.server.GuardCore$Check :: public java.util.function.BooleanSupplier passes();
+dev.cuprum.cuprum.net.server.GuardCore$Decision :: public dev.cuprum.cuprum.net.server.GuardCore$Decision(dev.cuprum.cuprum.net.server.GuardResult, dev.cuprum.cuprum.net.server.GuardStep);
+dev.cuprum.cuprum.net.server.GuardCore$Decision :: public dev.cuprum.cuprum.net.server.GuardResult result();
+dev.cuprum.cuprum.net.server.GuardCore$Decision :: public dev.cuprum.cuprum.net.server.GuardStep failedStep();
+dev.cuprum.cuprum.net.server.GuardCore$Decision :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.net.server.GuardCore$Decision :: public final class dev.cuprum.cuprum.net.server.GuardCore$Decision extends java.lang.Record
+dev.cuprum.cuprum.net.server.GuardCore$Decision :: public final int hashCode();
+dev.cuprum.cuprum.net.server.GuardCore$Decision :: public final java.lang.String toString();
+dev.cuprum.cuprum.net.server.GuardResult :: public final class dev.cuprum.cuprum.net.server.GuardResult extends java.lang.Enum<dev.cuprum.cuprum.net.server.GuardResult>
+dev.cuprum.cuprum.net.server.GuardResult :: public static dev.cuprum.cuprum.net.server.GuardResult valueOf(java.lang.String);
+dev.cuprum.cuprum.net.server.GuardResult :: public static dev.cuprum.cuprum.net.server.GuardResult[] values();
+dev.cuprum.cuprum.net.server.GuardResult :: public static final dev.cuprum.cuprum.net.server.GuardResult DROP_LOG;
+dev.cuprum.cuprum.net.server.GuardResult :: public static final dev.cuprum.cuprum.net.server.GuardResult DROP_SILENT;
+dev.cuprum.cuprum.net.server.GuardResult :: public static final dev.cuprum.cuprum.net.server.GuardResult PASS;
+dev.cuprum.cuprum.net.server.GuardResult :: public static final dev.cuprum.cuprum.net.server.GuardResult VIOLATION;
+dev.cuprum.cuprum.net.server.GuardSpec :: public dev.cuprum.cuprum.net.server.GuardSpec$ClaimCheck claim();
+dev.cuprum.cuprum.net.server.GuardSpec :: public dev.cuprum.cuprum.net.server.GuardSpec$MenuCheck menu();
+dev.cuprum.cuprum.net.server.GuardSpec :: public dev.cuprum.cuprum.net.server.GuardSpec$PermissionCheck permission();
+dev.cuprum.cuprum.net.server.GuardSpec :: public dev.cuprum.cuprum.net.server.GuardSpec$RangeCheck range();
+dev.cuprum.cuprum.net.server.GuardSpec :: public final class dev.cuprum.cuprum.net.server.GuardSpec
+dev.cuprum.cuprum.net.server.GuardSpec :: public java.util.function.BooleanSupplier state();
+dev.cuprum.cuprum.net.server.GuardSpec :: public java.util.function.BooleanSupplier value();
+dev.cuprum.cuprum.net.server.GuardSpec :: public static dev.cuprum.cuprum.net.server.GuardSpec$Builder builder();
+dev.cuprum.cuprum.net.server.GuardSpec$Builder :: public dev.cuprum.cuprum.net.server.GuardSpec build();
+dev.cuprum.cuprum.net.server.GuardSpec$Builder :: public dev.cuprum.cuprum.net.server.GuardSpec$Builder claim(java.util.function.Supplier<dev.cuprum.cuprum.ownership.Claim>, dev.cuprum.cuprum.ownership.ClaimAccess);
+dev.cuprum.cuprum.net.server.GuardSpec$Builder :: public dev.cuprum.cuprum.net.server.GuardSpec$Builder menu(int, java.lang.Class<? extends net.minecraft.world.inventory.AbstractContainerMenu>);
+dev.cuprum.cuprum.net.server.GuardSpec$Builder :: public dev.cuprum.cuprum.net.server.GuardSpec$Builder permission(java.lang.String, int);
+dev.cuprum.cuprum.net.server.GuardSpec$Builder :: public dev.cuprum.cuprum.net.server.GuardSpec$Builder range(net.minecraft.core.BlockPos, double);
+dev.cuprum.cuprum.net.server.GuardSpec$Builder :: public dev.cuprum.cuprum.net.server.GuardSpec$Builder state(java.util.function.BooleanSupplier);
+dev.cuprum.cuprum.net.server.GuardSpec$Builder :: public dev.cuprum.cuprum.net.server.GuardSpec$Builder value(java.util.function.BooleanSupplier);
+dev.cuprum.cuprum.net.server.GuardSpec$Builder :: public final class dev.cuprum.cuprum.net.server.GuardSpec$Builder
+dev.cuprum.cuprum.net.server.GuardSpec$ClaimCheck :: public dev.cuprum.cuprum.net.server.GuardSpec$ClaimCheck(java.util.function.Supplier<dev.cuprum.cuprum.ownership.Claim>, dev.cuprum.cuprum.ownership.ClaimAccess);
+dev.cuprum.cuprum.net.server.GuardSpec$ClaimCheck :: public dev.cuprum.cuprum.ownership.ClaimAccess access();
+dev.cuprum.cuprum.net.server.GuardSpec$ClaimCheck :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.net.server.GuardSpec$ClaimCheck :: public final class dev.cuprum.cuprum.net.server.GuardSpec$ClaimCheck extends java.lang.Record
+dev.cuprum.cuprum.net.server.GuardSpec$ClaimCheck :: public final int hashCode();
+dev.cuprum.cuprum.net.server.GuardSpec$ClaimCheck :: public final java.lang.String toString();
+dev.cuprum.cuprum.net.server.GuardSpec$ClaimCheck :: public java.util.function.Supplier<dev.cuprum.cuprum.ownership.Claim> claimResolver();
+dev.cuprum.cuprum.net.server.GuardSpec$MenuCheck :: public dev.cuprum.cuprum.net.server.GuardSpec$MenuCheck(int, java.lang.Class<? extends net.minecraft.world.inventory.AbstractContainerMenu>);
+dev.cuprum.cuprum.net.server.GuardSpec$MenuCheck :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.net.server.GuardSpec$MenuCheck :: public final class dev.cuprum.cuprum.net.server.GuardSpec$MenuCheck extends java.lang.Record
+dev.cuprum.cuprum.net.server.GuardSpec$MenuCheck :: public final int hashCode();
+dev.cuprum.cuprum.net.server.GuardSpec$MenuCheck :: public final java.lang.String toString();
+dev.cuprum.cuprum.net.server.GuardSpec$MenuCheck :: public int containerId();
+dev.cuprum.cuprum.net.server.GuardSpec$MenuCheck :: public java.lang.Class<? extends net.minecraft.world.inventory.AbstractContainerMenu> menuClass();
+dev.cuprum.cuprum.net.server.GuardSpec$PermissionCheck :: public dev.cuprum.cuprum.net.server.GuardSpec$PermissionCheck(java.lang.String, int);
+dev.cuprum.cuprum.net.server.GuardSpec$PermissionCheck :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.net.server.GuardSpec$PermissionCheck :: public final class dev.cuprum.cuprum.net.server.GuardSpec$PermissionCheck extends java.lang.Record
+dev.cuprum.cuprum.net.server.GuardSpec$PermissionCheck :: public final int hashCode();
+dev.cuprum.cuprum.net.server.GuardSpec$PermissionCheck :: public final java.lang.String toString();
+dev.cuprum.cuprum.net.server.GuardSpec$PermissionCheck :: public int fallbackOpLevel();
+dev.cuprum.cuprum.net.server.GuardSpec$PermissionCheck :: public java.lang.String node();
+dev.cuprum.cuprum.net.server.GuardSpec$RangeCheck :: public dev.cuprum.cuprum.net.server.GuardSpec$RangeCheck(net.minecraft.core.BlockPos, double);
+dev.cuprum.cuprum.net.server.GuardSpec$RangeCheck :: public double maxDistance();
+dev.cuprum.cuprum.net.server.GuardSpec$RangeCheck :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.net.server.GuardSpec$RangeCheck :: public final class dev.cuprum.cuprum.net.server.GuardSpec$RangeCheck extends java.lang.Record
+dev.cuprum.cuprum.net.server.GuardSpec$RangeCheck :: public final int hashCode();
+dev.cuprum.cuprum.net.server.GuardSpec$RangeCheck :: public final java.lang.String toString();
+dev.cuprum.cuprum.net.server.GuardSpec$RangeCheck :: public net.minecraft.core.BlockPos pos();
+dev.cuprum.cuprum.net.server.GuardStep :: public final class dev.cuprum.cuprum.net.server.GuardStep extends java.lang.Enum<dev.cuprum.cuprum.net.server.GuardStep>
+dev.cuprum.cuprum.net.server.GuardStep :: public static dev.cuprum.cuprum.net.server.GuardStep valueOf(java.lang.String);
+dev.cuprum.cuprum.net.server.GuardStep :: public static dev.cuprum.cuprum.net.server.GuardStep[] values();
+dev.cuprum.cuprum.net.server.GuardStep :: public static final dev.cuprum.cuprum.net.server.GuardStep LIVENESS;
+dev.cuprum.cuprum.net.server.GuardStep :: public static final dev.cuprum.cuprum.net.server.GuardStep MENU;
+dev.cuprum.cuprum.net.server.GuardStep :: public static final dev.cuprum.cuprum.net.server.GuardStep OWNERSHIP;
+dev.cuprum.cuprum.net.server.GuardStep :: public static final dev.cuprum.cuprum.net.server.GuardStep RANGE;
+dev.cuprum.cuprum.net.server.GuardStep :: public static final dev.cuprum.cuprum.net.server.GuardStep RATE;
+dev.cuprum.cuprum.net.server.GuardStep :: public static final dev.cuprum.cuprum.net.server.GuardStep STATE;
+dev.cuprum.cuprum.net.server.GuardStep :: public static final dev.cuprum.cuprum.net.server.GuardStep VALUE;
+dev.cuprum.cuprum.net.server.NetRateLimiter :: public final class dev.cuprum.cuprum.net.server.NetRateLimiter
+dev.cuprum.cuprum.net.server.NetRateLimiter :: public static boolean hasBucketsForTesting(java.util.UUID);
+dev.cuprum.cuprum.net.server.NetRateLimiter :: public static boolean tryAcquire(net.minecraft.server.level.ServerPlayer, dev.cuprum.cuprum.net.server.RateKey);
+dev.cuprum.cuprum.net.server.NetRateLimiter :: public static long droppedCount();
+dev.cuprum.cuprum.net.server.NetRateLimiter :: public static void handleDisconnect(net.minecraft.server.network.ServerGamePacketListenerImpl, net.minecraft.server.MinecraftServer);
+dev.cuprum.cuprum.net.server.NetRateLimiter :: public static void handleServerStopped();
+dev.cuprum.cuprum.net.server.NetRateLimiter :: public static void init();
+dev.cuprum.cuprum.net.server.NetTicks :: public final class dev.cuprum.cuprum.net.server.NetTicks
+dev.cuprum.cuprum.net.server.NetTicks :: public static long current();
+dev.cuprum.cuprum.net.server.NetTicks :: public static void init();
+dev.cuprum.cuprum.net.server.NetViolations :: public final class dev.cuprum.cuprum.net.server.NetViolations
+dev.cuprum.cuprum.net.server.NetViolations :: public static boolean hasStateForTesting(java.util.UUID);
+dev.cuprum.cuprum.net.server.NetViolations :: public static boolean kickRequested(java.util.UUID);
+dev.cuprum.cuprum.net.server.NetViolations :: public static dev.cuprum.cuprum.net.server.NetViolations$KickSink setKickSink(dev.cuprum.cuprum.net.server.NetViolations$KickSink);
+dev.cuprum.cuprum.net.server.NetViolations :: public static int violationsInWindow(java.util.UUID);
+dev.cuprum.cuprum.net.server.NetViolations :: public static void handleDisconnect(net.minecraft.server.network.ServerGamePacketListenerImpl, net.minecraft.server.MinecraftServer);
+dev.cuprum.cuprum.net.server.NetViolations :: public static void handleServerStopped();
+dev.cuprum.cuprum.net.server.NetViolations :: public static void init();
+dev.cuprum.cuprum.net.server.NetViolations :: public static void record(net.minecraft.server.level.ServerPlayer, net.minecraft.resources.ResourceLocation, java.lang.String);
+dev.cuprum.cuprum.net.server.NetViolations$KickSink :: public abstract void requestKick(net.minecraft.server.level.ServerPlayer, net.minecraft.network.chat.Component);
+dev.cuprum.cuprum.net.server.NetViolations$KickSink :: public interface dev.cuprum.cuprum.net.server.NetViolations$KickSink
+dev.cuprum.cuprum.net.server.RateKey :: public final class dev.cuprum.cuprum.net.server.RateKey extends java.lang.Enum<dev.cuprum.cuprum.net.server.RateKey>
+dev.cuprum.cuprum.net.server.RateKey :: public static dev.cuprum.cuprum.net.server.RateKey valueOf(java.lang.String);
+dev.cuprum.cuprum.net.server.RateKey :: public static dev.cuprum.cuprum.net.server.RateKey[] values();
+dev.cuprum.cuprum.net.server.RateKey :: public static final dev.cuprum.cuprum.net.server.RateKey DEFAULT;
+dev.cuprum.cuprum.net.server.RateKey :: public static final dev.cuprum.cuprum.net.server.RateKey GLOBAL;
+dev.cuprum.cuprum.net.server.TokenBucket :: public boolean canAcquire(long);
+dev.cuprum.cuprum.net.server.TokenBucket :: public boolean tryAcquire(long);
+dev.cuprum.cuprum.net.server.TokenBucket :: public dev.cuprum.cuprum.net.server.TokenBucket(int, int, long);
+dev.cuprum.cuprum.net.server.TokenBucket :: public final class dev.cuprum.cuprum.net.server.TokenBucket
+dev.cuprum.cuprum.net.server.TokenBucket :: public long availableTokens(long);
+dev.cuprum.cuprum.net.server.TokenBucket :: public static final long UNITS_PER_TOKEN;
+dev.cuprum.cuprum.net.server.TokenBucket :: public void consume();
+dev.cuprum.cuprum.ownership.AccessPolicy :: public final class dev.cuprum.cuprum.ownership.AccessPolicy extends java.lang.Enum<dev.cuprum.cuprum.ownership.AccessPolicy>
+dev.cuprum.cuprum.ownership.AccessPolicy :: public java.lang.String serializedName();
+dev.cuprum.cuprum.ownership.AccessPolicy :: public static dev.cuprum.cuprum.ownership.AccessPolicy byName(java.lang.String);
+dev.cuprum.cuprum.ownership.AccessPolicy :: public static dev.cuprum.cuprum.ownership.AccessPolicy valueOf(java.lang.String);
+dev.cuprum.cuprum.ownership.AccessPolicy :: public static dev.cuprum.cuprum.ownership.AccessPolicy[] values();
+dev.cuprum.cuprum.ownership.AccessPolicy :: public static final dev.cuprum.cuprum.ownership.AccessPolicy OWNER_ONLY;
+dev.cuprum.cuprum.ownership.AccessPolicy :: public static final dev.cuprum.cuprum.ownership.AccessPolicy PUBLIC;
+dev.cuprum.cuprum.ownership.AccessPolicy :: public static final dev.cuprum.cuprum.ownership.AccessPolicy TEAM;
+dev.cuprum.cuprum.ownership.Claim :: public dev.cuprum.cuprum.ownership.AccessPolicy policy();
+dev.cuprum.cuprum.ownership.Claim :: public dev.cuprum.cuprum.ownership.Claim(dev.cuprum.cuprum.ownership.Owner, dev.cuprum.cuprum.ownership.AccessPolicy);
+dev.cuprum.cuprum.ownership.Claim :: public dev.cuprum.cuprum.ownership.Owner owner();
+dev.cuprum.cuprum.ownership.Claim :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.ownership.Claim :: public final class dev.cuprum.cuprum.ownership.Claim extends java.lang.Record
+dev.cuprum.cuprum.ownership.Claim :: public final int hashCode();
+dev.cuprum.cuprum.ownership.Claim :: public final java.lang.String toString();
+dev.cuprum.cuprum.ownership.Claim :: public static dev.cuprum.cuprum.ownership.Claim ofPlacer(net.minecraft.server.level.ServerPlayer);
+dev.cuprum.cuprum.ownership.Claim :: public static final com.mojang.serialization.Codec<dev.cuprum.cuprum.ownership.AccessPolicy> POLICY_CODEC;
+dev.cuprum.cuprum.ownership.Claim :: public static final com.mojang.serialization.Codec<dev.cuprum.cuprum.ownership.Claim> CODEC;
+dev.cuprum.cuprum.ownership.Claim :: public static final net.minecraft.network.codec.StreamCodec<io.netty.buffer.ByteBuf, dev.cuprum.cuprum.ownership.AccessPolicy> POLICY_STREAM_CODEC;
+dev.cuprum.cuprum.ownership.Claim :: public static final net.minecraft.network.codec.StreamCodec<io.netty.buffer.ByteBuf, dev.cuprum.cuprum.ownership.Claim> STREAM_CODEC;
+dev.cuprum.cuprum.ownership.ClaimAccess :: public final class dev.cuprum.cuprum.ownership.ClaimAccess extends java.lang.Enum<dev.cuprum.cuprum.ownership.ClaimAccess>
+dev.cuprum.cuprum.ownership.ClaimAccess :: public static dev.cuprum.cuprum.ownership.ClaimAccess valueOf(java.lang.String);
+dev.cuprum.cuprum.ownership.ClaimAccess :: public static dev.cuprum.cuprum.ownership.ClaimAccess[] values();
+dev.cuprum.cuprum.ownership.ClaimAccess :: public static final dev.cuprum.cuprum.ownership.ClaimAccess CONFIGURE;
+dev.cuprum.cuprum.ownership.ClaimAccess :: public static final dev.cuprum.cuprum.ownership.ClaimAccess DESTROY;
+dev.cuprum.cuprum.ownership.ClaimAccess :: public static final dev.cuprum.cuprum.ownership.ClaimAccess USE;
+dev.cuprum.cuprum.ownership.ClaimAccess :: public static final dev.cuprum.cuprum.ownership.ClaimAccess VIEW;
+dev.cuprum.cuprum.ownership.Owner :: public dev.cuprum.cuprum.ownership.Owner(java.util.UUID, java.lang.String);
+dev.cuprum.cuprum.ownership.Owner :: public final boolean equals(java.lang.Object);
+dev.cuprum.cuprum.ownership.Owner :: public final class dev.cuprum.cuprum.ownership.Owner extends java.lang.Record
+dev.cuprum.cuprum.ownership.Owner :: public final int hashCode();
+dev.cuprum.cuprum.ownership.Owner :: public final java.lang.String toString();
+dev.cuprum.cuprum.ownership.Owner :: public java.lang.String cachedName();
+dev.cuprum.cuprum.ownership.Owner :: public java.util.UUID uuid();
+dev.cuprum.cuprum.ownership.Owner :: public static dev.cuprum.cuprum.ownership.Owner of(net.minecraft.server.level.ServerPlayer);
+dev.cuprum.cuprum.ownership.Owner :: public static final com.mojang.serialization.Codec<dev.cuprum.cuprum.ownership.Owner> CODEC;
+dev.cuprum.cuprum.ownership.Owner :: public static final int MAX_NAME_LENGTH;
+dev.cuprum.cuprum.ownership.Owner :: public static final net.minecraft.network.codec.StreamCodec<io.netty.buffer.ByteBuf, dev.cuprum.cuprum.ownership.Owner> STREAM_CODEC;
+dev.cuprum.cuprum.ownership.OwnershipCore :: public final class dev.cuprum.cuprum.ownership.OwnershipCore
+dev.cuprum.cuprum.ownership.OwnershipCore :: public static boolean allows(dev.cuprum.cuprum.ownership.OwnershipCore$Relation, dev.cuprum.cuprum.ownership.AccessPolicy, dev.cuprum.cuprum.ownership.ClaimAccess, boolean);
+dev.cuprum.cuprum.ownership.OwnershipCore :: public static boolean allowsUnclaimed(dev.cuprum.cuprum.ownership.ClaimAccess);
+dev.cuprum.cuprum.ownership.OwnershipCore$Relation :: public final class dev.cuprum.cuprum.ownership.OwnershipCore$Relation extends java.lang.Enum<dev.cuprum.cuprum.ownership.OwnershipCore$Relation>
+dev.cuprum.cuprum.ownership.OwnershipCore$Relation :: public static dev.cuprum.cuprum.ownership.OwnershipCore$Relation valueOf(java.lang.String);
+dev.cuprum.cuprum.ownership.OwnershipCore$Relation :: public static dev.cuprum.cuprum.ownership.OwnershipCore$Relation[] values();
+dev.cuprum.cuprum.ownership.OwnershipCore$Relation :: public static final dev.cuprum.cuprum.ownership.OwnershipCore$Relation OWNER;
+dev.cuprum.cuprum.ownership.OwnershipCore$Relation :: public static final dev.cuprum.cuprum.ownership.OwnershipCore$Relation STRANGER;
+dev.cuprum.cuprum.ownership.OwnershipCore$Relation :: public static final dev.cuprum.cuprum.ownership.OwnershipCore$Relation TEAM_MATE;
+dev.cuprum.cuprum.ownership.OwnershipService :: public final class dev.cuprum.cuprum.ownership.OwnershipService
+dev.cuprum.cuprum.ownership.OwnershipService :: public static boolean allows(net.minecraft.server.level.ServerPlayer, dev.cuprum.cuprum.ownership.Claim, dev.cuprum.cuprum.ownership.ClaimAccess);
+dev.cuprum.cuprum.state.CuprumAttachments :: public final class dev.cuprum.cuprum.state.CuprumAttachments
+dev.cuprum.cuprum.state.CuprumAttachments :: public static final net.fabricmc.fabric.api.attachment.v1.AttachmentType<java.util.Set<net.minecraft.resources.ResourceLocation>> HANDBOOK_UNLOCKS;
+dev.cuprum.cuprum.state.CuprumSavedData :: protected dev.cuprum.cuprum.state.CuprumSavedData();
+dev.cuprum.cuprum.state.CuprumSavedData :: protected static <T extends dev.cuprum.cuprum.state.CuprumSavedData> com.mojang.serialization.Codec<T> versionedCodec(java.lang.String, int, com.mojang.serialization.Codec<T>);
+dev.cuprum.cuprum.state.CuprumSavedData :: public abstract class dev.cuprum.cuprum.state.CuprumSavedData extends net.minecraft.world.level.saveddata.SavedData
+dev.cuprum.cuprum.state.CuprumSchema :: public final class dev.cuprum.cuprum.state.CuprumSchema
+dev.cuprum.cuprum.state.CuprumSchema :: public static final int BLOCK_ENTITY;
+dev.cuprum.cuprum.state.CuprumSchema :: public static final int ITEM;
+dev.cuprum.cuprum.state.CuprumSchema :: public static final int PLAYER;
+dev.cuprum.cuprum.state.CuprumSchema :: public static final int WORLD;
+dev.cuprum.cuprum.state.CuprumSchema :: public static final java.lang.String KEY;
+dev.cuprum.cuprum.state.CuprumSchema :: public static final java.lang.String SAVED_DATA_VERSION_KEY;
+dev.cuprum.cuprum.state.StateApiProbe :: public final class dev.cuprum.cuprum.state.StateApiProbe
+dev.cuprum.cuprum.state.StateMigrations :: public final class dev.cuprum.cuprum.state.StateMigrations
+dev.cuprum.cuprum.state.StateMigrations :: public static synchronized java.util.function.IntFunction<java.util.function.UnaryOperator<com.mojang.serialization.Dynamic<?>>> steps(java.lang.String);
+dev.cuprum.cuprum.state.StateMigrations :: public static synchronized void register(java.lang.String, int, java.util.function.UnaryOperator<com.mojang.serialization.Dynamic<?>>);
+dev.cuprum.cuprum.state.StateProbe :: public final class dev.cuprum.cuprum.state.StateProbe
+dev.cuprum.cuprum.state.StateProbe :: public static int recordBoot(net.minecraft.server.MinecraftServer);
+dev.cuprum.cuprum.state.StateProbe :: public static void init();
+dev.cuprum.cuprum.state.StateProbeSavedData :: public dev.cuprum.cuprum.state.StateProbeSavedData();
+dev.cuprum.cuprum.state.StateProbeSavedData :: public final class dev.cuprum.cuprum.state.StateProbeSavedData extends dev.cuprum.cuprum.state.CuprumSavedData
+dev.cuprum.cuprum.state.StateProbeSavedData :: public int boots();
+dev.cuprum.cuprum.state.StateProbeSavedData :: public int incrementBoots();
+dev.cuprum.cuprum.state.StateProbeSavedData :: public static final com.mojang.serialization.Codec<dev.cuprum.cuprum.state.StateProbeSavedData> CODEC;
+dev.cuprum.cuprum.state.StateProbeSavedData :: public static final java.lang.String ID;
+dev.cuprum.cuprum.state.StateProbeSavedData :: public static final net.minecraft.world.level.saveddata.SavedDataType<dev.cuprum.cuprum.state.StateProbeSavedData> TYPE;
+dev.cuprum.cuprum.state.Versioned :: public final class dev.cuprum.cuprum.state.Versioned
+dev.cuprum.cuprum.state.Versioned :: public static <T> com.mojang.serialization.Codec<T> codec(java.lang.String, int, com.mojang.serialization.Codec<T>, java.util.function.IntFunction<java.util.function.UnaryOperator<com.mojang.serialization.Dynamic<?>>>);
