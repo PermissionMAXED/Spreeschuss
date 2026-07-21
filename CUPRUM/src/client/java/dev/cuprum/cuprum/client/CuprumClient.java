@@ -2,6 +2,7 @@ package dev.cuprum.cuprum.client;
 
 import dev.cuprum.cuprum.Cuprum;
 import dev.cuprum.cuprum.client.config.CuprumClientConfigs;
+import dev.cuprum.cuprum.client.fx.FxClientModule;
 import dev.cuprum.cuprum.client.machine.MachineClientModule;
 import dev.cuprum.cuprum.client.net.CuprumClientNet;
 import net.fabricmc.api.ClientModInitializer;
@@ -15,6 +16,7 @@ public final class CuprumClient implements ClientModInitializer {
         CuprumClientConfigs.init();
         CuprumClientNet.init();
         MachineClientModule.init();
+        FxClientModule.init();
         Cuprum.LOGGER.info("Cuprum client initialized");
     }
 }

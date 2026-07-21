@@ -169,6 +169,10 @@ void submitModelPart(ModelPart modelPart, PoseStack poseStack, RenderType render
   off-thread exception when not on the receive thread, so vanilla reschedules onto the main thread);
   `Context.client()/player()/responseSender()`; `ClientPlayNetworking.send(CustomPacketPayload)`,
   `canSend(CustomPacketPayload.Type<?>)`; `ClientConfigurationNetworking.registerGlobalReceiver/send`.
+  `Context.responseSender()` is the exact per-connection sender also supplied to that connection's
+  `ClientPlayConnectionEvents.JOIN`, so it is the payload's source-session identity.
+  `Context.player()` is the client's current `LocalPlayer` when the callback executes; it is
+  **not** a source identity for a callback queued across reconnect.
 - **DISCONNECT event threading** (both sides, verified in fabric-networking-api-v1 5.0.13 sources):
   `ClientPlayConnectionEvents.DISCONNECT` / `ServerPlayConnectionEvents.DISCONNECT` fire from
   `AbstractNetworkAddon.handleDisconnect()` (guarded by a CAS — exactly once per connection), which
@@ -213,6 +217,12 @@ void submitModelPart(ModelPart modelPart, PoseStack poseStack, RenderType render
     `ServerLifecycleEvents.SERVER_STOPPED` — fired on the server thread at the TAIL of
     `stopServer()` (Fabric `MinecraftServerMixin`), after every world and connection closed;
     `SERVER_STOPPING` fires at its HEAD, before players are disconnected.
+  - **FX send windows use the same session rule as `NetRateLimiter`.** The map lookup key is the
+    UUID, but each `FxSendWindow` is owned by the exact `ServerGamePacketListenerImpl`; JOIN
+    replaces the session, sends are get-only and owner-checked, DISCONNECT uses
+    `server.execute` plus conditional `Map.remove(key, session)`, and SERVER_STOPPED sweeps.
+    Dedicated reconnect/shutdown GameTest environments prove a stale owner cannot erase/reset a
+    newer same-UUID window and each live 20-tick window delivers at most 16 payloads.
 - Connection lifecycle: `ServerPlayConnectionEvents.JOIN` (`(handler, sender, server)`; fires inside
   `PlayerList.placeNewPlayer` via Fabric's `PlayerManagerMixin`), `ServerPlayConnectionEvents.DISCONNECT`
   (`(handler, server)`); client side `ClientPlayConnectionEvents.JOIN/DISCONNECT`;
@@ -534,3 +544,122 @@ void submitModelPart(ModelPart modelPart, PoseStack poseStack, RenderType render
   `waitForScreen(ChargeMachineScreen.class)`, `takeScreenshot(name)`. New client tests append
   AFTER `CuprumClientGameTest` in `fabric-client-gametest` entrypoints so the W1A screenshot
   numbering expected by `scripts/client_smoke.sh` is unchanged.
+
+## Custom pipelines & FX foundation (W1D; compile-pinned by `FxApiProbe`, runtime-pinned by `FxCapabilityProbe` + `FxRippleClientGameTest`)
+
+### RenderPipeline registration & the compile probe (Blaze3D, 1.21.9)
+
+- Vertex-format + builder recipe (probes 1/1b): Minecraft 1.21.9 exposes no
+  `DefaultVertexFormat.POSITION_COLOR_TEX`, so Cuprum composes the exact contract with
+  `VertexFormat.builder().add("Position", VertexFormatElement.POSITION)
+  .add("Color", VertexFormatElement.COLOR).add("UV0", VertexFormatElement.UV0).build()`, then
+  `RenderPipeline.builder(RenderPipelines.MATRICES_FOG_SNIPPET)`
+  `.withLocation(rl).withVertexShader(rl).withFragmentShader(rl)`
+  `.withBlend(BlendFunction.LIGHTNING)` (additive: `SRC_ALPHA, ONE`) `.withDepthWrite(false)`
+  `.withVertexFormat(positionColorTex, VertexFormat.Mode.QUADS).build()`;
+  registration via **static** `net.minecraft.client.renderer.RenderPipelines.register(pipeline)`
+  (mod-accessible; must run in client init so the pipeline is in `getStaticPipelines()`
+  BEFORE the first `ShaderManager` apply). Shader location resolves to
+  `assets/<ns>/shaders/core/<path>.vsh/.fsh`; `#moj_import <minecraft:fog.glsl>` /
+  `<minecraft:dynamictransforms.glsl>` / `<minecraft:projection.glsl>` provide the snippet's
+  uniform blocks (`ProjMat`, `ModelViewMat`, `ColorModulator`, `Fog*` — all verified in the
+  shipped assets). The T1 format is position + packed normalized RGBA + float2 UV0
+  (24 bytes/vertex); the emitter probe pins
+  `VertexConsumer.addVertex(...).setColor(...).setUv(signedBand, normalizedLife)`.
+- **Registered-pipeline failure posture** (verified `ShaderManager.apply` /
+  `GlDevice.precompilePipeline`): a static-registered pipeline whose shaders fail to compile
+  **hard-fails the resource reload** (`ShaderManager` throws before listeners after
+  `minecraft:shaders` run) — graceful demotion therefore CANNOT hinge on catching a source
+  compile crash. Registered particle sprite JSON is likewise parsed by vanilla
+  `ParticleResources` during reload. JUnit pins required source/processed resources and parses
+  particle JSON; the client GameTest is the real shader compile gate.
+  The interceptable runtime half is `FxCapabilityProbe.run`:
+  `RenderSystem.tryGetDevice()` (nullable accessor, probe 3) then
+  `device.precompilePipeline(pipeline).isValid()` — a cache-hit/deferred-backend confirmation.
+  Missing/invalid device, invalid result, or runtime exception calls the production T2 demotion
+  helper. `FxFailurePathsClientGameTest` invokes these production decision seams (never
+  `FxTierPolicy.demote` directly), and a valid `FxReloadListener` pass proves recovery.
+- **Built-in GameTime uncertainty (CP0C posture, recorded):** `GameTime` lives in the
+  `Globals` UBO (`GLOBALS_SNIPPET`), which `MATRICES_FOG_SNIPPET` does **not** include, and no
+  probe proves a custom pipeline may bind `Globals` or any per-draw uniform. W1D therefore
+  promises NEITHER: ripple animation is CPU-computed geometry (tick-quantized radius/alpha in
+  `RippleMath`, tessellated per-frame in `FxRippleGeometry`), and the shaders touch only
+  snippet-provided uniforms. Iris-specific queries stay in W4 U23 — `FxCompat` only logs
+  `FabricLoader.isModLoaded("sodium"/"iris")` and always returns compat cap T1 in W1D.
+
+### World RenderTypes over custom pipelines
+
+- `RenderType.create(name, RenderType.TRANSIENT_BUFFER_SIZE /*1536*/, false /*no crumbling*/,
+  true /*sorted*/, pipeline, RenderType.CompositeState.builder().createCompositeState(false))`
+  (probe 2) — batches through the same `CustomFeatureRenderer` path as vanilla; one
+  VertexConsumer per RenderType per frame, so T1 costs exactly **one** extra world batch.
+  CP0C census: ≤4 Cuprum world-FX RenderTypes ever (`FxBudgets.MAX_WORLD_FX_RENDER_TYPES`;
+  ripple now + reserved arc/dome/aurora slots); `CuprumRenderTypes.worldFxTypes()` is the
+  static-asserted census list. T2 adds **zero** types — it rides vanilla
+  `RenderType.lightning()` (same additive/no-depth-write recipe, verified).
+- BER submit path: `SubmitNodeCollector.submitCustomGeometry(poseStack, renderType, renderer)`
+  (W1A probe still valid); the collector callback receives `(PoseStack.Pose, VertexConsumer)`
+  and runs at draw time — extraction (`FxDispatcher.extractRipplesAt` → primitive arrays in
+  `FxProbeRenderState`) must copy everything, no live refs. `FxRenderSubmission` guards both
+  registration and callback execution: only the positive count actually returned after all
+  `VertexConsumer.addVertex` calls increments submit/vertex stats. Zero/throwing T1 emitters
+  demote T2 with no success counters; a failing T2 emitter demotes T3. `FxFrameStats.beginFrame`
+  keys the aggregate on the per-frame camera-position object shared by BER extraction, so the
+  2,048-vertex breach check spans all callbacks rather than trusting a precomputed per-BE count.
+
+### Cosmetic event identity and world-key defense
+
+- `FxRipplePayload` needs no extra field: `(center.asLong(), gameTime)` is the event identity.
+  The fixed ring's `addIfAbsent` scans at most 16 slots before mutation; an exact duplicate
+  cannot recolor/brighten, burst particles, consume capacity, evict, or increment accounting.
+- The dispatcher retains the exact `ResourceKey<Level>` for its live pool. Tick/extract/direct
+  observation clears old-dimension pool, particle, and frame state. The networking receiver
+  captures `context.responseSender()` as source identity, samples only the current
+  `context.client().level.dimension()`, then holds the FX session lock across sender validation
+  and the complete dispatcher/frame/particle transition. `context.player()` is also current,
+  not source. A callback from A after B's JOIN, or from B after B's DISCONNECT, is therefore
+  dropped before it can repopulate any current-world state.
+
+### Particles (1.21.9 `SingleQuadParticle` era)
+
+- `TextureSheetParticle` is GONE; sprite particles extend
+  `net.minecraft.client.particle.SingleQuadParticle` (ctor `(ClientLevel, x, y, z,
+  TextureAtlasSprite)`; abstract `getLayer()` returns a `SingleQuadParticle.Layer` record
+  carrying the RenderPipeline — `Layer.TRANSLUCENT` reuses the vanilla particle pipeline, no
+  custom type needed). Probe 4a. **The `(level,x,y,z,sprite,xd,yd,zd)` super ctor adds random
+  velocity noise** (`±0.4*(random-0.5)` per axis, then normalizes) — deterministic motes must
+  overwrite `xd/yd/zd` AFTER `super(...)` (done in `CopperMoteParticle`).
+- Sprite wiring: `ParticleFactoryRegistry.getInstance().register(type,
+  PendingParticleFactory)` — the factory receives `FabricSpriteProvider` (probe 4b);
+  `particles/<name>.json` `{"textures": ["cuprum:copper_mote"]}` maps to
+  `textures/particle/copper_mote.png`. Registration client-init; type registration common
+  (`FabricParticleTypes.simple()` + `BuiltInRegistries.PARTICLE_TYPE`).
+- Spawn: `ClientLevel.addParticle(options, x, y, z, xd, yd, zd)` respects the vanilla particle
+  status option; budget gating (`FxParticleBudget`) wraps it with per-tick + live caps. A
+  delegated runtime exception rolls back the just-reserved budget slot before the production
+  helper demotes the FX cap to OFF, so failed creation is never counted as a live/successful mote.
+
+### Client FX lifecycle & accessibility hooks
+
+- Reload: `ResourceLoader.get(PackType.CLIENT_RESOURCES).registerReloader(id, listener)` +
+  `addReloaderOrdering(ResourceReloaderKeys.Client.SHADERS, id)` (probe 6) — guarantees the
+  FX listener runs after vanilla shader (re)compilation, so `precompilePipeline` sees the
+  fresh cache. Reload is the FX reset point: failure-cap clear → capability probe → compat
+  refresh → palette parse → pool clear (leak-free by construction; pools hold primitives).
+- Reset events (probe 7 + W1A's connection-event probe): `InvalidateRenderStateCallback.EVENT`
+  (F3+A, pack changes, video settings) clears pools + counters, while
+  `ClientPlayConnectionEvents.JOIN` clears old FX state under the FX session lock before
+  atomically installing both the new handler and exact JOIN response-sender identities.
+  DISCONNECT may fire on Netty (W1A threading facts apply) and synchronously clears only the
+  matching active handler, or the no-active-session state before a newer JOIN; stale A after B
+  is a no-op. Payload delivery uses the response-sender half of the same locked session. The
+  nested lock order is FX session lock → synchronized dispatcher, and the any-thread lifecycle
+  path touches no Minecraft/world state.
+  `ClientTickEvents.END_WORLD_TICK` drives dispatcher aging/mote cadence.
+- Accessibility accessors (probe 8): `minecraft.options.hideLightningFlash().get()` (boolean),
+  `.screenEffectScale().get()` (double 0..1), `.particles().get()` (`ParticleStatus`) — the
+  vanilla side of `FxSettings.effectiveFlash()`; Cuprum-side caps come from the frozen W1A
+  `CuprumClientConfig` fields (`fxTierCap`, `flashScale`, `colorblindMode`).
+- Colorblind remap is data-driven from `assets/cuprum/fx/colorblind.json` (3×3 row-major RGB
+  matrices, MC-free math in `ColorblindCore`); missing/malformed file disables remap with one
+  warning — NEVER a tier change.

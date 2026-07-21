@@ -77,6 +77,14 @@ tasks.named('deleteGameTestRunDir') {
     onlyIf { !preserveGameTestWorld.get() }
 }
 
+// fabric-client-gametest screenshot templates (client-fx.md §12): committed templates live in
+// src/gametest/resources/templates/. When one is ABSENT the framework captures it there instead
+// of failing (the sanctioned bootstrap flow) — the capture shows up as a new untracked file, so
+// CI/reviewers can never mistake a bootstrap run for a passing comparison.
+tasks.named('runClientGameTest') {
+    jvmArgs "-Dfabric.client.gametest.testModResourcesPath=${file('src/gametest/resources').absolutePath}"
+}
+
 // Plain-Java tool that validates the content catalog and generates CuprumCatalog.java.
 // Kept inside the project (no included build / buildSrc) for reliability; it has no
 // Minecraft dependencies.

@@ -58,21 +58,37 @@ public final class FxCapabilityProbe {
 }
 ```
 
-Checks in order (first failure decides the cap; all logged once):
+Static registered resources are build/reload gates, not graceful-demotion rungs.
+`ShaderManager` compiles every registered static pipeline before the Cuprum listener runs, and
+`ParticleResources` parses the registered sprite JSON during the same vanilla reload. Missing or
+malformed `fx_ripple.vsh`/`.fsh` or `particles/copper_mote.json` therefore fails the reload
+honestly. `FxRippleShaderProvenanceTest` pins source/processed resource completeness and parses the
+particle JSON; the real client GameTest compile/precompile gate prevents a broken shader from
+shipping. `FxCapabilityProbe.run` retains a required-resource presence assertion as a defensive
+invariant, never as a claimed catch for malformed static resources.
 
-1. `RenderSystem.tryGetDevice()` — `null` → cap `T2`.
-2. Asset presence via `ResourceManager.getResource(...)`: `cuprum:shaders/core/fx_ripple.vsh`/`.fsh`
-   missing → cap `T2`; `cuprum:particles/copper_mote.json` missing → cap `T3`;
-   `cuprum:fx/colorblind.json` missing → colorblind remap disabled (never a tier change).
-3. `device.precompilePipeline(CuprumRenderPipelines.FX_RIPPLE).isValid()` — `false` → cap `T2`.
-   (`GpuDevice.precompilePipeline(RenderPipeline)` → `CompiledRenderPipeline.isValid()`, the same
-   mechanism `GameRenderer` uses; `GpuDevice` also exposes `getBackendName/getVendor/getRenderer/
+Interceptable checks (each failure calls the production demotion helper and logs once):
+
+1. `RenderSystem.tryGetDevice()` — `null` → demote/cap `T2`.
+2. `device.precompilePipeline(CuprumRenderPipelines.FX_RIPPLE).isValid()` — `false` or a runtime
+   backend exception → demote/cap `T2`. (`GpuDevice.precompilePipeline(RenderPipeline)` returns
+   `CompiledRenderPipeline`; `GpuDevice` also exposes `getBackendName/getVendor/getRenderer/
    getMaxTextureSize/getEnabledExtensions` for the report.)
+3. `cuprum:fx/colorblind.json` remains optional: missing/malformed disables color remap with one
+   warning and never changes the FX tier.
 
 ## 3. T1 pipeline / render type / shader assets
 
 ```java
 public final class CuprumRenderPipelines {
+    // 1.21.9 has no DefaultVertexFormat.POSITION_COLOR_TEX constant; compose the
+    // exact Position/Color/UV0 contract from its public VertexFormatElements.
+    public static final VertexFormat POSITION_COLOR_TEX = VertexFormat.builder()
+        .add("Position", VertexFormatElement.POSITION)
+        .add("Color", VertexFormatElement.COLOR)
+        .add("UV0", VertexFormatElement.UV0)
+        .build();
+
     public static final RenderPipeline FX_RIPPLE = RenderPipelines.register(   // public static, verified
         RenderPipeline.builder(RenderPipelines.MATRICES_FOG_SNIPPET)
             .withLocation(ResourceLocation.fromNamespaceAndPath("cuprum", "pipeline/fx_ripple"))
@@ -80,7 +96,7 @@ public final class CuprumRenderPipelines {
             .withFragmentShader(ResourceLocation.fromNamespaceAndPath("cuprum", "core/fx_ripple"))
             .withBlend(BlendFunction.LIGHTNING)            // SRC_ALPHA, ONE (verified constant)
             .withDepthWrite(false)
-            .withVertexFormat(DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.QUADS)
+            .withVertexFormat(POSITION_COLOR_TEX, VertexFormat.Mode.QUADS)
             .build());
 }
 
@@ -99,14 +115,17 @@ Shader assets (`ShaderManager` scans `assets/<ns>/shaders/**`; `ShaderType` maps
 - future `#moj_import` includes: `assets/cuprum/shaders/include/`; post chains (reserved for the
   FX-01 screen flash, which must route through `flashScale`): `assets/cuprum/post_effect/*.json`.
 
-V1 GLSL is a passthrough clone of vanilla `core/rendertype_lightning` (ripple positions are
-CPU-computed in the geometry callback) plus a `smoothstep` radial edge fade in the fragment stage —
-that fade is the only T1-vs-T2 visual delta, keeping shader risk near zero.
+Both GLSL stages are original MIT Cuprum work, independently derived from the annular geometry
+contract and documented in `docs/shader-research/W1D_FX_RIPPLE_PROVENANCE.md`. T1 UV0 carries
+`(signed band coordinate, normalized lifetime)`: inner vertices use `u=-1`, outer vertices use
+`u=+1`, and the interpolated fragment coordinate drives the authored even-quartic profile
+`max(0, 1-u⁴)`. Lifetime drives a Cuprum-authored opacity envelope plus early warm/late cool tint.
+No vanilla or external shader source, expression, or tuned constant is copied or translated.
 
-Vanilla precedent mirrored: `RenderPipelines.LIGHTNING` = `MATRICES_FOG_SNIPPET` +
-`core/rendertype_lightning` + `BlendFunction.LIGHTNING` + `POSITION_COLOR`/`QUADS`; the LIGHTNING
-`RenderType` is `create("lightning", 1536, false, true, ...)`; `LightningBoltRenderer.submit` uses
-`submitCustomGeometry(poseStack, RenderType.lightning(), ...)` — the T2 path reuses exactly this.
+The named `BlendFunction.LIGHTNING` is used only as the verified additive pipeline-state constant
+(`SRC_ALPHA, ONE`). T2 emits UV-free `POSITION_COLOR` geometry through
+`RenderType.lightning()` as a vanilla-pipeline fallback; that runtime API choice is not shader
+source provenance.
 
 ## 4. BlockEntityRenderer extract/submit contract
 
@@ -125,6 +144,7 @@ public final class FxProbeRenderState extends BlockEntityRenderState {
     public final long[]  rippleStartTick = new long[FxBudgets.MAX_RIPPLES];
     public final int[]   rippleColorArgb = new int[FxBudgets.MAX_RIPPLES];
     public final float[] rippleRadius    = new float[FxBudgets.MAX_RIPPLES]; // tick-quantized (diagnostic)
+    public final float[] rippleLife      = new float[FxBudgets.MAX_RIPPLES]; // UV0.y at T1
     public int rippleCount;
     public FxTier tier;
 }
@@ -146,9 +166,7 @@ public final class FxProbeRenderer implements BlockEntityRenderer<FxProbeBlockEn
         if (s.tier == FxTier.OFF || s.rippleCount == 0) return;
         RenderType type = s.tier == FxTier.T1 ? CuprumRenderTypes.FX_RIPPLE : RenderType.lightning();
         if (s.tier != FxTier.T3) {
-            nodeCollector.submitCustomGeometry(poseStack, type,
-                (pose, vertexConsumer) -> FxRippleGeometry.emitRings(pose, vertexConsumer, s));
-            FxFrameStats.recordSubmit(type, s.rippleCount * FxBudgets.RIPPLE_VERTICES);
+            FxRenderSubmission.submit(poseStack, nodeCollector, type, s.tier, s);
         } // T3 world visual is particle-only (spawned by the dispatcher tick, not here)
     }
 
@@ -165,6 +183,11 @@ BlockEntityRenderers.register(CuprumBlockEntities.FX_PROBE, FxProbeRenderer::new
 Contract rules: extract copies primitives only; `submit` never touches GL/`RenderSystem` state;
 animation phase derives from game time carried in the snapshot (`clientGameTime − payload.gameTime`),
 tick-quantized for the diagnostic so screenshots are frame-rate independent.
+`FxRenderSubmission` guards both callback registration and deferred execution. The callback records
+success only after `FxRippleGeometry` returns its actual `addVertex` count; zero/throwing T1
+callbacks demote to T2 without incrementing submit/vertex counters, and a failing T2 callback
+demotes to T3. `FxFrameStats.beginFrame` aggregates those actual counts across every callback that
+shares the frame's camera-position identity, so the 2,048-vertex breach counter is frame-wide.
 
 ## 5. Pooled ripple / lightning / particle dispatch
 
@@ -174,7 +197,7 @@ public final class FxDispatcher {
     public void enqueueRipple(FxRippleSnapshot snapshot);       // render thread (payload handler)
     public void extractRipplesAt(FxProbeRenderState out, BlockPos anchor);
     public void tick(ClientLevel level);                        // ClientTickEvents.END_WORLD_TICK
-    public void clear();                                        // InvalidateRenderStateCallback + disconnect
+    public void clear();                                        // reload/invalidation/session lifecycle
 }
 
 public record FxRippleSnapshot(BlockPos center, float maxRadius, int colorArgb, long startGameTime) {
@@ -189,11 +212,34 @@ public final class FxArcPool { /* declared now, stubbed; TES arcs land here — 
     "all active arcs batch into one render submit pass (T1) or one particle batch (T2/T3)") */ }
 ```
 
+The pool's wire-event identity is exactly `(center.asLong(), startGameTime)`, using the existing
+payload fields. `addIfAbsent` makes retransmission a complete no-op: no recolor/brightening, T3
+burst, capacity use, eviction, or counter mutation; adjacent positions or game times remain
+distinct. The dispatcher also binds its pool to the exact `ResourceKey<Level>`. Tick/extract or a
+new-dimension observation clears the old pool/budgets/stats. For payload source identity the
+receiver uses the exact `context.responseSender()` object, never `context.player()`: the latter
+is the current client player when the callback executes, not the source session of a callback
+queued across reconnect.
+
 Wiring in `CuprumClient.onInitializeClient()` (all verified entry points):
 
 - `ClientTickEvents.END_WORLD_TICK.register(level -> FxDispatcher.get().tick(level));`
 - `InvalidateRenderStateCallback.EVENT.register(() -> FxDispatcher.get().clear());`
-- `ClientPlayConnectionEvents.DISCONNECT` → `clear()`.
+- `ClientPlayConnectionEvents.JOIN` takes the FX session lock, clears the old dispatcher,
+  particle-budget and frame-counter state, then atomically installs both the exact
+  `ClientPacketListener` and JOIN `PacketSender`; every connection therefore starts from an
+  isolated FX epoch.
+- `ClientPlayConnectionEvents.DISCONNECT` runs synchronously on its delivery thread and takes
+  the same lock. It clears only when `activeFxSession == handler`, or when no session is active
+  before a newer JOIN; a stale A disconnect delivered after B's JOIN is a complete no-op.
+- The S2C receiver captures `context.responseSender()`, samples the current client-level key on
+  the render thread, then takes the same lock. It mutates the dispatcher/frame/particle state
+  only when that sender is the active JOIN sender. The check and complete mutation are one
+  critical section, so A-after-B and B-after-disconnect are both no-ops.
+
+The only nested lock order is FX session lock → `FxDispatcher` monitor. Dispatcher methods never
+acquire the session lock. The any-thread lifecycle clear touches only mod-owned pools and atomic
+counters—never `Minecraft`, a client level, or world state—because DISCONNECT may run on Netty.
 
 Particle budget: every Cuprum FX spawn goes through
 `FxParticleBudget.trySpawn(ClientLevel, ParticleOptions, x, y, z, vx, vy, vz)` (enforces `FxBudgets`
@@ -227,9 +273,11 @@ public record FxRipplePayload(BlockPos center, int radiusQ8 /* radius × 256 */,
   return `InteractionResult.SUCCESS_SERVER` (client path returns `SUCCESS`).
 - Client receive (`CuprumClientNetworking.init()`):
   `ClientPlayNetworking.registerGlobalReceiver(FxRipplePayload.TYPE,
-      (payload, context) -> FxDispatcher.get().enqueueRipple(FxRippleSnapshot.of(payload)));`
+      (payload, context) -> receiveRipple(payload, context.responseSender(),
+          context.client().level == null ? null : context.client().level.dimension()));`
   Handler is documented render-thread (`Context { Minecraft client(); LocalPlayer player();
-  PacketSender responseSender(); }`), so direct pool access is safe with no extra queue.
+  PacketSender responseSender(); }`), so current-world sampling and direct pool access need no
+  extra queue. `responseSender()` is source identity; `player()` is current, not source.
 - One-way S2C; `client.fx` never sends C2S nor mutates game state (outcome neutrality).
 
 ## 7. Particles (1.21.9 shapes — `TextureSheetParticle` no longer exists)
@@ -301,10 +349,20 @@ ResourceLoader.get(PackType.CLIENT_RESOURCES)
     .registerReloader(ResourceLocation.fromNamespaceAndPath("cuprum", "fx"), new FxReloadListener());
 ```
 
-Failure ladder (never crash; log once per cause): **T1 → T2** (vanilla `RenderType.lightning()`
-geometry + motes) **→ T3** (mote burst only) **→ OFF** (log only). A missing/broken cuprum shader
-can only ever cost the smoothstep edge fade, never the feature. `InvalidateRenderStateCallback`
-fires on F3+A / resource-pack / video changes → pools and `FxFrameStats` cleared, lazily reinit.
+Failure posture distinguishes static reload integrity from interceptable runtime faults:
+
+- Missing/malformed registered shader or particle JSON: fail the vanilla resource reload; build
+  resource pins plus the real client compile/precompile GameTest prevent shipping it. This is not
+  catchable by the later Cuprum reload listener and is never described as graceful demotion.
+- Missing/invalid GPU device or precompile result/exception: production probe demotes to **T2**.
+- Custom submit-registration or deferred-callback failure/zero output: demote to **T2**.
+- Failure while executing the T2 vanilla geometry fallback: demote to **T3**.
+- Delegated particle spawn exception: roll back the reservation and demote to **OFF**.
+
+Each runtime cause logs once. A subsequent valid reload clears the runtime failure cap, reruns the
+device/precompile probe, and can recover T1; `InvalidateRenderStateCallback` and disconnect clear
+pools/counters without pretending to repair malformed resources. Disconnect clear is
+connection-identity guarded as described in §5; JOIN always starts a fresh pool/counter epoch.
 
 ## 10. Iris / Sodium posture
 
@@ -343,6 +401,9 @@ players; client draws a tick-quantized expanding ring on the block top for 40 ti
 **Server GameTest** (`fabric-gametest`; no render assertions per parity scope rules):
 `FxProbeGameTest.fxProbeUsePulses` — place, `helper.useBlock(pos, helper.makeMockPlayer(GameType.SURVIVAL))`,
 assert the BE pulse counter incremented (dispatch/state only), break-drop like the charge probe test.
+`FxReconnectRaceGameTest` and `FxShutdownRaceGameTest` run in dedicated sequential environments:
+they pin exact connection ownership, stale queued disconnects, the 16-per-20-tick cap, synchronous
+server-stop sweeping, non-resurrection, and a clean same-UUID next lifecycle.
 
 **Client GameTest** (`fabric-client-gametest`, entry added to `src/gametest/resources/fabric.mod.json`):
 
@@ -383,15 +444,26 @@ frozen time/weather, hidden GUI, region-cropped fuzzy compare (default 0.5% tole
 run by the framework, then committed. Runs headless via the existing `scripts/client_smoke.sh`
 (Xvfb); screenshots land in `build/run/clientGameTest/screenshots/`.
 
+`FxSessionLifecycleClientGameTest` is the permanent race regression. It captures the exact JOIN
+handler/sender pairs for distinct sessions A and B; seeds pool/submit/particle to exactly 1/1/1
+immediately before a synchronous production JOIN invoker and proves exact 1→0; rejects A's queued
+payload after B; accepts a real B S2C payload; preserves B's exact 1/1/1 state across stale A's
+foreign-thread DISCONNECT; clears on B's own disconnect; and rejects B's queued payload afterward
+even when the test supplies a valid world key. The last assertion cannot pass on a null-level guard.
+
 ## 13. Compile probes (`FxApiProbe`, client source set)
 
 Same rules as the frozen `RenderApiProbe`: private members, never invoked, `@Override`/typed calls
 make upstream signature changes hard compile errors under `-Xlint -Werror`. Pins:
 
-1. `RenderPipeline.builder(RenderPipelines.MATRICES_FOG_SNIPPET).withLocation(rl).withVertexShader(rl)
-   .withFragmentShader(rl).withBlend(BlendFunction.LIGHTNING).withDepthWrite(false)
-   .withVertexFormat(DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.QUADS).build()`
-   + typed `RenderPipelines.register(RenderPipeline)` call.
+1. `VertexFormat.builder().add("Position", VertexFormatElement.POSITION)
+   .add("Color", VertexFormatElement.COLOR).add("UV0", VertexFormatElement.UV0).build()` (the exact
+   `POSITION_COLOR_TEX` contract absent from 1.21.9's `DefaultVertexFormat`) plus
+   `RenderPipeline.builder(RenderPipelines.MATRICES_FOG_SNIPPET).withLocation(rl)
+   .withVertexShader(rl).withFragmentShader(rl).withBlend(BlendFunction.LIGHTNING)
+   .withDepthWrite(false).withVertexFormat(positionColorTex, VertexFormat.Mode.QUADS).build()`
+   and typed `RenderPipelines.register(RenderPipeline)`.
+   The emitter probe pins `addVertex(...).setColor(...).setUv(signedBand, life)`.
 2. Typed `RenderType.create(String, int, boolean, boolean, RenderPipeline, RenderType.CompositeState)`
    with `RenderType.CompositeState.builder().createCompositeState(false)`.
 3. `CompiledRenderPipeline probe(GpuDevice d, RenderPipeline p) { return d.precompilePipeline(p); }`
@@ -451,7 +523,9 @@ src/main/resources/assets/cuprum/
   fx/colorblind.json                       CP-FX0 owns; QOL-05 wave appends glyph rows
 
 src/gametest/
-  .../FxProbeGameTest.java, FxRippleClientGameTest.java   CP-FX0 owns
+  .../FxProbeGameTest.java, FxReconnectRaceGameTest.java, FxShutdownRaceGameTest.java,
+  .../FxRippleClientGameTest.java,
+  .../client/fx/FxSessionLifecycleClientGameTest.java    CP-FX0 owns
   resources/fabric.mod.json                [SHARED] append entrypoint entries only
   resources/templates/fx_ripple_t{1,2}.png CP-FX0 owns (captured, then committed)
 ```

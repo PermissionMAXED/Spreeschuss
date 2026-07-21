@@ -1,6 +1,7 @@
 package dev.cuprum.cuprum.datagen;
 
 import dev.cuprum.cuprum.CuprumBlocks;
+import dev.cuprum.cuprum.fx.FxContent;
 import dev.cuprum.cuprum.machine.MachineContent;
 import net.fabricmc.fabric.api.client.datagen.v1.provider.FabricModelProvider;
 import net.fabricmc.fabric.api.datagen.v1.FabricDataOutput;
@@ -18,6 +19,7 @@ public final class CuprumModelProvider extends FabricModelProvider {
         blockStateModelGenerator.createTrivialCube(CuprumBlocks.CHARGE_PROBE);
         blockStateModelGenerator.createTrivialCube(MachineContent.DIAGNOSTIC_COIL_CORE);
         blockStateModelGenerator.createTrivialCube(MachineContent.DIAGNOSTIC_COIL_FRAME);
+        blockStateModelGenerator.createTrivialCube(FxContent.FX_PROBE);
     }
 
     @Override

@@ -64,10 +64,52 @@ def frame_pixel(x: int, y: int):
     return COPPER_LIGHT if (x * 7 + y * 13) % 5 == 0 else COPPER
 
 
+def _euclidean(x: int, y: int) -> float:
+    return ((x - _CENTER) ** 2 + (y - _CENTER) ** 2) ** 0.5
+
+
+def fx_probe_pixel(x: int, y: int):
+    # W1D append: FX probe face — concentric copper ripple motif (client-fx.md §12).
+    if x in (0, SIZE - 1) or y in (0, SIZE - 1):
+        return PATINA
+    if x in (1, SIZE - 2) or y in (1, SIZE - 2):
+        return COPPER_DARK
+    dist = _euclidean(x, y)
+    if dist <= 1.2:
+        return GLOW
+    # expanding-ring bands: alternating light/dark circles read as a frozen ripple
+    band = int(dist * 2.0) % 4
+    if band == 0:
+        return COPPER_LIGHT
+    if band == 2:
+        return COPPER_DARK
+    return COPPER_LIGHT if (x * 7 + y * 13) % 5 == 0 else COPPER
+
+
+def copper_mote_pixel(x: int, y: int):
+    # W1D append: soft additive-friendly mote — radial falloff to transparency.
+    dist = _euclidean(x, y)
+    if dist <= 1.6:
+        return GLOW
+    if dist <= 3.2:
+        return COPPER_LIGHT
+    if dist <= 4.6:
+        return (216, 141, 88, 150)  # COPPER_LIGHT at reduced alpha for the halo
+    if dist <= 5.8:
+        return (183, 104, 60, 70)   # COPPER fading out
+    return (0, 0, 0, 0)
+
+
 # name -> per-pixel function; later phases append entries only.
 TEXTURES = {
     "diagnostic_coil_core": core_pixel,
     "diagnostic_coil_frame": frame_pixel,
+    "fx_probe": fx_probe_pixel,
+}
+
+# W1D append: particle sprites live under textures/particle/ (client-fx.md §7).
+PARTICLE_TEXTURES = {
+    "copper_mote": copper_mote_pixel,
 }
 
 
@@ -76,7 +118,7 @@ def png_chunk(tag: bytes, data: bytes) -> bytes:
             + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
 
 
-def write_png(name: str, pixel) -> None:
+def write_png(name: str, pixel, subdir: str = "block") -> None:
     raw = b""
     for y in range(SIZE):
         raw += b"\x00"  # filter type 0 per scanline
@@ -90,7 +132,7 @@ def write_png(name: str, pixel) -> None:
            + png_chunk(b"IEND", b""))
 
     out = (Path(__file__).resolve().parent.parent
-           / f"src/main/resources/assets/cuprum/textures/block/{name}.png")
+           / f"src/main/resources/assets/cuprum/textures/{subdir}/{name}.png")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(png)
     print(f"wrote {out} ({len(png)} bytes)")
@@ -99,6 +141,8 @@ def write_png(name: str, pixel) -> None:
 def main() -> None:
     for name, pixel in TEXTURES.items():
         write_png(name, pixel)
+    for name, pixel in PARTICLE_TEXTURES.items():
+        write_png(name, pixel, subdir="particle")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "cuprum:block/fx_probe"
+    }
+  }
+}

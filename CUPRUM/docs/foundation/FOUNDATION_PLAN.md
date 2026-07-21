@@ -281,7 +281,7 @@ widget state), recorded in the phase commit message.
 | `main/resources/data/cuprum/cuprum_multiblock/diagnostic_coil.json` | multiblock | W1C | hand-written, committed |
 | `main/resources/data/cuprum/handbook/**` (+ `exempt.json`) | handbook | W1E | |
 | `datagen/**` (six providers) | integration-mediated shared | W1C/W1D/W1E append | + `runDatagen` per phase |
-| `build.gradle` | integration | W1C (+`cuprum.mainResourcesDir`), W1E (+`cuprum.generatedAssetsDir`, class-dir props, modmenu `modCompileOnly`) | minimal diffs |
+| `build.gradle` | integration | W1C (+`cuprum.mainResourcesDir`), W1D (**only** +`fabric.client.gametest.testModResourcesPath` on `runClientGameTest`), W1E (+`cuprum.generatedAssetsDir`, class-dir props, modmenu `modCompileOnly`) | minimal diffs |
 | `scripts/server_smoke.sh` (opt-in env vars), `scripts/server_restart_probe.sh` | integration/net-state | W1A | default behavior unchanged |
 | `scripts/gen_textures.py` | integration | W1C create, W1D append | deterministic |
 | `docs/API_PROBES.md` | shared, append-only | each phase | new section per phase |
@@ -501,15 +501,20 @@ Eval-A** → **Fable Eval-B** → fix loop (re-run both evals after fixes) →
   shader assets, `particles/copper_mote.json`, `fx/colorblind.json`,
   `scripts/gen_textures.py` append + mote texture, datagen edits + regenerate,
   bootstrap +1 line each side, gametest entrypoints + templates,
-  `docs/API_PROBES.md` "Custom pipelines & FX foundation" append.
+  `docs/API_PROBES.md` "Custom pipelines & FX foundation" append, and
+  `build.gradle` **only** for the `runClientGameTest`
+  `fabric.client.gametest.testModResourcesPath` JVM property that makes missing screenshot
+  templates bootstrap into the committed gametest resource directory.
 - **Contracts kept:** tier ladder T1→T2→T3→OFF single gate
   (`FxTierPolicy.effectiveTier()` = min of config/capability/compat caps);
   capability probe order (device → assets → `precompilePipeline().isValid()`);
   extract/submit BER (primitives-only render state; one `RenderType` batch);
   pooled dispatcher (16 ripples, ring eviction, zero steady-state allocation;
   `FxArcPool` declared stub); particle budget gate (≤64 spawn/tick, ≤256 live);
-  reload listener resets policy/pools; `InvalidateRenderStateCallback` +
-  DISCONNECT clear; outcome neutrality (no C2S, no gameplay mutation).
+  reload listener resets policy/pools; `InvalidateRenderStateCallback` clears;
+  JOIN starts an isolated FX epoch and connection-identity-guarded DISCONNECT clears only its
+  own epoch (stale prior-session delivery is a no-op); outcome neutrality (no C2S, no gameplay
+  mutation).
 - **Unit tests (≥8):** pool ring logic (long posKeys), colorblind ARGB remap,
   budget counter math, snapshot radius quantization.
 - **Server GameTest:** `fxProbeUsePulses` (pulse counter, dispatch/state only;

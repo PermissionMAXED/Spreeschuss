@@ -1,6 +1,7 @@
 package dev.cuprum.cuprum.datagen;
 
 import dev.cuprum.cuprum.CuprumBlocks;
+import dev.cuprum.cuprum.fx.FxContent;
 import dev.cuprum.cuprum.machine.MachineContent;
 import net.fabricmc.fabric.api.datagen.v1.FabricDataOutput;
 import net.fabricmc.fabric.api.datagen.v1.provider.FabricLanguageProvider;
@@ -24,5 +25,6 @@ public final class CuprumEnUsLanguageProvider extends FabricLanguageProvider {
         translationBuilder.add("cuprum.formation.unformed", "Unformed");
         translationBuilder.add("cuprum.formation.fault", "Fault");
         translationBuilder.add("cuprum.charge.readout", "%s / %s Cg");
+        translationBuilder.add(FxContent.FX_PROBE, "FX Probe");
     }
 }

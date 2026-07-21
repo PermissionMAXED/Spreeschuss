@@ -18,6 +18,12 @@ mkdir -p build
 rm -rf "$SCREENSHOT_DIR"
 rm -f "$LOG"
 
+# Fabric API 0.134.1's client-GameTest network synchronizer is a known flaky layer when tests
+# close and reopen singleplayer worlds under Xvfb. Fabric's documented workaround is test-only;
+# JAVA_TOOL_OPTIONS reaches both Gradle and the forked Minecraft JVM without broadening the
+# narrowly owned build.gradle client-test-resource configuration.
+export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+${JAVA_TOOL_OPTIONS} }-Dfabric.client.gametest.disableNetworkSynchronizer=true"
+
 GRADLE_EXIT=0
 if [[ -n "${DISPLAY:-}" ]]; then
     ./gradlew runClientGameTest --console=plain > "$LOG" 2>&1 || GRADLE_EXIT=$?
@@ -43,14 +49,15 @@ fi
 # Allowlisted, expected headless noise:
 #   * offline-session auth failures (no real Mojang account in dev),
 #   * missing sound hardware (Xvfb has no audio device),
-#   * telemetry/keystore chatter.
+#   * telemetry/keystore chatter,
+#   * Mod Menu's dev-only update checker being interrupted after the client has stopped.
 scan_log() {
     local file="$1"
     [[ -f "$file" ]] || return 0
     # 'crash-reports' (with s) matches the crash dump directory but not the
     # fabric-crash-report-info-v1 module name that appears in mod lists.
     grep -E '/(ERROR|FATAL)\]|FATAL|Mixin apply failed|Failed to load mod|Incompatible mods|ModResolutionException|Exception in thread|crash-reports' "$file" \
-        | grep -Ev 'Error starting SoundSystem|[Rr]ealms|Failed to verify authentication|Authentication server|Session service|Could not authorize you|Failed to fetch (profile|user) properties|Sound engine|OpenAL|No audio device|Failed to open .*audio|Telemetry|keystore' \
+        | grep -Ev 'Error starting SoundSystem|[Rr]ealms|Failed to verify authentication|Authentication server|Session service|Could not authorize you|Failed to fetch (profile|user) properties|Sound engine|OpenAL|No audio device|Failed to open .*audio|Telemetry|keystore|Mod Menu/Update Checker' \
         || true
 }
 
@@ -61,13 +68,17 @@ if [[ -n "$PROBLEMS" ]]; then
     exit 1
 fi
 
-# The exact W1A + W1C screenshot set must come from THIS launch. The directory was deleted
+# The exact W1A + W1C + W1D screenshot set must come from THIS launch. The directory was deleted
 # above, so stale files can neither satisfy a missing capture nor hide a numbering regression.
 EXPECTED_SCREENSHOTS=(
     0000_cuprum_title_screen.png
     0001_cuprum_charge_probe_in_world.png
     0002_cuprum_diagnostic_coil_formed.png
     0003_cuprum_charge_machine_screen.png
+    0004_cuprum_fx_ripple_t1.png
+    0005_cuprum_fx_ripple_t2.png
+    0006_cuprum_fx_ripple_t3_motes.png
+    0007_cuprum_fx_ripple_t1_colorblind.png
 )
 for expected in "${EXPECTED_SCREENSHOTS[@]}"; do
     if [[ ! -s "$SCREENSHOT_DIR/$expected" ]]; then

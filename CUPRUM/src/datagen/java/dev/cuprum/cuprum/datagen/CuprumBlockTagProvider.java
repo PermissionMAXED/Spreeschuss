@@ -1,6 +1,7 @@
 package dev.cuprum.cuprum.datagen;
 
 import dev.cuprum.cuprum.CuprumBlocks;
+import dev.cuprum.cuprum.fx.FxContent;
 import dev.cuprum.cuprum.machine.MachineContent;
 import net.fabricmc.fabric.api.datagen.v1.FabricDataOutput;
 import net.fabricmc.fabric.api.datagen.v1.provider.FabricTagProvider;
@@ -19,6 +20,7 @@ public final class CuprumBlockTagProvider extends FabricTagProvider.BlockTagProv
         valueLookupBuilder(BlockTags.MINEABLE_WITH_PICKAXE)
                 .add(CuprumBlocks.CHARGE_PROBE)
                 .add(MachineContent.DIAGNOSTIC_COIL_CORE)
-                .add(MachineContent.DIAGNOSTIC_COIL_FRAME);
+                .add(MachineContent.DIAGNOSTIC_COIL_FRAME)
+                .add(FxContent.FX_PROBE);
     }
 }

@@ -16,6 +16,9 @@
       "dev.cuprum.cuprum.gametest.charge.ChargeLifecycleGameTest",
       "dev.cuprum.cuprum.gametest.charge.ChargeSavedDataGameTest",
       "dev.cuprum.cuprum.gametest.config.ConfigGameTest",
+      "dev.cuprum.cuprum.gametest.fx.FxProbeGameTest",
+      "dev.cuprum.cuprum.gametest.fx.FxReconnectRaceGameTest",
+      "dev.cuprum.cuprum.gametest.fx.FxShutdownRaceGameTest",
       "dev.cuprum.cuprum.gametest.machine.ChargeMachineGameTest",
       "dev.cuprum.cuprum.gametest.multiblock.MultiblockLifecycleRegressionGameTest",
       "dev.cuprum.cuprum.gametest.multiblock.MultiblockGameTest",
@@ -30,7 +33,10 @@
     ],
     "fabric-client-gametest": [
       "dev.cuprum.cuprum.gametest.CuprumClientGameTest",
-      "dev.cuprum.cuprum.gametest.ChargeMachineClientGameTest"
+      "dev.cuprum.cuprum.gametest.ChargeMachineClientGameTest",
+      "dev.cuprum.cuprum.gametest.FxRippleClientGameTest",
+      "dev.cuprum.cuprum.client.fx.FxFailurePathsClientGameTest",
+      "dev.cuprum.cuprum.client.fx.FxSessionLifecycleClientGameTest"
     ]
   },
   "depends": {

@@ -2,6 +2,7 @@
   "block.cuprum.charge_probe": "Ladungssonde",
   "block.cuprum.diagnostic_coil_core": "Diagnosespulenkern",
   "block.cuprum.diagnostic_coil_frame": "Diagnosespulenrahmen",
+  "block.cuprum.fx_probe": "FX-Sonde",
   "container.cuprum.charge_machine": "Lademaschine",
   "cuprum.charge.readout": "%s / %s Cg",
   "cuprum.formation.fault": "Störung",

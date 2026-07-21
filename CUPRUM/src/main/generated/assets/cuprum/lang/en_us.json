@@ -2,6 +2,7 @@
   "block.cuprum.charge_probe": "Charge Probe",
   "block.cuprum.diagnostic_coil_core": "Diagnostic Coil Core",
   "block.cuprum.diagnostic_coil_frame": "Diagnostic Coil Frame",
+  "block.cuprum.fx_probe": "FX Probe",
   "container.cuprum.charge_machine": "Charge Machine",
   "cuprum.charge.readout": "%s / %s Cg",
   "cuprum.formation.fault": "Fault",

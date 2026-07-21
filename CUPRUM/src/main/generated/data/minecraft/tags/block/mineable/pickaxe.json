@@ -2,6 +2,7 @@
   "values": [
     "cuprum:charge_probe",
     "cuprum:diagnostic_coil_core",
-    "cuprum:diagnostic_coil_frame"
+    "cuprum:diagnostic_coil_frame",
+    "cuprum:fx_probe"
   ]
 }
